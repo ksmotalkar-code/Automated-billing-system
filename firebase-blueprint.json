@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "A customer in the billing system",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Customer ID" },
+        "name": { "type": "string", "description": "Customer Name" },
+        "mobileNumber": { "type": "string", "description": "Mobile Number" },
+        "status": { "type": "string", "enum": ["Active", "Suspended"], "description": "Account Status" },
+        "balance": { "type": "number", "description": "Outstanding Balance" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+      },
+      "required": ["id", "name", "mobileNumber", "status", "balance", "ownerId"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "A payment transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Transaction ID" },
+        "customerId": { "type": "string", "description": "Customer ID" },
+        "amount": { "type": "number", "description": "Payment Amount" },
+        "transactionId": { "type": "string", "description": "UPI Transaction ID / UTR" },
+        "date": { "type": "string", "format": "date-time", "description": "Transaction Date" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+      },
+      "required": ["id", "customerId", "amount", "transactionId", "date", "ownerId"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Application Settings",
+      "type": "object",
+      "properties": {
+        "upiQrCodeImage": { "type": "string", "description": "Base64 encoded QR Code Image" },
+        "billingAmount": { "type": "number", "description": "Billing Amount" },
+        "billingCycleMonths": { "type": "number", "description": "Billing Cycle in Months" },
+        "penaltyAmount": { "type": "number", "description": "Penalty Amount" },
+        "penaltyDays": { "type": "number", "description": "Penalty Grace Period in Days" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+      },
+      "required": ["billingAmount", "billingCycleMonths", "penaltyAmount", "penaltyDays", "ownerId"]
+    },
+    "UploadedData": {
+      "title": "UploadedData",
+      "description": "Uploaded Excel/PDF data for future use",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document ID" },
+        "fileName": { "type": "string", "description": "Name of the uploaded file" },
+        "data": { "type": "string", "description": "Stringified JSON data extracted from the file" },
+        "uploadedAt": { "type": "string", "format": "date-time", "description": "Upload timestamp" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+      },
+      "required": ["id", "fileName", "data", "uploadedAt", "ownerId"]
+    }
+  },
+  "firestore": {
+    "/customers/{customerId}": {
+      "schema": { "$ref": "#/entities/Customer" },
+      "description": "Customers collection"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "Transactions collection"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Settings collection"
+    },
+    "/uploadedData/{uploadId}": {
+      "schema": { "$ref": "#/entities/UploadedData" },
+      "description": "Uploaded Data collection"
+    }
+  }
+}

@@ -1,0 +1,289 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-color: #e0e5ec;
+    --shadow-light: #ffffff;
+    --shadow-dark: #a3b1c6;
+    --text-main: #2d3748;
+    --text-muted: #718096;
+    --accent: #4299e1;
+  }
+  [data-theme="dark"] {
+    --bg-color: #2d3748;
+    --shadow-light: #3a4556;
+    --shadow-dark: #20293a;
+    --text-main: #e2e8f0;
+    --text-muted: #a0aec0;
+    --accent: #63b3ed;
+  }
+  [data-theme="ocean"] {
+    --bg-color: #d9e2ec;
+    --shadow-light: #ffffff;
+    --shadow-dark: #b8c5d6;
+    --text-main: #102a43;
+    --text-muted: #486581;
+    --accent: #2b6cb0;
+  }
+  [data-theme="forest"] {
+    --bg-color: #e2e8e4;
+    --shadow-light: #ffffff;
+    --shadow-dark: #b8c4bc;
+    --text-main: #22543d;
+    --text-muted: #4a7856;
+    --accent: #2f855a;
+  }
+  [data-theme="sunset"] {
+    --bg-color: #fde8e8;
+    --shadow-light: #ffffff;
+    --shadow-dark: #d6baba;
+    --text-main: #742a2a;
+    --text-muted: #9b4747;
+    --accent: #c53030;
+  }
+  [data-theme="lavender"] {
+    --bg-color: #e9e4f0;
+    --shadow-light: #ffffff;
+    --shadow-dark: #c0b6ce;
+    --text-main: #44337a;
+    --text-muted: #6b46c1;
+    --accent: #805ad5;
+  }
+  [data-theme="sand"] {
+    --bg-color: #f4f1ea;
+    --shadow-light: #ffffff;
+    --shadow-dark: #d1cbc1;
+    --text-main: #744210;
+    --text-muted: #975a16;
+    --accent: #d69e2e;
+  }
+  [data-theme="mint"] {
+    --bg-color: #e6f2ed;
+    --shadow-light: #ffffff;
+    --shadow-dark: #b8d0c6;
+    --text-main: #234e52;
+    --text-muted: #319795;
+    --accent: #38b2ac;
+  }
+  [data-theme="rose"] {
+    --bg-color: #fce8f3;
+    --shadow-light: #ffffff;
+    --shadow-dark: #d6b8c9;
+    --text-main: #702459;
+    --text-muted: #97266d;
+    --accent: #d53f8c;
+  }
+  [data-theme="midnight"] {
+    --bg-color: #1a202c;
+    --shadow-light: #252d3d;
+    --shadow-dark: #0f131b;
+    --text-main: #e2e8f0;
+    --text-muted: #a0aec0;
+    --accent: #90cdf4;
+  }
+  [data-theme="accessible-high"] {
+    --bg-color: #ffffff;
+    --shadow-light: #ffffff;
+    --shadow-dark: #d1d1d1;
+    --text-main: #000000;
+    --text-muted: #444444;
+    --accent: #0000ff;
+  }
+  [data-theme="color-blind"] {
+    --bg-color: #f8f9fa;
+    --shadow-light: #ffffff;
+    --shadow-dark: #e2e8f0;
+    --text-main: #004488;
+    --text-muted: #556677;
+    --accent: #ee7733;
+  }
+  
+  *, ::before, ::after {
+    border-color: var(--shadow-dark);
+  }
+}
+
+@layer utilities {
+  @keyframes static-electricity {
+    0%, 100% {
+      box-shadow: 0 0 5px var(--accent), 0 0 10px var(--accent), inset 0 0 5px var(--accent);
+      text-shadow: 0 0 2px #fff;
+    }
+    25% {
+      box-shadow: 0 0 15px var(--accent), -5px -5px 20px var(--accent), inset 0 0 10px var(--accent);
+      text-shadow: 0 0 4px #fff, 0 0 10px var(--accent);
+    }
+    50% {
+      box-shadow: 0 0 8px var(--accent), 5px 5px 25px var(--accent), inset 0 0 8px var(--accent);
+      text-shadow: 0 0 1px #fff;
+    }
+    75% {
+      box-shadow: 0 0 20px var(--accent), -5px 5px 15px var(--accent), inset 0 0 15px var(--accent);
+      text-shadow: 0 0 5px #fff, 0 0 8px var(--accent);
+    }
+  }
+
+  .static-glow:hover {
+    animation: static-electricity 0.3s infinite alternate;
+    cursor: pointer;
+  }
+
+  .neu-flat {
+    background-color: var(--bg-color);
+    box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+  }
+  [data-theme="dark"] .neu-flat, [data-theme="midnight"] .neu-flat {
+    box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light), 0 0 20px rgba(99, 179, 237, 0.05);
+  }
+  .neu-flat:hover {
+    box-shadow: 8px 8px 16px var(--shadow-dark), -8px -8px 16px var(--shadow-light);
+  }
+  [data-theme="dark"] .neu-flat:hover, [data-theme="midnight"] .neu-flat:hover {
+    box-shadow: 8px 8px 16px var(--shadow-dark), -8px -8px 16px var(--shadow-light), 0 0 30px rgba(99, 179, 237, 0.1);
+  }
+  .neu-flat-sm {
+    background-color: var(--bg-color);
+    box-shadow: 4px 4px 8px var(--shadow-dark), -4px -4px 8px var(--shadow-light);
+  }
+  .neu-pressed {
+    background-color: var(--bg-color);
+    box-shadow: inset 6px 6px 12px var(--shadow-dark), inset -6px -6px 12px var(--shadow-light);
+  }
+  .neu-pressed-sm {
+    background-color: var(--bg-color);
+    box-shadow: inset 3px 3px 6px var(--shadow-dark), inset -3px -3px 6px var(--shadow-light);
+  }
+  .neu-text {
+    color: var(--text-main);
+  }
+  .neu-text-muted {
+    color: var(--text-muted);
+  }
+  .neu-bg {
+    background-color: var(--bg-color);
+  }
+  .neu-accent {
+    color: var(--accent);
+  }
+  .neu-accent-bg {
+    background-color: var(--accent);
+  }
+
+  /* --- Glassmorphism Overrides --- */
+  [data-ui="glassmorphism"] .neu-flat, 
+  [data-ui="glassmorphism"] .neu-flat-sm {
+    background-color: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Hover underline */
+  .hover-underline {
+    position: relative;
+    display: inline-block;
+  }
+  .hover-underline::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0; width: 0; height: 2px;
+    background: var(--accent);
+    transition: width 0.3s;
+  }
+  .hover-underline:hover::after { width: 100%; }
+
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-flat,
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-flat-sm,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-flat,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-flat-sm {
+    background-color: rgba(20, 20, 25, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  }
+
+  [data-ui="glassmorphism"] .neu-flat:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15), 0 0 15px var(--accent);
+  }
+
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-flat:hover,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-flat:hover {
+    background-color: rgba(30, 30, 35, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4), 0 0 15px var(--accent);
+  }
+
+  [data-ui="glassmorphism"] .neu-pressed, 
+  [data-ui="glassmorphism"] .neu-pressed-sm {
+    background-color: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.05);
+    transition: all 0.3s ease;
+  }
+
+  [data-ui="glassmorphism"] .neu-pressed:focus-within,
+  [data-ui="glassmorphism"] .neu-pressed:hover {
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.05), 0 0 8px var(--accent);
+    border-color: var(--accent);
+  }
+
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-pressed,
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-pressed-sm,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-pressed,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-pressed-sm {
+    background-color: rgba(10, 10, 15, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.2);
+  }
+
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-pressed:focus-within,
+  [data-ui="glassmorphism"][data-theme="dark"] .neu-pressed:hover,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-pressed:focus-within,
+  [data-ui="glassmorphism"][data-theme="midnight"] .neu-pressed:hover {
+    box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.2), 0 0 8px var(--accent);
+    border-color: var(--accent);
+  }
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Custom Scrollbar - Glass UI */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.1);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.3s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.3);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(150, 150, 150, 0.2) transparent;
+}
