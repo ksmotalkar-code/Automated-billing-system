@@ -70,12 +70,19 @@ export interface Complaint {
   expiresAt?: string;
 }
 
+export interface ReportFile {
+  name: string;
+  data: string; // Base64 or URL
+  type: string;
+}
+
 export interface Report {
   id: string;
   title: string;
   content: string;
   createdAt: string;
   ownerId?: string;
+  files?: ReportFile[];
 }
 
 export interface Transaction {
@@ -113,7 +120,8 @@ export interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
-  preferredNotificationMethod?: 'api' | 'manual_link';
+  preferredNotificationMethod?: 'api' | 'manual_link' | 'whatsapp_web';
+  enableWhatsappWeb?: boolean;
   automation?: AutomationSettings;
 }
 

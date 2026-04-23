@@ -4,26 +4,61 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import * as admin from "firebase-admin";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
 
 // We'll import node-cron when the user sets up their Firebase Admin
 import cron from "node-cron";
 
+interface AutomationSettings {
+  billingLifecycle: boolean;
+  ruleBased: boolean;
+  lateFee: boolean;
+  scheduledBilling: boolean;
+  bulkProcessing: boolean;
+  smartNotifications: boolean;
+  autoShareReports?: boolean;
+}
+
+interface AppSettings {
+  upiQrCodeImage: string | null;
+  billingAmount: number;
+  billingCycleMonths: number;
+  penaltyAmount: number;
+  penaltyDays: number;
+  escalationDays?: number;
+  autoSuspend?: boolean;
+  defaultBillingDate?: string;
+  lastBillingDate?: string;
+  lastPenaltyDate?: string;
+  lastNotificationDate?: string;
+  ownerId?: string;
+  metaWhatsAppApiKey?: string;
+  metaWhatsAppPhoneNumberId?: string;
+  metaWhatsAppVerifyToken?: string;
+  preferredNotificationMethod?: 'api' | 'manual_link' | 'whatsapp_web';
+  enableWhatsappWeb?: boolean;
+  automation?: AutomationSettings;
+}
+
 // Optional: Initialize Firebase Admin gracefully
-try {
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      console.log("Firebase Admin Initialized Successfully.");
+  if (process.env.FIREBASE_SERVICE_ACCOUNT && process.env.FIREBASE_SERVICE_ACCOUNT.trim().startsWith('{')) {
+    try {
+      const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+        console.log("Firebase Admin Initialized Successfully.");
+      }
+    } catch (error) {
+      console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT", error);
     }
+  } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.warn("FIREBASE_SERVICE_ACCOUNT found but is not valid JSON. Ignoring.");
   } else {
     console.warn("FIREBASE_SERVICE_ACCOUNT not found. Webhook/Cron automation will be limited.");
   }
-} catch (error) {
-  console.error("Failed to parse FIREBASE_SERVICE_ACCOUNT", error);
-}
 
 async function startServer() {
   const app = express();
@@ -208,6 +243,143 @@ async function startServer() {
     }
   });
 
+  // WhatsApp Web JS Integration
+  let whatsappWebStatus = { status: 'disabled', qr: null, error: null, solution: null };
+  let whatsappClient: any = null;
+  let isInitializing = false;
+
+  async function initWhatsappWeb() {
+    if (isInitializing || (whatsappClient && whatsappWebStatus.status !== 'error')) return;
+    isInitializing = true;
+    whatsappWebStatus = { status: 'initializing', qr: null, error: null, solution: null };
+    
+    try {
+      const { Client, LocalAuth } = require('whatsapp-web.js');
+      const qrcode = require('qrcode');
+      const fs = require('fs');
+
+      // Auto-detect common chrome paths if none provided (especially for Render)
+      let autoExecPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+      if (!autoExecPath) {
+        const commonPaths = [
+          '/usr/bin/google-chrome-stable',
+          '/usr/bin/chromium-browser',
+          '/usr/bin/google-chrome',
+          '/usr/bin/chromium'
+        ];
+        for (const path of commonPaths) {
+          if (fs.existsSync(path)) {
+            autoExecPath = path;
+            console.log(`Auto-detected Chrome/Chromium at: ${path}`);
+            break;
+          }
+        }
+      }
+
+      whatsappClient = new Client({
+        authStrategy: new LocalAuth(),
+        puppeteer: {
+          executablePath: autoExecPath || undefined,
+          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-accelerated-2d-canvas', '--no-first-run', '--no-zmq', '--single-process', '--disable-gpu']
+        }
+      });
+
+      whatsappClient.on('qr', async (qrData: string) => {
+        try {
+          const qrBase64 = await qrcode.toDataURL(qrData);
+          whatsappWebStatus = { status: 'qr', qr: qrBase64, error: null, solution: null };
+        } catch (e) {
+          console.error("QR Error", e);
+        }
+      });
+
+      whatsappClient.on('ready', () => {
+        console.log('WhatsApp Web Client is ready!');
+        whatsappWebStatus = { status: 'connected', qr: null, error: null, solution: null };
+        isInitializing = false;
+      });
+
+      whatsappClient.on('disconnected', (reason: any) => {
+        whatsappWebStatus = { status: 'disconnected', qr: null, error: null, solution: null };
+        isInitializing = false;
+      });
+
+      whatsappClient.initialize().catch((err: any) => {
+        isInitializing = false;
+        whatsappWebStatus = { 
+          status: 'error', 
+          qr: null, 
+          error: err.message, 
+          solution: "Puppeteer failed to launch. If you are on Render, make sure to use a environment that includes Chromium (e.g. use a Dockerfile or install chromium-browser). This won't affect core app functionality."
+        };
+        console.error("WhatsApp Web JS init error (deferred)", err);
+      });
+
+    } catch (err: any) {
+      isInitializing = false;
+      whatsappWebStatus = { 
+        status: 'error', 
+        qr: null, 
+        error: err.message, 
+        solution: "Make sure all Node dependencies for whatsapp-web.js are correctly compiled and present in your hosting environment."
+      };
+      console.error("WhatsApp Web JS import error", err);
+    }
+  }
+
+  app.post("/api/whatsapp-web/start", async (req, res) => {
+    initWhatsappWeb();
+    res.json({ status: "starting" });
+  });
+
+  app.post("/api/whatsapp-web/stop", async (req, res) => {
+    if (whatsappClient) {
+       try {
+         await whatsappClient.destroy();
+         whatsappClient = null;
+       } catch (e) {}
+    }
+    whatsappWebStatus = { status: 'disabled', qr: null, error: null, solution: null };
+    res.json({ status: "stopped" });
+  });
+
+  app.get("/api/whatsapp-web/status", (req, res) => {
+    res.json(whatsappWebStatus);
+  });
+
+  app.post("/api/whatsapp-web/send", async (req, res) => {
+    try {
+      const { to, message, mediaBase64, mediaName } = req.body;
+      if (whatsappWebStatus.status !== 'connected' || !whatsappClient) {
+         return res.status(400).json({ success: false, error: "WhatsApp Web not connected" });
+      }
+      
+      let chatId = to;
+      if (!chatId.includes('@')) {
+         chatId = `91${chatId.replace(/\D/g, '')}@c.us`; 
+      }
+      
+      let media = null;
+      if (mediaBase64) {
+         const { MessageMedia } = require('whatsapp-web.js');
+         const b64Data = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+         let mimeType = mediaBase64.match(/data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+).*,.*/);
+         mimeType = mimeType && mimeType.length ? mimeType[1] : 'application/pdf';
+         media = new MessageMedia(mimeType, b64Data, mediaName || undefined);
+      }
+      
+      if (media) {
+         await whatsappClient.sendMessage(chatId, media, { caption: message });
+      } else {
+         await whatsappClient.sendMessage(chatId, message);
+      }
+      
+      res.json({ success: true });
+    } catch(e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // Vite middleware for development (Serves the App)
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
@@ -230,4 +402,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL SERVER STARTUP ERROR:", err);
+  process.exit(1);
+});

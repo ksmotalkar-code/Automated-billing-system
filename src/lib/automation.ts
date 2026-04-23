@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Customer, AppSettings, updateCustomer, saveSettings } from './db';
+import { Customer, AppSettings, updateCustomer, saveSettings, Report } from './db';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { whatsappService } from '../services/whatsappService';
@@ -79,7 +79,9 @@ export const sendWhatsAppNotification = async (
   let usePortalLink = false;
 
   // Modify logic based on preferred notification method
-  if (settings.preferredNotificationMethod === 'manual_link' || !whatsappService.isConfigured()) {
+  if (settings.preferredNotificationMethod === 'manual_link') {
+    usePortalLink = true;
+  } else if (settings.preferredNotificationMethod === 'api' && !whatsappService.isConfigured()) {
     usePortalLink = true;
   }
 
@@ -95,9 +97,45 @@ export const sendWhatsAppNotification = async (
       console.warn("Failed to generate portal link", e);
     }
   }
+
+  // 1. Try WhatsApp Web Method
+  if (settings.preferredNotificationMethod === 'whatsapp_web') {
+    try {
+      let mediaBase64: string | undefined = undefined;
+      if (attachment) {
+        mediaBase64 = await new Promise((resolve, reject) => {
+           const reader = new FileReader();
+           reader.onloadend = () => resolve(reader.result as string);
+           reader.onerror = reject;
+           reader.readAsDataURL(attachment);
+        });
+      }
+      
+      const res = await fetch('/api/whatsapp-web/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: customer.mobileNumber,
+          message: finalMessage,
+          mediaBase64,
+          mediaName: attachmentName
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        return { success: true };
+      } else {
+        console.error("WhatsApp Web sending error, attempting fallback...", data.error);
+        // Do NOT return here, let it flow to other methods
+      }
+    } catch (e: any) {
+      console.error("WhatsApp Web connection failed, attempting fallback...", e);
+      // Do NOT return here, let it flow to other methods
+    }
+  }
   
-  // Try automated API first if it's explicitly configured AND they prefer API
-  if (whatsappService.isConfigured() && settings.preferredNotificationMethod !== 'manual_link') {
+  // 2. Try automated API if configured
+  if (whatsappService.isConfigured()) {
     const result = await whatsappService.sendMessage({
       to: customer.mobileNumber,
       message: finalMessage,
@@ -110,15 +148,12 @@ export const sendWhatsAppNotification = async (
       console.log(`Automated WhatsApp message sent to ${customer.name}`);
       return { success: true };
     } else {
-      console.error(`Automated WhatsApp failed: ${result.error}.`);
-      
-      if (isBulkMode) {
-         return { success: false, error: result.error };
-      }
+      console.error(`Automated WhatsApp API failed: ${result.error}.`);
+      // If bulk mode and no other options, we might fail here, but let's keep going for manual if not bulk
     }
   }
 
-  // Fallback to manual link if not in bulk mode and API failed/wasn't configured/not preferred
+  // 3. Fallback to manual link if not in bulk mode
   if (!isBulkMode) {
     const url = `https://wa.me/91${customer.mobileNumber}?text=${encodeURIComponent(finalMessage)}`;
     window.open(url, '_blank');
@@ -204,9 +239,29 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   }
 };
 
-export const shareReportToCustomers = async (report: {id: string, title: string, content: string}, customers: Customer[], settings: AppSettings) => {
+export const shareReportToCustomers = async (report: Report, customers: Customer[], settings: AppSettings) => {
   if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
     whatsappService.updateConfig(settings.metaWhatsAppApiKey, settings.metaWhatsAppPhoneNumberId);
+  }
+
+  let blob: Blob | undefined = undefined;
+  let attachmentName: string | undefined = undefined;
+  
+  if (report.files && report.files.length > 0) {
+     const fileUrl = report.files[0].data;
+     if (fileUrl.startsWith('data:')) {
+       // Convert base64 back to Blob
+       const [header, base64] = fileUrl.split(',');
+       const mimeType = header.match(/:(.*?);/)?.[1] || 'application/pdf';
+       const byteCharacters = atob(base64);
+       const byteNumbers = new Array(byteCharacters.length);
+       for (let i = 0; i < byteCharacters.length; i++) {
+           byteNumbers[i] = byteCharacters.charCodeAt(i);
+       }
+       const byteArray = new Uint8Array(byteNumbers);
+       blob = new Blob([byteArray], {type: mimeType});
+       attachmentName = report.files[0].name;
+     }
   }
 
   // Iterate sequentially to avoid overwhelming rate limits, or use batching in a real system
@@ -217,20 +272,17 @@ export const shareReportToCustomers = async (report: {id: string, title: string,
      const baseUrl = window.location.origin;
      const portalUrl = `${baseUrl}/?portal=true&customerId=${customer.id}&reportId=${report.id}`;
      
-     const message = `*Notice: ${report.title}*\n\nHello ${customer.name}, a new report/notice has been published.\n\nView details here: ${portalUrl}`;
+     const message = `*Notice: ${report.title}*\n\nHello ${customer.name}, a new report/notice has been published.`;
+     const fullMsg = blob ? message : `${message}\n\nView details here: ${portalUrl}`;
      
-     if (whatsappService.isConfigured() && settings.preferredNotificationMethod !== 'manual_link') {
-       try {
-         await whatsappService.sendMessage({
-           to: customer.mobileNumber,
-           message: message
-         });
-       } catch (err) {
-         console.error(`Failed to dispatch report to ${customer.name}`, err);
-       }
-     } else {
-       console.log(`Manual mode not supported for bulk report sharing. Skipped ${customer.name}.`);
-     }
+     await sendWhatsAppNotification(
+       customer,
+       fullMsg,
+       settings,
+       blob,
+       attachmentName,
+       true // isBulkMode
+     );
   }
 };
 

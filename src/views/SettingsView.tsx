@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { subscribeToSettings, saveSettings, AppSettings, resetDatabase } from "../lib/db";
 import { useTranslation } from "react-i18next";
@@ -69,8 +69,49 @@ export function SettingsView() {
 
   const handleSave = async () => {
     setIsSaving(true);
+    let updatedSettings = { ...settings };
+
+    // WhatsApp Configuration Validation
+    if (updatedSettings.preferredNotificationMethod === 'api') {
+      const apiKey = updatedSettings.metaWhatsAppApiKey?.trim() || '';
+      const phoneId = updatedSettings.metaWhatsAppPhoneNumberId?.trim() || '';
+      
+      const isMissingKeys = !apiKey || !phoneId;
+      const isInvalidTokenStructure = apiKey.length > 0 && apiKey.length < 50; // Meta tokens are very long, usually starting with EA
+
+      if (isMissingKeys || isInvalidTokenStructure) {
+        setIsSaving(false);
+        showAlert(
+          "WhatsApp Configuration Incomplete",
+          "Your Meta WhatsApp API Key or Phone Number ID is missing or invalid. Meta Bearer tokens are typically long strings starting with 'EAA...'. " +
+          "To ensure the app continues to function perfectly, the notification method has been safely fallen back to the failproof 'Public Portal Link (Manual)'. " +
+          "Please check your Meta Developer Dashboard > WhatsApp > API Setup for the correct keys before enabling Automated Attachments."
+        );
+        updatedSettings.preferredNotificationMethod = 'manual_link';
+        setSettings(updatedSettings);
+        
+        // Save the fallback setting, but we've alerted the user
+        try {
+          await saveSettings(updatedSettings);
+        } catch (error) {
+          console.error("Error saving fallback setting", error);
+        }
+        return; // Halt here since we showed an alert
+      }
+    }
+
     try {
-      await saveSettings(settings);
+      await saveSettings(updatedSettings);
+
+      // WhatsApp Web Engine Lifecycle Control
+      if (updatedSettings.enableWhatsappWeb) {
+        // Trigger startup
+        fetch('/api/whatsapp-web/start', { method: 'POST' }).catch(err => console.error("Failed to trigger WA Start", err));
+      } else {
+        // Trigger shutdown
+        fetch('/api/whatsapp-web/stop', { method: 'POST' }).catch(err => console.error("Failed to trigger WA Stop", err));
+      }
+
       showAlert("Settings Saved", "Your configuration has been updated successfully.");
     } catch (error) {
       console.error("Error saving settings:", error);
@@ -287,20 +328,68 @@ export function SettingsView() {
                   </label>
                 </div>
                 
+                <div className="space-y-4 md:col-span-2 pt-4 mt-2 border-t border-[var(--shadow-dark)]">
+                  <h4 className="font-bold text-md text-emerald-600">WhatsApp Web (Experimental)</h4>
+                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mb-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-bold text-amber-800">Experimental Feature Warning</p>
+                        <p className="text-xs text-amber-700 mt-1">
+                          WhatsApp Web JS is an unofficial integration. It requires running a headless browser on the server, which consumes significant memory (RAM). 
+                          If your hosting environment (like Render Free Tier) has low memory, enabling this may cause the server to crash or become unresponsive.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <label className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer hover:bg-black/5 transition-colors">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-sm">Enable WhatsApp Web Engine</span>
+                      <span className="text-xs neu-text-muted">Allow the server to start the WhatsApp Web controller</span>
+                    </div>
+                    <div className="relative inline-block w-12 h-6 rounded-full transition-colors duration-300" style={{ backgroundColor: settings.enableWhatsappWeb ? 'var(--accent)' : 'var(--shadow-dark)' }}>
+                      <input 
+                        type="checkbox" 
+                        className="sr-only" 
+                        checked={settings.enableWhatsappWeb || false} 
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setConfirmConfig({
+                              isOpen: true,
+                              title: "Enable Experimental Feature?",
+                              message: "Enabling WhatsApp Web will start a Chrome process on your server. This can lead to high memory usage and potential crashes on some hosting providers. Do you want to proceed?",
+                              onConfirm: () => {
+                                setSettings({ ...settings, enableWhatsappWeb: true });
+                              },
+                              showCancel: true
+                            });
+                          } else {
+                            setSettings({ ...settings, enableWhatsappWeb: false });
+                          }
+                        }} 
+                      />
+                      <motion.div animate={{ x: settings.enableWhatsappWeb ? 24 : 2 }} className="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
+                    </div>
+                  </label>
+                </div>
+
                 <div className="space-y-2 md:col-span-2 mt-4 pt-4 border-t border-[var(--shadow-dark)]">
                   <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
                     Notification Delivery Method
                   </label>
                   <select
                     value={settings.preferredNotificationMethod || 'api'}
-                    onChange={(e) => setSettings({ ...settings, preferredNotificationMethod: e.target.value as 'api' | 'manual_link' })}
+                    onChange={(e) => setSettings({ ...settings, preferredNotificationMethod: e.target.value as 'api' | 'manual_link' | 'whatsapp_web' })}
                     className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-bold text-emerald-600"
                   >
                     <option value="api">Automated Attachments (Requires Meta API setup)</option>
+                    <option value="whatsapp_web">WhatsApp Web Scan (No Meta API Required, Unofficial)</option>
                     <option value="manual_link">Public Portal Link (Works without Meta API via Web)</option>
                   </select>
                   <p className="text-xs neu-text-muted ml-1 mt-2">
-                    If set to <strong className="text-blue-500">Public Portal Link</strong>, customers will receive a clickable link instead of attachments, opening their invoice and QR securely on their phone without requiring your API to be approved by Meta.
+                    If set to <strong className="text-blue-500">Public Portal Link</strong>, customers will receive a clickable link instead of attachments, opening their invoice and QR securely on their phone without requiring your API to be approved by Meta. <br/><br/>
+                    If set to <strong className="text-blue-500">WhatsApp Web Scan</strong>, the server will log you in temporarily by scanning a QR on the Dashboard.
                   </p>
                 </div>
               </div>

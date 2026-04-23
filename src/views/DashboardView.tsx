@@ -12,14 +12,37 @@ export function DashboardView() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
 
+  const [whatsappWebStatus, setWhatsappWebStatus] = useState<any>(null);
+
   useEffect(() => {
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubTransactions = subscribeToTransactions(setTransactions);
     const unsubComplaints = subscribeToComplaints(setComplaints);
+    
+    // Fetch WhatsApp Web Status
+    const fetchWaStatus = async () => {
+      try {
+        const res = await fetch('/api/whatsapp-web/status');
+        const contentType = res.headers.get("content-type");
+        if (res.ok && contentType && contentType.includes("application/json")) {
+           const data = await res.json();
+           setWhatsappWebStatus(data);
+        } else {
+           // If we get HTML or 404, it might be the server splash page during boot
+           console.log("WhatsApp status not available yet");
+        }
+      } catch (err) {
+        console.error("Failed to fetch WA status", err);
+      }
+    };
+    fetchWaStatus();
+    const interval = setInterval(fetchWaStatus, 15000); // Check every 15s
+    
     return () => {
       unsubCustomers();
       unsubTransactions();
       unsubComplaints();
+      clearInterval(interval);
     };
   }, []);
 
@@ -262,6 +285,39 @@ export function DashboardView() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
+                {whatsappWebStatus?.status === 'error' && (
+                   <motion.div 
+                     initial={{ opacity: 0, x: 20 }}
+                     animate={{ opacity: 1, x: 0 }}
+                     className="flex items-start gap-4 border-b border-red-500/20 pb-4 bg-red-500/5 p-4 rounded-xl"
+                   >
+                     <AlertTriangle className="mt-0.5 w-6 h-6 shrink-0 text-red-500" />
+                     <div className="space-y-2">
+                       <p className="text-sm font-bold text-red-600 leading-none">WhatsApp Web Integration Issue</p>
+                       <p className="text-sm text-red-500/80">{whatsappWebStatus.error}</p>
+                       <div className="mt-2 p-3 bg-white/50 dark:bg-black/20 rounded-lg border border-red-500/20">
+                         <span className="text-xs font-bold uppercase text-red-500/70 block mb-1">Solution</span>
+                         <span className="text-xs text-red-600/90">{whatsappWebStatus.solution}</span>
+                       </div>
+                       <p className="text-xs font-medium opacity-70 mt-2">Note: This only affects the "WhatsApp Web Scan" feature. All other app functions (Billing, Invoices, Manual Web Links) continue to work perfectly fine.</p>
+                     </div>
+                   </motion.div>
+                )}
+                {whatsappWebStatus?.status === 'qr' && (
+                   <motion.div 
+                     initial={{ opacity: 0, x: 20 }}
+                     animate={{ opacity: 1, x: 0 }}
+                     className="flex items-center gap-4 border-b border-blue-500/20 pb-4 bg-blue-500/5 p-4 rounded-xl"
+                   >
+                     <div className="p-2 bg-white rounded-lg shadow-sm">
+                       {whatsappWebStatus.qr && <img src={whatsappWebStatus.qr} alt="Scan QR" className="w-24 h-24 object-contain" />}
+                     </div>
+                     <div className="space-y-2">
+                       <p className="text-sm font-bold text-blue-600 leading-none">Link WhatsApp Device</p>
+                       <p className="text-sm text-blue-500/80">Scan this QR code with your WhatsApp mobile app to enable "WhatsApp Web Scan" automated sending natively.</p>
+                     </div>
+                   </motion.div>
+                )}
                 {transactions.slice(-5).reverse().map((txn, i) => {
                   const customer = customers.find(c => c.id === txn.customerId);
                   return (

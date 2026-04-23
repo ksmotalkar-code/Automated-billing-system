@@ -149,7 +149,7 @@ export function CustomersView() {
   const [newCustomer, setNewCustomer] = useState({
     name: "",
     mobileNumber: "",
-    status: "Active" as "Active" | "Suspended",
+    status: "Active" as "Active" | "Suspended" | "Faulty",
     balance: 0,
   });
 
