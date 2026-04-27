@@ -1,4 +1,4 @@
-import { ai, METER_SCANNER_MODEL } from "./gemini";
+import { getAiClient, METER_SCANNER_MODEL } from "./gemini";
 import { Type } from "@google/genai";
 
 export interface MeterReadingResult {
@@ -10,6 +10,7 @@ export interface MeterReadingResult {
 
 export const analyzeMeterImage = async (base64Image: string): Promise<MeterReadingResult> => {
   try {
+    const ai = getAiClient();
     const response = await ai.models.generateContent({
       model: METER_SCANNER_MODEL,
       contents: {

@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "start": "node server.ts",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --external:express --external:firebase-admin --external:cors --external:helmet --external:compression --external:node-cron --external:qrcode --external:whatsapp-web.js --external:vite",
+    "start": "NODE_ENV=production node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"
