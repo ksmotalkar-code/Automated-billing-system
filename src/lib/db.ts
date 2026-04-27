@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 
 export enum OperationType {
@@ -57,6 +57,8 @@ export interface Customer {
   ownerId?: string;
   invoiceSent?: boolean;
   paymentNotified?: boolean;
+  lastMeterReading?: number;
+  createdAt?: string;
 }
 
 export interface Complaint {
@@ -76,11 +78,19 @@ export interface ReportFile {
   type: string;
 }
 
+export interface ReportFolder {
+  id: string;
+  name: string;
+  ownerId?: string;
+  createdAt: string;
+}
+
 export interface Report {
   id: string;
   title: string;
   content: string;
   createdAt: string;
+  folderId?: string | null;
   ownerId?: string;
   files?: ReportFile[];
 }
@@ -122,6 +132,8 @@ export interface AppSettings {
   metaWhatsAppVerifyToken?: string;
   preferredNotificationMethod?: 'api' | 'manual_link' | 'whatsapp_web';
   enableWhatsappWeb?: boolean;
+  paymentGatewayKey?: string;
+  paymentGatewaySecret?: string;
   automation?: AutomationSettings;
 }
 
@@ -196,6 +208,7 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
     ...customer,
     id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
     ownerId: auth.currentUser.uid,
+    createdAt: new Date().toISOString()
   };
   try {
     await setDoc(doc(db, 'customers', newCustomer.id), newCustomer);
@@ -580,6 +593,46 @@ export const addReport = async (report: Omit<Report, 'id' | 'ownerId' | 'created
   }
 };
 
+export const addReportFolder = async (name: string): Promise<ReportFolder> => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  const newFolder: ReportFolder = {
+    id: `FLD-${uuidv4().substring(0, 8).toUpperCase()}`,
+    name,
+    ownerId: auth.currentUser.uid,
+    createdAt: new Date().toISOString()
+  };
+  try {
+    await setDoc(doc(db, 'reportFolders', newFolder.id), newFolder);
+    return newFolder;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, 'reportFolders');
+    throw error;
+  }
+};
+
+export const deleteReportFolder = async (id: string): Promise<void> => {
+  try {
+    await deleteDoc(doc(db, 'reportFolders', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `reportFolders/${id}`);
+    throw error;
+  }
+};
+
+export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => void) => {
+  if (!auth.currentUser) return () => {};
+  const q = query(
+    collection(db, 'reportFolders'), 
+    where('ownerId', '==', auth.currentUser.uid)
+  );
+  return onSnapshot(q, (snapshot) => {
+    const folders = snapshot.docs.map(doc => doc.data() as ReportFolder);
+    callback(folders);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'reportFolders');
+  });
+};
+
 export const subscribeToReports = (callback: (reports: Report[]) => void) => {
   if (!auth.currentUser) return () => {};
   const q = query(
@@ -614,5 +667,37 @@ export const resolveComplaint = async (id: string) => {
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `complaints/${id}`);
+  }
+};
+
+export const deleteReport = async (id: string) => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  try {
+    await deleteDoc(doc(db, 'reports', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `reports/${id}`);
+  }
+};
+
+export const archiveComplaint = async (complaintId: string) => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  try {
+    const complaintRef = doc(db, 'complaints', complaintId);
+    const complaintSnap = await getDoc(complaintRef);
+    
+    if (!complaintSnap.exists()) throw new Error("Complaint not found");
+    
+    const complaintData = complaintSnap.data();
+    
+    const archiveRef = doc(db, 'complaints_archive', complaintId);
+    await setDoc(archiveRef, {
+        ...complaintData,
+        archivedAt: new Date().toISOString()
+    });
+    
+    await deleteDoc(complaintRef);
+    
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `complaints/${complaintId}`);
   }
 };

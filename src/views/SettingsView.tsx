@@ -1,16 +1,16 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard } from "lucide-react";
 import { motion } from "motion/react";
 import { subscribeToSettings, saveSettings, AppSettings, resetDatabase } from "../lib/db";
 import { useTranslation } from "react-i18next";
-import { Trash2, LogOut, MessageCircle } from "lucide-react";
+import { Trash2, LogOut, MessageCircle, Loader2 } from "lucide-react";
 import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function SettingsView() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security'>('billing');
+  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway'>('billing');
   const [settings, setSettings] = useState<AppSettings>({
     upiQrCodeImage: null,
     billingAmount: 200,
@@ -20,6 +20,8 @@ export function SettingsView() {
     defaultBillingDate: '1',
     metaWhatsAppApiKey: '',
     metaWhatsAppPhoneNumberId: '',
+    paymentGatewayKey: '',
+    paymentGatewaySecret: '',
     automation: {
       billingLifecycle: true,
       ruleBased: true,
@@ -78,12 +80,17 @@ export function SettingsView() {
       
       const isMissingKeys = !apiKey || !phoneId;
       const isInvalidTokenStructure = apiKey.length > 0 && apiKey.length < 50; // Meta tokens are very long, usually starting with EA
+      const isInvalidPhoneId = phoneId.length > 0 && !/^\d+$/.test(phoneId);
 
-      if (isMissingKeys || isInvalidTokenStructure) {
+      if (isMissingKeys || isInvalidTokenStructure || isInvalidPhoneId) {
         setIsSaving(false);
+        let errorReason = "Your Meta WhatsApp API Key or Phone Number ID is missing or invalid.";
+        if (isInvalidTokenStructure) errorReason = "Meta Bearer tokens are typically long strings starting with 'EAA...'.";
+        if (isInvalidPhoneId) errorReason = "Your Phone Number ID must contain ONLY numbers (e.g., 1012345678). Do NOT paste the entire URL or words like 'messages'.";
+
         showAlert(
           "WhatsApp Configuration Incomplete",
-          "Your Meta WhatsApp API Key or Phone Number ID is missing or invalid. Meta Bearer tokens are typically long strings starting with 'EAA...'. " +
+          `${errorReason} ` +
           "To ensure the app continues to function perfectly, the notification method has been safely fallen back to the failproof 'Public Portal Link (Manual)'. " +
           "Please check your Meta Developer Dashboard > WhatsApp > API Setup for the correct keys before enabling Automated Attachments."
         );
@@ -199,7 +206,8 @@ export function SettingsView() {
           disabled={isSaving}
           className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 disabled:opacity-70"
         >
-          <Save className="w-4 h-4" /> {isSaving ? "Saving..." : "Save All Changes"}
+          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+          {isSaving ? "Saving..." : "Save All Changes"}
         </motion.button>
       </div>
 
@@ -226,6 +234,18 @@ export function SettingsView() {
         >
           <div className="flex items-center gap-2">
             <MessageCircle className="w-4 h-4" /> WhatsApp API
+          </div>
+        </button>
+        <button
+          onClick={() => setActiveTab('gateway')}
+          className={`px-6 py-3 font-bold text-sm transition-colors whitespace-nowrap ${
+            activeTab === 'gateway' 
+              ? 'text-indigo-600 border-b-2 border-indigo-600' 
+              : 'neu-text-muted hover:text-indigo-600'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <CreditCard className="w-4 h-4" /> Payment Gateway
           </div>
         </button>
         <button
@@ -418,7 +438,8 @@ export function SettingsView() {
                   { key: 'lateFee', label: 'Auto Late Fee & Waiver' },
                   { key: 'scheduledBilling', label: 'Scheduled Billing Cycles' },
                   { key: 'bulkProcessing', label: 'Bulk Processing Engine' },
-                  { key: 'smartNotifications', label: 'Smart Notification Timing' }
+                  { key: 'smartNotifications', label: 'Smart Notification Timing' },
+                  { key: 'autoShareReports', label: 'Automate Report Sharing' }
                 ].map(item => (
                   <label key={item.key} className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer">
                     <span className="text-sm font-bold">{item.label}</span>
@@ -546,6 +567,61 @@ export function SettingsView() {
         </motion.div>
       )}
 
+      {activeTab === 'gateway' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <Card className="border-2 border-indigo-500/20 mb-6">
+            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+              <div className="p-2 neu-pressed rounded-xl text-indigo-600">
+                <CreditCard className="w-6 h-6" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Enterprise Payment Gateway</CardTitle>
+                <p className="text-sm neu-text-muted">Connect your Bank API (Razorpay, Stripe, Cashfree) to automatically clear balances via Webhooks.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6">
+              <div className="grid gap-6 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
+                    Gateway API Key / ID
+                  </label>
+                  <input
+                    type="password"
+                    value={settings.paymentGatewayKey || ''}
+                    onChange={(e) => setSettings({ ...settings, paymentGatewayKey: e.target.value })}
+                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                    placeholder="rzp_live_xxxxxxxxxx"
+                  />
+                  <p className="text-xs neu-text-muted ml-1 mt-1">Your public identifier for generating dynamic universal links.</p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
+                    Webhook Secret
+                  </label>
+                  <input
+                    type="password"
+                    value={settings.paymentGatewaySecret || ''}
+                    onChange={(e) => setSettings({ ...settings, paymentGatewaySecret: e.target.value })}
+                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                    placeholder="••••••••••••••"
+                  />
+                  <p className="text-xs neu-text-muted ml-1 mt-1">Used to securely verify payment completions anonymously triggered by the bank.</p>
+                </div>
+              </div>
+
+              <div className="mt-6 p-4 border border-indigo-500/20 rounded-xl bg-indigo-500/5">
+                <h4 className="font-bold text-sm text-indigo-600 mb-2">How to use Webhooks</h4>
+                <p className="text-xs neu-text-muted mb-2">When implementing a dynamic QR Code, instruct your provider to send a `POST` request to:</p>
+                <code className="text-xs font-mono bg-black/10 px-2 py-1 rounded block mb-2 break-all text-blue-600 font-bold">
+                  {window.location.origin}/api/payment-webhook/{auth.currentUser?.uid || 'user_id'}
+                </code>
+                <p className="text-xs neu-text-muted">If this section is left blank, the system natively falls back to Manual Portal Receipt Approval.</p>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
       {activeTab === 'security' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
           <motion.div 
@@ -567,9 +643,9 @@ export function SettingsView() {
                 whileTap={{ scale: 0.95 }}
                 onClick={handleResetDatabase}
                 disabled={isResetting}
-                className="px-6 py-3 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold shadow-lg shadow-rose-500/10 disabled:opacity-70 flex items-center justify-center gap-2 w-full sm:w-auto"
+                className="px-6 py-3 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold shadow-lg shadow-rose-500/10 disabled:opacity-70 flex items-center justify-center gap-2 w-full sm:w-auto transition-colors"
               >
-                <Trash2 className="w-4 h-4" />
+                {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 {isResetting ? "Resetting..." : "Reset All Workspace Data"}
               </motion.button>
               <p className="text-xs neu-text-muted flex-1 min-w-[200px] mt-2 sm:mt-0">

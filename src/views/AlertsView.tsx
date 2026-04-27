@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send } from "lucide-react";
+import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer } from "../lib/db";
 import { sendWhatsAppNotification } from "../lib/automation";
@@ -11,6 +11,7 @@ export function AlertsView() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
+  const [notifyingId, setNotifyingId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubCustomers = subscribeToCustomers(setCustomers);
@@ -22,6 +23,12 @@ export function AlertsView() {
   }, []);
 
   const [viewMode, setViewMode] = useState<'all' | 'paid' | 'paid_notified' | 'unpaid'>('all');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 50;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [viewMode]);
 
   if (!settings) return null;
 
@@ -30,6 +37,8 @@ export function AlertsView() {
   const unpaidCustomers = customers.filter(c => c.balance > 0);
 
   const displayedCustomers = viewMode === 'paid' ? paidCustomers : viewMode === 'paid_notified' ? paidNotifiedCustomers : viewMode === 'unpaid' ? unpaidCustomers : customers;
+  const totalPages = Math.ceil(displayedCustomers.length / itemsPerPage);
+  const paginatedCustomers = displayedCustomers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -40,6 +49,7 @@ export function AlertsView() {
   };
 
   const handleSendWhatsApp = async (customer: Customer, isPaid: boolean) => {
+    setNotifyingId(customer.id!);
     let message = "";
     let attachment: Blob | undefined = undefined;
     
@@ -61,6 +71,7 @@ export function AlertsView() {
       }
     }
     const result = await sendWhatsAppNotification(customer, message, settings, attachment, attachment ? 'payment_qr.png' : undefined, false);
+    setNotifyingId(null);
     
     if (!result.success) {
       alert(`Could not notify ${customer.name}: ${result.error}`);
@@ -73,15 +84,16 @@ export function AlertsView() {
   };
 
   const handleNotifyAllPaid = async () => {
-    if (paidCustomers.length === 0) return;
+    const targets = paidCustomers.filter(c => c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
+    if (targets.length === 0) return;
     
-    if (confirm(`Are you sure you want to notify all ${paidCustomers.length} paid customers?`)) {
+    if (confirm(`Are you sure you want to notify all ${targets.length} valid paid customers?`)) {
       setIsSendingBulk(true);
       setBulkProgress(0);
       
       let errors = [];
-      for (let i = 0; i < paidCustomers.length; i++) {
-        const customer = paidCustomers[i];
+      for (let i = 0; i < targets.length; i++) {
+        const customer = targets[i];
         const message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
 
         const result = await sendWhatsAppNotification(customer, message, settings, undefined, undefined, true);
@@ -91,7 +103,7 @@ export function AlertsView() {
            errors.push(`${customer.name}: ${result.error}`);
         }
         
-        setBulkProgress(Math.floor(((i + 1) / paidCustomers.length) * 100));
+        setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
@@ -99,21 +111,22 @@ export function AlertsView() {
       if (errors.length > 0) {
          alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: Make sure recipients are in your Meta Developer allowed list if using a test number.`);
       } else {
-         alert("All paid customers have been notified!");
+         alert("All valid paid customers have been notified!");
       }
     }
   };
 
   const handleNotifyAllUnpaid = async () => {
-    if (unpaidCustomers.length === 0) return;
+    const targets = unpaidCustomers.filter(c => c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
+    if (targets.length === 0) return;
     
-    if (confirm(`Are you sure you want to notify all ${unpaidCustomers.length} unpaid customers?`)) {
+    if (confirm(`Are you sure you want to notify all ${targets.length} valid unpaid customers?`)) {
       setIsSendingBulk(true);
       setBulkProgress(0);
       
       let errors = [];
-      for (let i = 0; i < unpaidCustomers.length; i++) {
-        const customer = unpaidCustomers[i];
+      for (let i = 0; i < targets.length; i++) {
+        const customer = targets[i];
         const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
         const totalAmount = customer.balance + penaltyAmount;
         const message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending. Please pay immediately to avoid service disconnection.`;
@@ -132,7 +145,7 @@ export function AlertsView() {
            errors.push(`${customer.name}: ${result.error}`);
         }
         
-        setBulkProgress(Math.floor(((i + 1) / unpaidCustomers.length) * 100));
+        setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
         
         // Small delay to prevent rate limits
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -142,7 +155,7 @@ export function AlertsView() {
       if (errors.length > 0) {
          alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: If using a Meta test number, recipients must be in your allowed list.`);
       } else {
-         alert("All unpaid customers have been notified!");
+         alert("All valid unpaid customers have been notified!");
       }
     }
   };
@@ -168,7 +181,7 @@ export function AlertsView() {
             >
               {isSendingBulk ? (
                 <>
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   Notifying... {bulkProgress}%
                 </>
               ) : (
@@ -195,7 +208,7 @@ export function AlertsView() {
               >
                 {isSendingBulk ? (
                   <>
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <Loader2 className="w-4 h-4 animate-spin" />
                     Notifying... {bulkProgress}%
                   </>
                 ) : (
@@ -300,7 +313,7 @@ export function AlertsView() {
                 </tr>
               </thead>
               <tbody>
-                {displayedCustomers.map((customer, i) => {
+                {paginatedCustomers.map((customer, i) => {
                   const isPaid = customer.balance === 0;
                   return (
                     <motion.tr 
@@ -319,7 +332,9 @@ export function AlertsView() {
                         {formatCurrency(customer.balance)}
                       </td>
                       <td className="px-4 py-4 text-center">
-                        {isPaid ? (
+                        {!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10 ? (
+                          <span className="px-2 py-1 bg-slate-200 text-slate-700 rounded-full text-xs font-bold">Suspended</span>
+                        ) : isPaid ? (
                           <span className={`px-2 py-1 rounded-full text-xs font-bold ${customer.paymentNotified ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>
                             {customer.paymentNotified ? 'Paid & Notified' : 'Paid'}
                           </span>
@@ -328,21 +343,23 @@ export function AlertsView() {
                         )}
                       </td>
                       <td className="px-4 py-4 text-center">
-                        {(!isPaid || !customer.paymentNotified) && (
-                          <button 
-                            onClick={() => handleSendWhatsApp(customer, isPaid)}
-                            className={`px-3 py-2 text-white rounded-xl text-xs font-bold shadow-lg transition-colors inline-flex items-center gap-2 ${
-                              isPaid ? 'bg-[#25D366] shadow-[#25D366]/30 hover:bg-[#1ebd5a]' : 'bg-rose-600 shadow-rose-500/30 hover:bg-rose-700'
-                            }`}
-                          >
-                            <MessageCircle className="w-4 h-4" /> Notify
-                          </button>
+                        {(!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) ? null : (!isPaid || !customer.paymentNotified) && (
+                            <button 
+                              onClick={() => handleSendWhatsApp(customer, isPaid)}
+                              disabled={notifyingId === customer.id}
+                              className={`px-3 py-2 text-white rounded-xl text-xs font-bold shadow-lg transition-colors inline-flex items-center gap-2 ${
+                                isPaid ? 'bg-[#25D366] shadow-[#25D366]/30 hover:bg-[#1ebd5a]' : 'bg-rose-600 shadow-rose-500/30 hover:bg-rose-700'
+                              } disabled:opacity-70`}
+                            >
+                              {notifyingId === customer.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
+                              {notifyingId === customer.id ? 'Sending...' : 'Notify'}
+                            </button>
                         )}
                       </td>
                     </motion.tr>
                   );
                 })}
-                {displayedCustomers.length === 0 && (
+                {paginatedCustomers.length === 0 && (
                   <tr>
                     <td colSpan={5} className="px-4 py-8 text-center neu-text-muted">
                       No customers found in this category.
@@ -351,6 +368,34 @@ export function AlertsView() {
                 )}
               </tbody>
             </table>
+            
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-4 py-4 border-t border-[var(--shadow-dark)]">
+                <span className="text-sm neu-text-muted">
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, displayedCustomers.length)} of {displayedCustomers.length} customers
+                </span>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1 neu-flat rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+                  >
+                    Previous
+                  </button>
+                  <div className="px-3 py-1 text-sm font-medium flex items-center">
+                    Page {currentPage} of {totalPages}
+                  </div>
+                  <button 
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1 neu-flat rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

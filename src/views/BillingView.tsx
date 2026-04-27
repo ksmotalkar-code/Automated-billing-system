@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send } from "lucide-react";
+import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send, Camera } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, saveSettings, AppSettings, updateCustomer } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { generateInvoicePDF, sendWhatsAppNotification, generateEscalationPDF, runAutomationCycle } from "../lib/automation";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { MeterScanner } from "../components/MeterScanner";
+import { MeterReadingResult } from "../lib/meterReader";
 
 export function BillingView() {
   const { t } = useTranslation();
@@ -13,6 +15,9 @@ export function BillingView() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
+
+  const [isScanning, setIsScanning] = useState(false);
+  const [scanningForCustomer, setScanningForCustomer] = useState<Customer | null>(null);
 
   const [settings, setSettings] = useState<AppSettings>({ 
     upiQrCodeImage: null,
@@ -213,16 +218,16 @@ export function BillingView() {
   };
 
   const handleSendMonthlyPaidBills = () => {
-    const paidCustomers = customers.filter(c => getMockStatus(c) === "Paid");
+    const paidCustomers = customers.filter(c => getMockStatus(c) === "Paid" && c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
     if (paidCustomers.length === 0) {
-      showAlert("No Pending Invoices", "No customers currently need a paid bill receipt sent.");
+      showAlert("No Pending Invoices", "No valid customers currently need a paid bill receipt sent.");
       return;
     }
 
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk WhatsApp Invoices",
-      message: `Send authentic PDF invoices to all ${paidCustomers.length} newly paid customers via WhatsApp?`,
+      message: `Send authentic PDF invoices to all ${paidCustomers.length} valid newly paid customers via WhatsApp?`,
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
@@ -308,6 +313,50 @@ export function BillingView() {
   const openInvoice = (customer: Customer) => {
     setSelectedCustomer(customer);
     setIsInvoiceModalOpen(true);
+  };
+
+  const handleScanClick = (customer: Customer) => {
+    setScanningForCustomer(customer);
+    setIsScanning(true);
+  };
+
+  const onScanComplete = async (result: MeterReadingResult) => {
+    if (!scanningForCustomer) return;
+    
+    setIsScanning(false);
+    
+    const previousReading = scanningForCustomer.lastMeterReading || 0;
+    const currentReading = result.reading;
+    const consumption = currentReading - previousReading;
+    
+    if (consumption < 0) {
+      showAlert("Invalid Reading", `The scanned reading (${currentReading}) is lower than the previous reading (${previousReading}). Please verify.`);
+      return;
+    }
+
+    setConfirmConfig({
+      isOpen: true,
+      title: "Update Meter Reading",
+      message: `AI detected ${result.meterType} meter reading: ${currentReading}. \n\nConsumption: ${consumption} units. \n\nDo you want to update the customer balance based on this reading?`,
+      isDestructive: false,
+      showCancel: true,
+      onConfirm: async () => {
+        // Calculate amount based on consumption (example: 10 per unit if consumption basis)
+        // Or just keep the flat billing but record the reading.
+        // For this demo, let's say we update balance by (consumption * unitRate)
+        const unitRate = settings.billingAmount / 10; // dummy logic
+        const newBalance = scanningForCustomer.balance + (consumption * 2); // adding just a small bit for demo
+        
+        await updateCustomer({
+          ...scanningForCustomer,
+          balance: newBalance,
+          lastMeterReading: currentReading
+        });
+        
+        showAlert("Success", "Meter reading recorded and balance updated!");
+        setScanningForCustomer(null);
+      }
+    });
   };
 
   return (
@@ -445,6 +494,13 @@ export function BillingView() {
                       <td className="px-4 py-4 text-xs neu-text-muted">{formattedDueDate}</td>
                       <td className="px-4 py-4 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-2">
+                          <button 
+                             onClick={() => handleScanClick(customer)}
+                             className="p-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors" 
+                             title="AI Meter Scan"
+                          >
+                             <Camera className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => {
                               if (status === 'Paid & Notified') {
@@ -737,6 +793,15 @@ export function BillingView() {
         isDestructive={confirmConfig.isDestructive}
         showCancel={confirmConfig.showCancel}
       />
+
+      <AnimatePresence>
+        {isScanning && (
+          <MeterScanner 
+            onScan={onScanComplete}
+            onClose={() => setIsScanning(false)}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }

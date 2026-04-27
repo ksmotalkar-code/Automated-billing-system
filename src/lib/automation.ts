@@ -71,6 +71,11 @@ export const sendWhatsAppNotification = async (
   attachmentName?: string,
   isBulkMode?: boolean
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
+  if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
+    console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
+    return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
+  }
+
   if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
     whatsappService.updateConfig(settings.metaWhatsAppApiKey, settings.metaWhatsAppPhoneNumberId);
   }
@@ -183,11 +188,20 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
     for (const customer of customers) {
       if (customer.status === 'Active') {
+        const newBalance = customer.balance + settings.billingAmount;
         await updateCustomer({ 
           ...customer, 
-          balance: customer.balance + settings.billingAmount,
-          invoiceSent: false 
+          balance: newBalance,
+          invoiceSent: false,
+          paymentNotified: false
         });
+
+        // If smart notifications are enabled, automatically text them their new bill
+        if (automation.smartNotifications && automation.bulkProcessing) {
+          const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
+          const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
+          sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto billing notice error", e));
+        }
       }
     }
     updatedSettings.lastBillingDate = now.toISOString();

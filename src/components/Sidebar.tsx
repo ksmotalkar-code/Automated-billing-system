@@ -103,7 +103,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
           whileHover={{ scale: 1.2, x: 5 }}
           whileTap={{ scale: 0.9 }}
           onClick={() => setIsExpanded(!isExpanded)}
-          className="hidden md:flex p-1.5 neu-flat rounded-lg hover:neu-pressed absolute -right-3 top-6 bg-[var(--bg-color)] border border-[var(--shadow-dark)] z-50 shadow-md"
+          className="flex p-1.5 neu-flat rounded-lg hover:neu-pressed absolute -right-3 top-6 bg-[var(--bg-color)] border border-[var(--shadow-dark)] z-50 shadow-md"
         >
           {isExpanded ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </motion.button>

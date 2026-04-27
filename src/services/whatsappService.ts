@@ -24,15 +24,23 @@ class WhatsAppService {
   }
 
   public updateConfig(apiKey: string | null, phoneNumberId: string | null) {
-    if (apiKey) this.apiKey = apiKey;
-    if (phoneNumberId) this.phoneNumberId = phoneNumberId;
+    if (apiKey) this.apiKey = apiKey.trim();
+    if (phoneNumberId) {
+      let cleaned = phoneNumberId.trim();
+      // If user accidentally pasted the URL, extract the ID
+      const match = cleaned.match(/v\d+\.\d+\/(\d+)\/messages/);
+      if (match) {
+        cleaned = match[1];
+      }
+      this.phoneNumberId = cleaned;
+    }
   }
 
   /**
    * Checks if the API is configured and ready to use
    */
   public isConfigured(): boolean {
-    return !!(this.apiKey && this.phoneNumberId);
+    return !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
   }
 
   /**
@@ -41,8 +49,8 @@ class WhatsAppService {
    */
   public async sendMessage(params: WhatsAppMessage): Promise<{ success: boolean; messageId?: string; error?: string }> {
     if (!this.isConfigured()) {
-      console.warn('WhatsApp API is not configured. Falling back to manual mode or ignoring.');
-      return { success: false, error: 'API_NOT_CONFIGURED' };
+      console.warn('WhatsApp API is not configured or Phone Number ID is invalid. Falling back to manual mode.');
+      return { success: false, error: 'API_NOT_CONFIGURED_OR_INVALID_ID' };
     }
 
     try {

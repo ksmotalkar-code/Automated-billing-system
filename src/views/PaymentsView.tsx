@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle } from "lucide-react";
+import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer, addTransaction, subscribeToPendingReceipts, updateReceiptStatus } from "../lib/db";
 import { PaymentReceipt } from "../lib/portal";
@@ -24,6 +24,9 @@ export function PaymentsView() {
   const [isBulkConfirmModalOpen, setIsBulkConfirmModalOpen] = useState(false);
   const [bulkTransactionId, setBulkTransactionId] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
+  
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isActioningReceipt, setIsActioningReceipt] = useState<string | null>(null);
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -135,6 +138,7 @@ export function PaymentsView() {
       return;
     }
 
+    setIsConfirming(true);
     try {
       // Update customer balance
       const updatedCustomer = {
@@ -154,16 +158,22 @@ export function PaymentsView() {
       setIsPaymentModalOpen(false);
       showAlert("Payment Confirmed", `Payment of ${formatCurrency(amount)} confirmed successfully!`);
 
-      // Automatically send invoice if balance is fully paid and WhatsApp API is configured
+      // Automatically send invoice or receipt
       if (updatedCustomer.balance === 0) {
-        const message = `Dear ${updatedCustomer.name}, your water bill has been PAID. Thank you for your promptness! Attached is your official invoice.`;
+        const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
         const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+      } else {
+        const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
       }
     } catch (error) {
       console.error("Payment confirmation error:", error);
       showAlert("Error", "Failed to confirm payment. Please check your connection and try again.");
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -181,15 +191,22 @@ export function PaymentsView() {
       return;
     }
 
+    setIsConfirming(true);
     try {
       for (const customer of customersToUpdate) {
         const amount = customer.balance;
-        await updateCustomer({ ...customer, balance: 0 });
+        const updatedCustomer = { ...customer, balance: 0, invoiceSent: true, paymentNotified: true };
+        await updateCustomer(updatedCustomer);
         await addTransaction({
           customerId: customer.id,
           amount: amount,
           transactionId: bulkTransactionId.trim()
         });
+
+        // Background auto-notify for bulk manual payments
+        const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, true).catch(err => console.error("Auto notify error:", err));
       }
 
       setSelectedCustomerIds([]);
@@ -199,6 +216,8 @@ export function PaymentsView() {
     } catch (error) {
       console.error("Bulk payment error:", error);
       showAlert("Partial Failure", "Failed to process bulk payments. Some records may not have updated.");
+    } finally {
+      setIsConfirming(false);
     }
   };
 
@@ -209,6 +228,7 @@ export function PaymentsView() {
       return;
     }
 
+    setIsActioningReceipt(`${receipt.id}-approve`);
     try {
       const updatedCustomer = {
         ...customer,
@@ -230,18 +250,25 @@ export function PaymentsView() {
       showAlert("Approved", `Receipt approved and payment of ${formatCurrency(receipt.amount)} recorded.`);
 
       if (updatedCustomer.balance === 0) {
-        const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now PAID. Attached is your official invoice.`;
+        const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official invoice.`;
         const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+      } else {
+        const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(receipt.amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
       }
     } catch (error) {
       console.error("Error approving receipt:", error);
       showAlert("Error", "Failed to approve receipt.");
+    } finally {
+      setIsActioningReceipt(null);
     }
   };
 
   const handleRejectReceipt = async (receiptId: string) => {
+    setIsActioningReceipt(`${receiptId}-reject`);
     try {
       await updateReceiptStatus(receiptId, 'Rejected');
       setIsReceiptModalOpen(false);
@@ -249,6 +276,8 @@ export function PaymentsView() {
     } catch (error) {
       console.error("Error rejecting receipt:", error);
       showAlert("Error", "Failed to reject receipt.");
+    } finally {
+      setIsActioningReceipt(null);
     }
   };
 
@@ -389,15 +418,19 @@ export function PaymentsView() {
                       <div className="flex gap-2 mt-auto">
                         <button 
                           onClick={() => handleRejectReceipt(receipt.id)}
-                          className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-sm font-bold transition-colors flex justify-center items-center gap-1"
+                          disabled={isActioningReceipt !== null}
+                          className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-sm font-bold transition-colors flex justify-center items-center gap-1 disabled:opacity-50"
                         >
-                          <XCircle className="w-4 h-4" /> Reject
+                          {isActioningReceipt === `${receipt.id}-reject` ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                          {isActioningReceipt === `${receipt.id}-reject` ? 'Rejecting...' : 'Reject'}
                         </button>
                         <button 
                           onClick={() => handleApproveReceipt(receipt)}
-                          className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold shadow-md shadow-emerald-500/20 transition-colors flex justify-center items-center gap-1"
+                          disabled={isActioningReceipt !== null}
+                          className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold shadow-md shadow-emerald-500/20 transition-colors flex justify-center items-center gap-1 disabled:opacity-50"
                         >
-                          <Check className="w-4 h-4" /> Approve
+                          {isActioningReceipt === `${receipt.id}-approve` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                          {isActioningReceipt === `${receipt.id}-approve` ? 'Approving...' : 'Approve'}
                         </button>
                       </div>
                     </motion.div>
@@ -556,9 +589,11 @@ export function PaymentsView() {
                   </button>
                   <button 
                     onClick={handleBulkConfirm}
-                    className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors"
+                    disabled={isConfirming}
+                    className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
                   >
-                    Confirm All
+                    {isConfirming ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+                    {isConfirming ? "Confirming..." : "Confirm All"}
                   </button>
                 </div>
               </div>
@@ -641,9 +676,11 @@ export function PaymentsView() {
 
                 <button 
                   onClick={handleConfirmPayment}
-                  className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                  disabled={isConfirming}
+                  className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
                 >
-                  <CheckCircle2 className="w-5 h-5" /> Confirm Payment Received
+                  {isConfirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                  {isConfirming ? "Confirming..." : "Confirm Payment Received"}
                 </button>
               </div>
             </motion.div>
@@ -682,14 +719,18 @@ export function PaymentsView() {
                 <div className="flex gap-2">
                   <button 
                     onClick={() => handleRejectReceipt(selectedReceipt.id)}
-                    className="px-6 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg font-bold transition-colors"
+                    disabled={isActioningReceipt !== null}
+                    className="px-6 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg font-bold transition-colors flex items-center gap-2 disabled:opacity-50"
                   >
+                    {isActioningReceipt === `${selectedReceipt.id}-reject` ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                     Reject
                   </button>
                   <button 
                     onClick={() => handleApproveReceipt(selectedReceipt)}
-                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-lg transition-colors"
+                    disabled={isActioningReceipt !== null}
+                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-lg transition-colors flex items-center gap-2 disabled:opacity-50"
                   >
+                    {isActioningReceipt === `${selectedReceipt.id}-approve` ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                     Approve Payment
                   </button>
                 </div>

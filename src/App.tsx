@@ -25,6 +25,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { runAutomationCycle } from "./lib/automation";
 
 import { PortalView } from "./views/PortalView";
+import { ConnectivityStatus } from "./components/ConnectivityStatus";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("dashboard");
@@ -102,10 +103,11 @@ export default function App() {
 
   // Run automation cycle when data is ready
   useEffect(() => {
-    // Moved to backend server (server.ts) via /api/cron/daily
-    // if (user && customers.length > 0 && settings) {
-    //   runAutomationCycle(customers, settings);
-    // }
+    // If the server environment does not have firebase-admin cron logic running,
+    // we use the local dashboard as the execution engine while it is open.
+    if (user && customers.length > 0 && settings && settings.automation) {
+       runAutomationCycle(customers, settings).catch(e => console.error("Auto Cycle Error", e));
+    }
   }, [user, customers.length, settings]);
 
   useEffect(() => {
@@ -116,7 +118,9 @@ export default function App() {
   // Auto-collapse sidebar on smaller screens
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth < 1024) {
+      if (window.innerWidth < 768) {
+        setIsExpanded(true); // Mobile uses an overlay, always expanded when opened
+      } else if (window.innerWidth < 1024) {
         setIsExpanded(false);
       } else {
         setIsExpanded(true);
@@ -284,6 +288,7 @@ export default function App() {
 
   return (
     <div className={`flex h-screen neu-bg font-sans neu-text overflow-hidden transition-colors duration-300 relative ${uiStyle === 'glassmorphism' ? 'bg-gradient-to-br from-[var(--bg-color)] to-slate-900/10' : ''}`}>
+      <ConnectivityStatus />
       {/* Background Motion Graphics */}
       <div className={`absolute inset-0 overflow-hidden pointer-events-none z-0 ${uiStyle === 'glassmorphism' ? 'opacity-70' : 'opacity-30'}`}>
         <motion.div 
@@ -342,7 +347,7 @@ export default function App() {
             {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
           <div className="hidden md:flex items-center gap-4 ml-auto">
-            <span className="text-sm font-medium">Admin</span>
+            <span className="text-sm font-medium">{user?.email || "Admin"}</span>
             <button 
               onClick={logout}
               className="px-4 py-2 neu-flat rounded-xl text-sm font-bold text-rose-500 hover:bg-rose-500/10 transition-colors"

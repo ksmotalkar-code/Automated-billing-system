@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect, useRef } from "react";
 import { Customer, subscribeToCustomers, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, deleteAllCustomers, subscribeToSettings, AppSettings } from "../lib/db";
@@ -26,7 +26,9 @@ export function CustomersView() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [showFaultyOnly, setShowFaultyOnly] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isSavingUser, setIsSavingUser] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
@@ -43,67 +45,62 @@ export function CustomersView() {
     showAlert("Success", "Customers data exported successfully.");
   };
 
+  const [isUploadStagingModalOpen, setIsUploadStagingModalOpen] = useState(false);
+  const [stagingCustomers, setStagingCustomers] = useState<any[]>([]);
+  const [stagingPage, setStagingPage] = useState(1);
+  const stagingLimit = 50;
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!auth.currentUser) {
-       showAlert("Auth Error", "You must be authenticated to import data.");
-       return;
-    }
-
-    setIsImporting(true);
     try {
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data);
-      const firstSheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[firstSheetName];
-      
-      // Expected columns: Name, Mobile, Balance, Status
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
 
-      let importedCount = 0;
+      const parsedCustomers = jsonData.map(row => ({
+          id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+          name: String(row.Name || row.name || row.Customer || "").trim(),
+          mobileNumber: String(row.Mobile || row.mobile || row.Phone || row.mobileNumber || "").trim(),
+          balance: parseFloat(row.Balance || row.balance || "0") || 0,
+          status: (row.Status || row.status || "Active").toString().toLowerCase() === "suspended" ? "Suspended" : "Active",
+          ownerId: auth.currentUser?.uid,
+          createdAt: new Date().toISOString()
+      })).filter(c => c.name && c.mobileNumber);
+      
+      setStagingCustomers(parsedCustomers);
+      setStagingPage(1);
+      setIsUploadStagingModalOpen(true);
+    } catch (err) {
+      console.error(err);
+      showAlert("Import Error", "Failed to parse file.");
+    }
+  };
+
+  const confirmBulkUpload = async () => {
+    setIsImporting(true);
+    try {
       const batchLimit = 500;
-      let uiCustomers = [...jsonData];
-
-      for (let i = 0; i < uiCustomers.length; i += batchLimit) {
+      for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const batch = writeBatch(db);
-        const chunk = uiCustomers.slice(i, i + batchLimit);
-        
-        for (const row of chunk) {
-          // Robust row parsing
-          let rawName = row.Name || row.name || row.Customer || "";
-          let rawMobile = row.Mobile || row.mobile || row.Phone || row.mobileNumber || "";
-          let rawBalance = parseFloat(row.Balance || row.balance || "0") || 0;
-          let rawStatus = row.Status || row.status || "Active";
-
-          if (rawName && rawMobile) {
-            const id = `CUST-${uuidv4().substring(0, 8).toUpperCase()}`;
-            const docRef = doc(db, 'customers', id);
-            batch.set(docRef, {
-              id,
-              name: String(rawName).trim(),
-              mobileNumber: String(rawMobile).trim(),
-              balance: rawBalance,
-              status: rawStatus.toString().toLowerCase() === "suspended" ? "Suspended" : "Active",
-              ownerId: auth.currentUser.uid,
-              createdAt: new Date().toISOString()
-            });
-            importedCount++;
-          }
+        const chunk = stagingCustomers.slice(i, i + batchLimit);
+        for (const customer of chunk) {
+          const docRef = doc(db, 'customers', customer.id);
+          batch.set(docRef, customer);
         }
         await batch.commit();
       }
-
-      showAlert("Import Complete", `Successfully imported ${importedCount} customers from ${file.name}.`);
+      showAlert("Import Complete", `Successfully imported ${stagingCustomers.length} customers.`);
+      setIsUploadStagingModalOpen(false);
+      setStagingCustomers([]);
     } catch (err) {
       console.error(err);
-      showAlert("Import Error", "Failed to parse or save the imported file. Ensure it contains Name and Mobile columns.");
+      showAlert("Import Error", "Failed to save the records.");
     } finally {
       setIsImporting(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -144,7 +141,15 @@ export function CustomersView() {
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 100;
+  const [itemsPerPage, setItemsPerPage] = useState(window.innerWidth < 768 ? 50 : 100);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setItemsPerPage(window.innerWidth < 768 ? 50 : 100);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const [newCustomer, setNewCustomer] = useState({
     name: "",
@@ -178,15 +183,13 @@ export function CustomersView() {
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Validation
-    const isMobileInvalid = newCustomer.mobileNumber && !/^\d{10}$/.test(newCustomer.mobileNumber);
-    const isNameInvalid = !newCustomer.name || typeof newCustomer.name !== 'string' || newCustomer.name.trim() === '';
-    
     let finalStatus = newCustomer.status;
-    if (isMobileInvalid || isNameInvalid) {
-      finalStatus = 'Faulty';
-    } else if (newCustomer.status === 'Faulty' && !isMobileInvalid && !isNameInvalid) {
-      finalStatus = 'Active';
+    if (!newCustomer.mobileNumber || !/^\d{10}$/.test(newCustomer.mobileNumber.replace(/\D/g, ''))) {
+      if (newCustomer.mobileNumber && newCustomer.mobileNumber.length > 0 && !/^\d{10}$/.test(newCustomer.mobileNumber)) {
+        showAlert("Validation Error", "Mobile number must be exactly 10 digits if provided.");
+        return;
+      }
+      finalStatus = 'Suspended';
     }
     
     if (newCustomer.balance < 0) {
@@ -194,44 +197,70 @@ export function CustomersView() {
       return;
     }
 
-    await addCustomer({ ...newCustomer, status: finalStatus });
-    setIsAddModalOpen(false);
-    setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
+    setIsSavingUser(true);
+    try {
+      await addCustomer({ ...newCustomer, status: finalStatus });
+      setIsAddModalOpen(false);
+      setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
+      setCurrentPage(1);
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCustomer) {
-      const isMobileInvalid = editingCustomer.mobileNumber && !/^\d{10}$/.test(editingCustomer.mobileNumber);
+      const isMobileInvalid = !editingCustomer.mobileNumber || editingCustomer.mobileNumber.replace(/\D/g, '').length < 10;
       const isNameInvalid = !editingCustomer.name || typeof editingCustomer.name !== 'string' || editingCustomer.name.trim() === '';
 
       let finalStatus = editingCustomer.status;
       if (isMobileInvalid || isNameInvalid) {
-        finalStatus = 'Faulty';
-      } else if (editingCustomer.status === 'Faulty' && !isMobileInvalid && !isNameInvalid) {
+        finalStatus = 'Suspended';
+      } else if (editingCustomer.status === 'Suspended' && !isMobileInvalid && !isNameInvalid) {
         finalStatus = 'Active';
       }
+
+      const originalCustomer = customers.find(c => c.id === editingCustomer.id);
+      const statusChanged = originalCustomer && originalCustomer.status !== finalStatus;
 
       if (editingCustomer.balance < 0) {
         showAlert("Validation Error", "Balance cannot be negative.");
         return;
       }
-      await updateCustomer({...editingCustomer, status: finalStatus});
-      setIsEditModalOpen(false);
-      setEditingCustomer(null);
+      setIsSavingUser(true);
+      try {
+        await updateCustomer({...editingCustomer, status: finalStatus});
+        
+        if (statusChanged && settings && settings.automation && finalStatus !== 'Suspended') {
+           let message = `Dear ${editingCustomer.name}, your account status has been updated to ${finalStatus}.`;
+           sendWhatsAppNotification({...editingCustomer, status: finalStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify status error:", err));
+        }
+
+        setIsEditModalOpen(false);
+        setEditingCustomer(null);
+      } finally {
+        setIsSavingUser(false);
+      }
     }
   };
 
   const toggleIsolateCustomer = (customer: Customer) => {
     const isSuspended = customer.status === 'Suspended';
+    const newStatus = isSuspended ? 'Active' : 'Suspended';
     setConfirmConfig({
       isOpen: true,
       title: isSuspended ? "Un-isolate Customer" : "Isolate Customer",
-      message: `Are you sure you want to change this customer's status to ${isSuspended ? 'Active' : 'Suspended'}?`,
+      message: `Are you sure you want to change this customer's status to ${newStatus}?`,
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        await updateCustomer({...customer, status: isSuspended ? 'Active' : 'Suspended'});
+        await updateCustomer({...customer, status: newStatus});
+        if (settings && settings.automation) {
+           let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
+           if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
+           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify isolate error:", err));
+        }
         setIsEditModalOpen(false);
         setEditingCustomer(null);
       }
@@ -315,6 +344,16 @@ export function CustomersView() {
       return;
     }
 
+    // Default manual action - currently isolated from automation
+    // To reenable automation, comment this block and uncomment the API config logic below.
+    const genericMessage = `Important Notice:\n\n${notifyMessage}`;
+    const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+    window.open(url, '_blank');
+    setIsNotifyModalOpen(false);
+    setNotifyMessage("");
+    return;
+
+    /* == ISOLATED AUTOMATION BLOCK ==
     // Fast fail if API is missing for bulk
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
        setIsNotifyModalOpen(false);
@@ -372,20 +411,32 @@ export function CustomersView() {
       setNotifyMessage("");
       showAlert("Success", `Notifications sent to ${activeCustomers.length} active customers.`);
     }
+    =============================== */
   };
 
-  const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.mobileNumber.includes(searchQuery)
-  );
+  const filteredCustomers = customers.filter(c => {
+    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.mobileNumber.includes(searchQuery);
+    
+    if (showFaultyOnly) {
+      return matchesSearch && c.status === 'Faulty';
+    } else {
+      return matchesSearch && c.status !== 'Faulty';
+    }
+  });
 
   const sortedCustomers = [...filteredCustomers].sort((a, b) => {
     // Always prioritize Faulty status
     if (a.status === 'Faulty' && b.status !== 'Faulty') return -1;
     if (a.status !== 'Faulty' && b.status === 'Faulty') return 1;
 
-    if (!sortConfig) return 0;
+    if (!sortConfig) {
+      if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
+      if (a.createdAt) return -1;
+      if (b.createdAt) return 1;
+      return 0;
+    }
     const { key, direction } = sortConfig;
     if (a[key]! < b[key]!) return direction === 'asc' ? -1 : 1;
     if (a[key]! > b[key]!) return direction === 'asc' ? 1 : -1;
@@ -422,13 +473,13 @@ export function CustomersView() {
           <h2 className="text-2xl font-bold tracking-tight">{t('Customers')}</h2>
           <p className="neu-text-muted">{t('Manage Accounts')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {selectedIds.length > 0 && (
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleDeleteBatch}
-              className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-500/30"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-500/30"
             >
               Delete Selected ({selectedIds.length})
             </motion.button>
@@ -438,7 +489,7 @@ export function CustomersView() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setIsNotifyModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30"
             >
               <Bell className="w-4 h-4" /> Notify
             </motion.button>
@@ -449,13 +500,13 @@ export function CustomersView() {
               whileTap={{ scale: 0.95 }}
               onClick={handleDeleteAll}
               disabled={isDeletingAll}
-              className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold shadow-lg shadow-rose-500/10 disabled:opacity-70"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold shadow-lg shadow-rose-500/10 disabled:opacity-70"
             >
               <Trash2 className="w-4 h-4" />
               {isDeletingAll ? "Deleting..." : "Delete All"}
             </motion.button>
           )}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap w-full sm:w-auto gap-2">
             <input 
               type="file" 
               accept=".xlsx,.xls,.csv" 
@@ -467,7 +518,7 @@ export function CustomersView() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={handleExport}
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/10"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/10"
             >
               <Download className="w-4 h-4" /> Export
             </motion.button>
@@ -476,7 +527,7 @@ export function CustomersView() {
               whileTap={{ scale: 0.95 }}
               onClick={() => fileInputRef.current?.click()}
               disabled={isImporting}
-              className="flex items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/10 disabled:opacity-70"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/10 disabled:opacity-70"
             >
               <Upload className="w-4 h-4" /> {isImporting ? 'Importing...' : 'Import'}
             </motion.button>
@@ -485,7 +536,7 @@ export function CustomersView() {
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setIsAddModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30"
+              className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30"
             >
               <Plus className="w-4 h-4" /> {t('Add Customer')}
             </motion.button>
@@ -494,20 +545,42 @@ export function CustomersView() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
-            <Search className="w-4 h-4 neu-text-muted" />
-            <input 
-              type="text" 
-              placeholder={t('Search')} 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm w-full neu-text"
-            />
+        <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-4 sm:space-y-0 pb-4">
+          <div className="flex flex-1 items-center gap-4 w-full">
+            <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
+              <Search className="w-4 h-4 neu-text-muted" />
+              <input 
+                type="text" 
+                placeholder={t('Search')} 
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent border-none outline-none text-sm w-full neu-text"
+              />
+            </div>
+            
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowFaultyOnly(!showFaultyOnly)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 ${
+                showFaultyOnly 
+                  ? 'bg-amber-100 text-amber-700 shadow-lg shadow-amber-500/20' 
+                  : 'bg-slate-100 text-slate-600'
+              }`}
+            >
+              <AlertTriangle className={`w-4 h-4 ${showFaultyOnly ? 'animate-pulse' : ''}`} />
+              <span>{showFaultyOnly ? 'Showing Faulty' : 'Show Faulty'}</span>
+              <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${showFaultyOnly ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                <motion.div 
+                  animate={{ x: showFaultyOnly ? 16 : 2 }}
+                  className="absolute top-1 w-2 h-2 bg-white rounded-full"
+                />
+              </div>
+            </motion.button>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="text-xs uppercase neu-text-muted border-b border-[var(--shadow-dark)]">
                 <tr>
@@ -601,6 +674,65 @@ export function CustomersView() {
                 )}
               </tbody>
             </table>
+          </div>
+            
+          <div className="md:hidden flex flex-col gap-3 mt-4 mb-4">
+            <div className="flex items-center gap-2 px-1 pb-2 border-b border-[var(--shadow-dark)]">
+               <input 
+                 type="checkbox"
+                 checked={selectedIds.length === paginatedCustomers.length && paginatedCustomers.length > 0}
+                 onChange={(e) => {
+                   if (e.target.checked) setSelectedIds(paginatedCustomers.map(c => c.id));
+                   else setSelectedIds([]);
+                 }}
+                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+               />
+               <span className="text-xs font-bold uppercase neu-text-muted tracking-widest leading-none mt-0.5">Select All Visible</span>
+            </div>
+            {paginatedCustomers.map((customer, i) => (
+              <motion.div
+                key={customer.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.05 }}
+                onClick={() => handleRowClick(customer)}
+                className="neu-flat p-4 flex flex-col gap-3 relative cursor-pointer border border-[var(--shadow-dark)]"
+              >
+                <div className="flex justify-between items-start">
+                   <div className="flex gap-4">
+                      <div className="pt-0.5">
+                        <input 
+                          type="checkbox"
+                          checked={selectedIds.includes(customer.id)}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            if (e.target.checked) setSelectedIds([...selectedIds, customer.id]);
+                            else setSelectedIds(selectedIds.filter(id => id !== customer.id));
+                          }}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div>
+                        <h4 className="font-bold text-base leading-tight tracking-tight">{customer.name}</h4>
+                        <p className="text-[10px] neu-text-muted font-mono mt-0.5 opacity-70">{customer.id}</p>
+                      </div>
+                   </div>
+                   <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex-shrink-0 ${
+                     customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+                   }`}>
+                     {customer.status}
+                   </span>
+                </div>
+                <div className="flex justify-between items-end mt-1 pl-8">
+                  <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
+                  <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
+                </div>
+              </motion.div>
+            ))}
+            {filteredCustomers.length === 0 && (
+              <div className="py-8 text-center text-sm font-medium neu-text-muted">No customers found.</div>
+            )}
+          </div>
             
             {/* Pagination Controls */}
             {totalPages > 1 && (
@@ -629,7 +761,6 @@ export function CustomersView() {
                 </div>
               </div>
             )}
-          </div>
         </CardContent>
       </Card>
 
@@ -715,9 +846,11 @@ export function CustomersView() {
                   </button>
                   <button 
                     type="submit"
-                    className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors"
+                    disabled={isSavingUser}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
                   >
-                    Save Customer
+                    {isSavingUser ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                    {isSavingUser ? "Saving..." : "Save Customer"}
                   </button>
                 </div>
               </form>
@@ -833,13 +966,88 @@ export function CustomersView() {
                     </button>
                     <button 
                       type="submit"
-                      className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors"
+                      disabled={isSavingUser}
+                      className="px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors disabled:opacity-70 flex items-center justify-center gap-2"
                     >
-                      Save Changes
+                      {isSavingUser ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                      {isSavingUser ? "Saving..." : "Save Changes"}
                     </button>
                   </div>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Upload Staging Modal */}
+        {isUploadStagingModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="neu-bg p-6 rounded-2xl w-full max-w-4xl shadow-2xl border border-white/20 max-h-[80vh] flex flex-col"
+            >
+              <h3 className="text-xl font-bold mb-4">Review Bulk Upload ({stagingCustomers.length} records)</h3>
+              <p className="text-xs neu-text-muted mb-4">Edit details below if needed before confirming the upload.</p>
+              <div className="flex-1 overflow-auto rounded-xl">
+                <table className="w-full text-sm text-left">
+                  <thead>
+                     <tr className="text-xs text-slate-500 uppercase bg-black/5">
+                        <th className="p-3 rounded-tl-xl">Name</th>
+                        <th className="p-3">Mobile</th>
+                        <th className="p-3 rounded-tr-xl">Balance</th>
+                     </tr>
+                  </thead>
+                  <tbody>
+                    {stagingCustomers.slice((stagingPage-1)*stagingLimit, stagingPage*stagingLimit).map((c, i) => {
+                      const globalIndex = (stagingPage-1)*stagingLimit + i;
+                      const updateField = (field: string, value: string) => {
+                        const newArr = [...stagingCustomers];
+                        newArr[globalIndex] = { ...newArr[globalIndex], [field]: field === 'balance' ? parseFloat(value) || 0 : value };
+                        setStagingCustomers(newArr);
+                      };
+                      return (
+                        <tr key={i} className="border-b border-black/5">
+                          <td className="p-2">
+                            <input 
+                              value={c.name} 
+                              onChange={e => updateField('name', e.target.value)} 
+                              className="w-full bg-transparent outline-none p-1 border-b border-transparent focus:border-indigo-500 transition"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              value={c.mobileNumber} 
+                              onChange={e => updateField('mobileNumber', e.target.value)} 
+                              className="w-full bg-transparent outline-none p-1 border-b border-transparent focus:border-indigo-500 transition"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input 
+                              type="number"
+                              value={c.balance} 
+                              onChange={e => updateField('balance', e.target.value)} 
+                              className="w-full bg-transparent outline-none p-1 border-b border-transparent focus:border-indigo-500 transition"
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex justify-between items-center mt-6 pt-4 border-t border-black/10">
+                 <div className="flex gap-2 items-center">
+                    <button onClick={() => setStagingPage(p=>Math.max(1, p-1))} className="neu-flat px-3 py-1.5 rounded-lg text-sm">Prev</button>
+                    <span className="text-sm font-medium">Page {stagingPage} of {Math.ceil(stagingCustomers.length/stagingLimit)}</span>
+                    <button onClick={() => setStagingPage(p=>Math.min(Math.ceil(stagingCustomers.length/stagingLimit), p+1))} className="neu-flat px-3 py-1.5 rounded-lg text-sm">Next</button>
+                 </div>
+                 <div className="flex gap-4">
+                    <button onClick={() => setIsUploadStagingModalOpen(false)} className="px-6 py-2 neu-flat rounded-xl font-medium">Cancel</button>
+                    <button onClick={confirmBulkUpload} className="px-6 py-2 bg-blue-600 text-white rounded-xl font-bold shadow-lg">Confirm Upload</button>
+                 </div>
+              </div>
             </motion.div>
           </div>
         )}
@@ -915,7 +1123,7 @@ export function CustomersView() {
                     >
                       {isSendingNotify ? (
                         <>
-                          <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                          <Loader2 className="w-4 h-4 animate-spin" />
                           Sending... {notifyProgress}%
                         </>
                       ) : (
