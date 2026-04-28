@@ -11,6 +11,7 @@ interface ConfirmModalProps {
   cancelText?: string;
   isDestructive?: boolean;
   showCancel?: boolean;
+  children?: React.ReactNode;
 }
 
 export function ConfirmModal({
@@ -22,7 +23,8 @@ export function ConfirmModal({
   confirmText = "Confirm",
   cancelText = "Cancel",
   isDestructive = false,
-  showCancel = true
+  showCancel = true,
+  children
 }: ConfirmModalProps) {
   return (
     <AnimatePresence>
@@ -53,6 +55,11 @@ export function ConfirmModal({
               <p className="neu-text leading-relaxed">
                 {message}
               </p>
+              {children && (
+                <div className="mt-4">
+                  {children}
+                </div>
+              )}
             </div>
 
             <div className="p-6 bg-black/5 flex justify-end gap-3">

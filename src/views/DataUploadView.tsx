@@ -4,8 +4,6 @@ import { Upload, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 }
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import * as XLSX from 'xlsx';
-import { PDFParse } from 'pdf-parse';
-import { Buffer } from 'buffer';
 import Papa from 'papaparse';
 import { saveUploadedData, importCustomersFromText } from "../lib/db";
 import { db, auth } from '../firebase';
@@ -72,17 +70,7 @@ export function DataUploadView() {
         setStatus({ type: 'success', message: `Successfully parsed ${jsonData.length} rows.` });
         setParsingLoading(false);
       } else if (selectedFile.name.endsWith('.pdf')) {
-        const data = await selectedFile.arrayBuffer();
-        const parser = new PDFParse({ data: Buffer.from(data) });
-        const pdfData = await parser.getText();
-        
-        const lines = pdfData.text.split('\n');
-        const extractedCustomers = lines
-          .filter(line => line.includes('Name') || line.includes('Mobile'))
-          .map(line => ({ raw: line }));
-          
-        setParsedData(extractedCustomers);
-        setStatus({ type: 'success', message: `Successfully extracted ${extractedCustomers.length} potential records from PDF.` });
+        setStatus({ type: 'error', message: 'PDF parsing is only supported via backend at this time. Please upload Excel or CSV files.' });
         setParsingLoading(false);
       } else {
         setStatus({ type: 'error', message: 'Unsupported file format. Please upload JSON, CSV, Excel or PDF.' });

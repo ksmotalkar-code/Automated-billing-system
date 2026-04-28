@@ -1,32 +1,52 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint } from "../lib/db";
+import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint, deleteComplaint } from "../lib/db";
 import { motion } from "motion/react";
 import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2 } from "lucide-react";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Resolved'>('All');
+  const [confirmConfig, setConfirmConfig] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    isDestructive: true,
+  });
 
   useEffect(() => {
     const unsub = subscribeToComplaints(setComplaints);
     return () => unsub();
   }, []);
 
-  const handleDelete = async (id: string) => {
-    if (confirm("Archive this complaint?")) {
-      await archiveComplaint(id);
-    }
+  const handleDelete = async (c: Complaint) => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete Complaint",
+      message: c.status === 'Resolved' ? "Are you sure you want to permanently delete this resolved complaint?" : "Are you sure you want to delete this pending complaint?",
+      isDestructive: true,
+      onConfirm: async () => {
+        await deleteComplaint(c.id);
+      }
+    });
   };
 
   const handleDeleteAllResolved = async () => {
     const resolved = complaints.filter(c => c.status === 'Resolved');
     if (resolved.length === 0) return;
-    if (confirm(`Archive all ${resolved.length} resolved complaints?`)) {
-      for (const c of resolved) {
-        await archiveComplaint(c.id);
+    setConfirmConfig({
+      isOpen: true,
+      title: "Delete All Resolved",
+      message: `Are you sure you want to permanently delete all ${resolved.length} resolved complaints?`,
+      isDestructive: true,
+      onConfirm: async () => {
+        for (const c of resolved) {
+          await deleteComplaint(c.id);
+        }
       }
-    }
+    });
   };
 
   const filteredComplaints = complaints.filter(c => filter === 'All' || c.status === filter);
@@ -92,7 +112,7 @@ export function ComplaintsView() {
                       {c.status === 'Resolved' ? <CheckCircle className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
                       {c.status}
                     </span>
-                    <button onClick={() => handleDelete(c.id)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition">
+                    <button onClick={() => handleDelete(c)} className="p-2 text-rose-500 hover:bg-rose-50 rounded-lg transition">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -124,6 +144,18 @@ export function ComplaintsView() {
           )}
         </div>
       </CardContent>
+
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={() => {
+          confirmConfig.onConfirm();
+          setConfirmConfig({ ...confirmConfig, isOpen: false });
+        }}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        isDestructive={confirmConfig.isDestructive}
+      />
     </Card>
   );
 }

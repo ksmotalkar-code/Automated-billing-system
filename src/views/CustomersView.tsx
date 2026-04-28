@@ -119,6 +119,7 @@ export function CustomersView() {
     onConfirm: () => void;
     isDestructive: boolean;
     showCancel: boolean;
+    children?: React.ReactNode;
   }>({
     isOpen: false,
     title: "",
@@ -332,6 +333,8 @@ export function CustomersView() {
     setIsEditModalOpen(true);
   };
 
+  const deliveryModeRef = useRef("api");
+
   const handleNotifyActive = async () => {
     const activeCustomers = customers.filter(c => c.status === 'Active');
     if (activeCustomers.length === 0) {
@@ -344,14 +347,60 @@ export function CustomersView() {
       return;
     }
 
-    // Default manual action - currently isolated from automation
-    // To reenable automation, comment this block and uncomment the API config logic below.
-    const genericMessage = `Important Notice:\n\n${notifyMessage}`;
-    const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
-    window.open(url, '_blank');
+    deliveryModeRef.current = "api";
+
     setIsNotifyModalOpen(false);
-    setNotifyMessage("");
-    return;
+
+    setConfirmConfig({
+      isOpen: true,
+      title: "Send Bulk Notification",
+      message: `Send custom message to all ${activeCustomers.length} active customers?`,
+      isDestructive: false,
+      showCancel: true,
+      children: (
+        <div className="flex flex-col gap-2 mt-2">
+          <label className="text-sm font-semibold">Delivery Method</label>
+          <select 
+            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+            onChange={(e) => deliveryModeRef.current = e.target.value}
+            defaultValue="api"
+          >
+            <option value="api">WhatsApp Cloud API (Automated)</option>
+            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+          </select>
+        </div>
+      ),
+      onConfirm: async () => {
+        setIsSendingNotify(true);
+        setNotifyProgress(0);
+        
+        let errors = [];
+        const isApiMode = deliveryModeRef.current === "api";
+        const tempSettings = { ...settings!, metaWhatsAppApiKey: isApiMode ? settings!.metaWhatsAppApiKey : "" };
+
+        for (let i = 0; i < activeCustomers.length; i++) {
+          const customer = activeCustomers[i];
+          const message = `Dear ${customer.name}, ${notifyMessage}`;
+          
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, undefined, undefined, isApiMode);
+          if (!result.success) {
+            errors.push(`${customer.name}: ${result.error}`);
+          }
+
+          setNotifyProgress(Math.floor(((i + 1) / activeCustomers.length) * 100));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
+        }
+
+        setIsSendingNotify(false);
+        setNotifyMessage("");
+        
+        if (errors.length > 0) {
+          showAlert("Completed with Errors", `Notifications finished with some errors:\n\n${errors.join('\n')}`);
+        } else {
+          showAlert("Success", "All active customers notified successfully!");
+        }
+      }
+    });
 
     /* == ISOLATED AUTOMATION BLOCK ==
     // Fast fail if API is missing for bulk
@@ -1148,7 +1197,9 @@ export function CustomersView() {
         message={confirmConfig.message}
         isDestructive={confirmConfig.isDestructive}
         showCancel={confirmConfig.showCancel}
-      />
+      >
+        {confirmConfig.children}
+      </ConfirmModal>
     </motion.div>
   );
 }

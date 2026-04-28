@@ -679,6 +679,16 @@ export const deleteReport = async (id: string) => {
   }
 };
 
+export const deleteComplaint = async (complaintId: string) => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  try {
+    const complaintRef = doc(db, 'complaints', complaintId);
+    await deleteDoc(complaintRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `complaints/${complaintId}`);
+  }
+};
+
 export const archiveComplaint = async (complaintId: string) => {
   if (!auth.currentUser) throw new Error("Not authenticated");
   try {

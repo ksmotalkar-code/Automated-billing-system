@@ -8,6 +8,8 @@ import { generateInvoicePDF, sendWhatsAppNotification, generateEscalationPDF, ru
 import { ConfirmModal } from "../components/ConfirmModal";
 import { MeterScanner } from "../components/MeterScanner";
 import { MeterReadingResult } from "../lib/meterReader";
+import { writeBatch, doc } from "firebase/firestore";
+import { db } from "../firebase";
 
 export function BillingView() {
   const { t } = useTranslation();
@@ -41,6 +43,7 @@ export function BillingView() {
     onConfirm: () => void;
     isDestructive: boolean;
     showCancel: boolean;
+    children?: React.ReactNode;
   }>({
     isOpen: false,
     title: "",
@@ -217,6 +220,8 @@ export function BillingView() {
     link.click();
   };
 
+  const deliveryModeRef = useRef("api");
+
   const handleSendMonthlyPaidBills = () => {
     const paidCustomers = customers.filter(c => getMockStatus(c) === "Paid" && c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
     if (paidCustomers.length === 0) {
@@ -224,17 +229,36 @@ export function BillingView() {
       return;
     }
 
+    deliveryModeRef.current = "api"; // reset default
+
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk WhatsApp Invoices",
       message: `Send authentic PDF invoices to all ${paidCustomers.length} valid newly paid customers via WhatsApp?`,
       isDestructive: false,
       showCancel: true,
+      children: (
+        <div className="flex flex-col gap-2 mt-2">
+          <label className="text-sm font-semibold">Delivery Method</label>
+          <select 
+            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+            onChange={(e) => deliveryModeRef.current = e.target.value}
+            defaultValue="api"
+          >
+            <option value="api">WhatsApp Cloud API (Automated)</option>
+            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+          </select>
+        </div>
+      ),
       onConfirm: async () => {
         setIsSendingBulk(true);
         setBulkProgress(0);
         
         let errors = [];
+        const isApiMode = deliveryModeRef.current === "api";
+        // Temporarily enforce bulk API usage preference in memory for this run
+        const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" }; // By clearing api key, it forces manual if Web is selected
+
         for (let i = 0; i < paidCustomers.length; i++) {
           const customer = paidCustomers[i];
           const message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
@@ -242,7 +266,7 @@ export function BillingView() {
           // Generate PDF for attachment
           const pdfBlob = generateInvoicePDF(customer, settings);
           
-          const result = await sendWhatsAppNotification(customer, message, settings, pdfBlob, `Invoice_${customer.id}.pdf`, true);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode);
           if (result.success) {
             await updateCustomer({ ...customer, invoiceSent: true, paymentNotified: true });
           } else {
@@ -250,7 +274,7 @@ export function BillingView() {
           }
           
           setBulkProgress(Math.floor(((i + 1) / paidCustomers.length) * 100));
-          await new Promise(resolve => setTimeout(resolve, 1500)); // Delay to avoid WhatsApp rate limits
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500)); // Delay to avoid WhatsApp rate limits
         }
         
         setIsSendingBulk(false);
@@ -278,14 +302,18 @@ export function BillingView() {
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        for (const customer of customers) {
-          if (customer.status === 'Active') {
-            await updateCustomer({ 
-              ...customer, 
+        const activeCustomers = customers.filter(c => c.status === 'Active');
+        for (let i = 0; i < activeCustomers.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = activeCustomers.slice(i, i + 400);
+          for (const customer of chunk) {
+            batch.update(doc(db, 'customers', customer.id), { 
               balance: customer.balance + settings.billingAmount,
               invoiceSent: false
             });
           }
+          await batch.commit();
+          await new Promise(resolve => setTimeout(resolve, 800));
         }
         showAlert("Success", "Billing cycle completed successfully!");
       }
@@ -300,10 +328,17 @@ export function BillingView() {
       isDestructive: true,
       showCancel: true,
       onConfirm: async () => {
-        for (const customer of customers) {
-          if (customer.status === 'Active' && customer.balance >= settings.billingAmount) {
-            await updateCustomer({ ...customer, balance: customer.balance + settings.penaltyAmount });
+        const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+        for (let i = 0; i < activeCustomers.length; i += 400) {
+          const batch = writeBatch(db);
+          const chunk = activeCustomers.slice(i, i + 400);
+          for (const customer of chunk) {
+            batch.update(doc(db, 'customers', customer.id), { 
+              balance: customer.balance + settings.penaltyAmount 
+            });
           }
+          await batch.commit();
+          await new Promise(resolve => setTimeout(resolve, 800));
         }
         showAlert("Success", "Penalties applied successfully!");
       }
@@ -792,7 +827,9 @@ export function BillingView() {
         message={confirmConfig.message}
         isDestructive={confirmConfig.isDestructive}
         showCancel={confirmConfig.showCancel}
-      />
+      >
+        {confirmConfig.children}
+      </ConfirmModal>
 
       <AnimatePresence>
         {isScanning && (

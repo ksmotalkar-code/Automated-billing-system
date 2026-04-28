@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer } from "../lib/db";
 import { sendWhatsAppNotification } from "../lib/automation";
 import { base64ToBlob } from "../lib/utils";
+import { ConfirmModal } from "../components/ConfirmModal";
+import { useRef } from "react";
 
 export function AlertsView() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -12,6 +14,24 @@ export function AlertsView() {
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [notifyingId, setNotifyingId] = useState<string | null>(null);
+  const deliveryModeRef = useRef("api");
+
+  const [confirmConfig, setConfirmConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    isDestructive: boolean;
+    showCancel: boolean;
+    children?: React.ReactNode;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    isDestructive: false,
+    showCancel: true
+  });
 
   useEffect(() => {
     const unsubCustomers = subscribeToCustomers(setCustomers);
@@ -84,80 +104,132 @@ export function AlertsView() {
   };
 
   const handleNotifyAllPaid = async () => {
+    if (!settings) return;
     const targets = paidCustomers.filter(c => c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
     if (targets.length === 0) return;
     
-    if (confirm(`Are you sure you want to notify all ${targets.length} valid paid customers?`)) {
-      setIsSendingBulk(true);
-      setBulkProgress(0);
-      
-      let errors = [];
-      for (let i = 0; i < targets.length; i++) {
-        const customer = targets[i];
-        const message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
+    deliveryModeRef.current = "api";
 
-        const result = await sendWhatsAppNotification(customer, message, settings, undefined, undefined, true);
-        if (result.success) {
-           await updateCustomer({ ...customer, paymentNotified: true });
-        } else {
-           errors.push(`${customer.name}: ${result.error}`);
+    setConfirmConfig({
+      isOpen: true,
+      title: "Notify Paid Customers",
+      message: `Are you sure you want to notify all ${targets.length} valid paid customers?`,
+      isDestructive: false,
+      showCancel: true,
+      children: (
+        <div className="flex flex-col gap-2 mt-2">
+          <label className="text-sm font-semibold">Delivery Method</label>
+          <select 
+            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+            onChange={(e) => deliveryModeRef.current = e.target.value}
+            defaultValue="api"
+          >
+            <option value="api">WhatsApp Cloud API (Automated)</option>
+            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+          </select>
+        </div>
+      ),
+      onConfirm: async () => {
+        setIsSendingBulk(true);
+        setBulkProgress(0);
+        
+        let errors = [];
+        const isApiMode = deliveryModeRef.current === "api";
+        const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
+
+        for (let i = 0; i < targets.length; i++) {
+          const customer = targets[i];
+          const message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
+
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, undefined, undefined, isApiMode);
+          if (result.success) {
+             await updateCustomer({ ...customer, paymentNotified: true });
+          } else {
+             errors.push(`${customer.name}: ${result.error}`);
+          }
+          
+          setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
         }
         
-        setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        setIsSendingBulk(false);
+        if (errors.length > 0) {
+           alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: Make sure recipients are in your Meta Developer allowed list if using a test number.`);
+        } else {
+           alert("All valid paid customers have been notified!");
+        }
       }
-      
-      setIsSendingBulk(false);
-      if (errors.length > 0) {
-         alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: Make sure recipients are in your Meta Developer allowed list if using a test number.`);
-      } else {
-         alert("All valid paid customers have been notified!");
-      }
-    }
+    });
   };
 
   const handleNotifyAllUnpaid = async () => {
+    if (!settings) return;
     const targets = unpaidCustomers.filter(c => c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
     if (targets.length === 0) return;
     
-    if (confirm(`Are you sure you want to notify all ${targets.length} valid unpaid customers?`)) {
-      setIsSendingBulk(true);
-      setBulkProgress(0);
-      
-      let errors = [];
-      for (let i = 0; i < targets.length; i++) {
-        const customer = targets[i];
-        const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
-        const totalAmount = customer.balance + penaltyAmount;
-        const message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending. Please pay immediately to avoid service disconnection.`;
-        
-        let attachment: Blob | undefined = undefined;
-        if (settings.upiQrCodeImage) {
-          try {
-            attachment = base64ToBlob(settings.upiQrCodeImage);
-          } catch (e) {
-            console.error("Failed to convert QR code to blob", e);
-          }
-        }
+    deliveryModeRef.current = "api";
 
-        const result = await sendWhatsAppNotification(customer, message, settings, attachment, attachment ? 'payment_qr.png' : undefined, true);
-        if (!result.success) {
-           errors.push(`${customer.name}: ${result.error}`);
+    setConfirmConfig({
+      isOpen: true,
+      title: "Notify Unpaid Customers",
+      message: `Are you sure you want to notify all ${targets.length} valid unpaid customers?`,
+      isDestructive: false,
+      showCancel: true,
+      children: (
+        <div className="flex flex-col gap-2 mt-2">
+          <label className="text-sm font-semibold">Delivery Method</label>
+          <select 
+            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+            onChange={(e) => deliveryModeRef.current = e.target.value}
+            defaultValue="api"
+          >
+            <option value="api">WhatsApp Cloud API (Automated)</option>
+            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+          </select>
+        </div>
+      ),
+      onConfirm: async () => {
+        setIsSendingBulk(true);
+        setBulkProgress(0);
+        
+        let errors = [];
+        const isApiMode = deliveryModeRef.current === "api";
+        const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
+
+        for (let i = 0; i < targets.length; i++) {
+          const customer = targets[i];
+          const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
+          const totalAmount = customer.balance + penaltyAmount;
+          const message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending. Please pay immediately to avoid service disconnection.`;
+          
+          let attachment: Blob | undefined = undefined;
+          if (settings.upiQrCodeImage) {
+            try {
+              attachment = base64ToBlob(settings.upiQrCodeImage);
+            } catch (e) {
+              console.error("Failed to convert QR code to blob", e);
+            }
+          }
+
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, attachment ? 'payment_qr.png' : undefined, isApiMode);
+          if (!result.success) {
+             errors.push(`${customer.name}: ${result.error}`);
+          }
+          
+          setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
+          
+          // Small delay to prevent rate limits
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
         }
         
-        setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
-        
-        // Small delay to prevent rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        setIsSendingBulk(false);
+        if (errors.length > 0) {
+           alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: If using a Meta test number, recipients must be in your allowed list.`);
+        } else {
+           alert("All valid unpaid customers have been notified!");
+        }
       }
-      
-      setIsSendingBulk(false);
-      if (errors.length > 0) {
-         alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: If using a Meta test number, recipients must be in your allowed list.`);
-      } else {
-         alert("All valid unpaid customers have been notified!");
-      }
-    }
+    });
   };
 
   return (
@@ -399,6 +471,18 @@ export function AlertsView() {
           </div>
         </CardContent>
       </Card>
+
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={confirmConfig.onConfirm}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        isDestructive={confirmConfig.isDestructive}
+        showCancel={confirmConfig.showCancel}
+      >
+        {confirmConfig.children}
+      </ConfirmModal>
     </motion.div>
   );
 }

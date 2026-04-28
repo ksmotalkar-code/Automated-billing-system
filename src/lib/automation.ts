@@ -186,11 +186,16 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   
   if (automation.scheduledBilling && isBillingDay && monthsSinceLastBill >= settings.billingCycleMonths) {
     console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
-    for (const customer of customers) {
-      if (customer.status === 'Active') {
+    const activeCustomers = customers.filter(c => c.status === 'Active');
+    
+    // Process in batches
+    for (let i = 0; i < activeCustomers.length; i += 400) {
+      const batch = writeBatch(db);
+      const chunk = activeCustomers.slice(i, i + 400);
+      
+      for (const customer of chunk) {
         const newBalance = customer.balance + settings.billingAmount;
-        await updateCustomer({ 
-          ...customer, 
+        batch.update(doc(db, 'customers', customer.id), {
           balance: newBalance,
           invoiceSent: false,
           paymentNotified: false
@@ -203,6 +208,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
           sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto billing notice error", e));
         }
       }
+      await batch.commit();
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
     updatedSettings.lastBillingDate = now.toISOString();
     needsSettingsUpdate = true;
@@ -212,10 +219,19 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   const daysSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24) : 0;
   if (automation.lateFee && daysSinceLastBill >= settings.penaltyDays && (!lastPenalty || lastPenalty < (lastBilling || now))) {
     console.log("Automated Penalty Application Triggered");
-    for (const customer of customers) {
-      if (customer.status === 'Active' && customer.balance >= settings.billingAmount) {
-        await updateCustomer({ ...customer, balance: customer.balance + settings.penaltyAmount });
+    const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+    
+    for (let i = 0; i < activeCustomers.length; i += 400) {
+      const batch = writeBatch(db);
+      const chunk = activeCustomers.slice(i, i + 400);
+
+      for (const customer of chunk) {
+        batch.update(doc(db, 'customers', customer.id), {
+          balance: customer.balance + settings.penaltyAmount
+        });
       }
+      await batch.commit();
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
     updatedSettings.lastPenaltyDate = now.toISOString();
     needsSettingsUpdate = true;
@@ -225,16 +241,23 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   const escalationDays = settings.escalationDays || 60;
   if (automation.billingLifecycle && automation.ruleBased && daysSinceLastBill >= escalationDays && settings.autoSuspend) {
     console.log("Automated Escalation / Suspension Triggered");
-    for (const customer of customers) {
-      if (customer.status === 'Active' && customer.balance >= settings.billingAmount) {
-         await updateCustomer({ ...customer, status: 'Suspended' });
+    const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+    
+    for (let i = 0; i < suspendedCustomers.length; i += 400) {
+      const batch = writeBatch(db);
+      const chunk = suspendedCustomers.slice(i, i + 400);
+      
+      for (const customer of chunk) {
+         batch.update(doc(db, 'customers', customer.id), { status: 'Suspended' });
          
          if (automation.bulkProcessing) {
            const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
            const escalationPdf = generateEscalationPDF(customer, settings);
-           await sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true);
+           sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true).catch(e => console.error("Escalation notice error", e));
          }
       }
+      await batch.commit();
+      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
   }
 

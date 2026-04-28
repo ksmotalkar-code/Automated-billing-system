@@ -62,7 +62,7 @@ interface AppSettings {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = parseInt(process.env.PORT as string, 10) || 3000;
 
   // Security and performance middleware
   app.use(helmet({
@@ -122,6 +122,54 @@ async function startServer() {
          3. Save to `transactions` subcollection
          4. If balance == 0, trigger `generateInvoicePDF` and `sendWhatsAppNotification` natively using Node.js logic!
       */
+      if (admin.apps.length) {
+         try {
+           const db = admin.firestore();
+           const custRef = db.collection('customers').doc(finalCustomerId);
+           const custDoc = await custRef.get();
+           if (custDoc.exists) {
+              const customer = custDoc.data();
+              const newBalance = Math.max(0, (customer?.balance || 0) - amountPaid);
+              await custRef.update({ balance: newBalance });
+
+              // Save transaction
+              await db.collection('customers').doc(finalCustomerId).collection('transactions').add({
+                 amount: amountPaid,
+                 date: new Date().toISOString(),
+                 id: `TXN-${Date.now()}`
+              });
+
+              // Automate WhatsApp Receipt
+              if (newBalance === 0 && ownerId) {
+                 const settingsDoc = await db.collection("settings").doc(ownerId).get();
+                 const settings = settingsDoc.data();
+                 if (settings?.automation?.smartNotifications && settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+                   const mobile = customer?.mobileNumber?.replace(/\D/g, '');
+                   if (mobile && mobile.length >= 10) {
+                     const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
+                     await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
+                       method: 'POST',
+                       headers: {
+                         'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
+                         'Content-Type': 'application/json',
+                       },
+                       body: JSON.stringify({
+                         messaging_product: 'whatsapp',
+                         to: mobile.startsWith('91') ? mobile : `91${mobile}`,
+                         type: 'text',
+                         text: { body: message }
+                       }),
+                     }).catch(e => console.error("Webhook Auto-Receipt failed", e));
+                     
+                     await custRef.update({ paymentNotified: true });
+                   }
+                 }
+              }
+           }
+         } catch(err) {
+           console.error("Firebase webhook automated processing failed:", err);
+         }
+      }
 
       // Respond immediately to the bank to confirm receipt and halt retries
       res.json({ received: true });
@@ -139,16 +187,86 @@ async function startServer() {
     if (!admin.apps.length) return;
     const db = admin.firestore();
     
+    // Auto-Delete resolved complaints older than 6 months
+    try {
+      const sixMonthsAgo = new Date();
+      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      console.log(`Checking for resolved complaints before ${sixMonthsAgo.toISOString()} to auto-delete`);
+      
+      const oldComplaintsSnap = await db.collection('complaints')
+        .where('status', '==', 'Resolved')
+        .where('createdAt', '<', sixMonthsAgo.toISOString())
+        .get();
+        
+      if (!oldComplaintsSnap.empty) {
+        const batch = db.batch();
+        oldComplaintsSnap.forEach(doc => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+        console.log(`Auto-deleted ${oldComplaintsSnap.size} old complaints.`);
+      }
+    } catch (err) {
+      console.error("Failed to auto-delete old complaints", err);
+    }
+    
     // 1. Fetch settings to read automation toggles
     const settingsSnap = await db.collection('settings').get();
     
     for (const doc of settingsSnap.docs) {
       const settings = doc.data() as AppSettings;
-      if (!settings.automation) continue;
+      if (!settings.automation || !settings.automation.scheduledBilling) continue;
 
-      // Logic for each automation trigger based on settings.automation
-      console.log(`Processing automation for user: ${settings.ownerId}`);
-      // ... In a real app, instantiate automated billing logic via Admin SDK
+      const ownerId = doc.id;
+      console.log(`Processing automation for user: ${ownerId}`);
+      
+      const today = new Date();
+      const defaultDate = parseInt(settings.defaultBillingDate || "1");
+      
+      if (today.getDate() === defaultDate) {
+         console.log(`Billing cycle started for ${ownerId}`);
+         
+         const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
+         const customersSnap = await custRef.get();
+         
+         for (const cDoc of customersSnap.docs) {
+            const customer = cDoc.data();
+            const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+            
+            await cDoc.ref.update({
+               balance: newBalance,
+               invoiceSent: false,
+               paymentNotified: false
+            });
+            
+            // Send Automated WhatsApp Bill
+            if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+               const mobile = customer.mobileNumber?.replace(/\D/g, '');
+               if (mobile && mobile.length >= 10) {
+                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
+                 try {
+                   await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
+                     method: 'POST',
+                     headers: {
+                       'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
+                       'Content-Type': 'application/json',
+                     },
+                     body: JSON.stringify({
+                       messaging_product: 'whatsapp',
+                       to: mobile.startsWith('91') ? mobile : `91${mobile}`,
+                       type: 'text',
+                       text: { body: message }
+                     }),
+                   });
+                 } catch (e) {
+                   console.error("Failed to auto-send bill", e);
+                 }
+               }
+            }
+         }
+         
+         await doc.ref.update({ lastBillingDate: new Date().toISOString() });
+      }
     }
   });
 

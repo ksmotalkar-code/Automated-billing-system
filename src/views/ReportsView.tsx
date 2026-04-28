@@ -6,6 +6,7 @@ import { updateDoc, doc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { motion } from "motion/react";
 import { FileText, Plus, Share2, Loader2, Link as LinkIcon, AlertCircle, Upload, File as FileIcon, Trash2 } from "lucide-react";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ReportsView() {
   const [reports, setReports] = useState<Report[]>([]);
@@ -18,6 +19,14 @@ export function ReportsView() {
   
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
+
+  const [confirmConfig, setConfirmConfig] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    isDestructive: true,
+  });
   
   useEffect(() => {
     const unsubR = subscribeToReports(setReports);
@@ -135,9 +144,16 @@ export function ReportsView() {
       alert("Portal link copied to clipboard");
   };
 
-  const handleDelete = async (id: string) => {
-      if (!confirm("Are you sure you want to delete this folder?")) return;
-      await deleteReport(id);
+  const handleDelete = (id: string) => {
+      setConfirmConfig({
+        isOpen: true,
+        title: "Delete Folder",
+        message: "Are you sure you want to delete this folder?",
+        isDestructive: true,
+        onConfirm: async () => {
+          await deleteReport(id);
+        }
+      });
   };
 
   return (
@@ -215,6 +231,18 @@ export function ReportsView() {
         )}
       </div>
       {/* Add Modal removed for brevity */}
+      
+      <ConfirmModal
+        isOpen={confirmConfig.isOpen}
+        onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+        onConfirm={() => {
+          confirmConfig.onConfirm();
+          setConfirmConfig({ ...confirmConfig, isOpen: false });
+        }}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        isDestructive={confirmConfig.isDestructive}
+      />
     </div>
   );
 }

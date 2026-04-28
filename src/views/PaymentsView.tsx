@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -7,6 +7,8 @@ import { PaymentReceipt } from "../lib/portal";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { sendWhatsAppNotification, generateInvoicePDF } from "../lib/automation";
+import { writeBatch, doc } from "firebase/firestore";
+import { db } from "../firebase";
 
 export function PaymentsView() {
   const { t } = useTranslation();
@@ -24,6 +26,7 @@ export function PaymentsView() {
   const [isBulkConfirmModalOpen, setIsBulkConfirmModalOpen] = useState(false);
   const [bulkTransactionId, setBulkTransactionId] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
+  const deliveryModeRef = useRef("api");
   
   const [isConfirming, setIsConfirming] = useState(false);
   const [isActioningReceipt, setIsActioningReceipt] = useState<string | null>(null);
@@ -158,16 +161,20 @@ export function PaymentsView() {
       setIsPaymentModalOpen(false);
       showAlert("Payment Confirmed", `Payment of ${formatCurrency(amount)} confirmed successfully!`);
 
-      // Automatically send invoice or receipt
-      if (updatedCustomer.balance === 0) {
-        const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
-      } else {
-        const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+      // Automatically send invoice or receipt if enabled
+      if (settings.automation?.smartNotifications) {
+        if (updatedCustomer.balance === 0) {
+          const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
+          const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+          await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+        } else {
+          const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
+          const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+        }
+      } else if (updatedCustomer.balance === 0) {
+        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false });
       }
     } catch (error) {
       console.error("Payment confirmation error:", error);
@@ -193,20 +200,39 @@ export function PaymentsView() {
 
     setIsConfirming(true);
     try {
-      for (const customer of customersToUpdate) {
-        const amount = customer.balance;
-        const updatedCustomer = { ...customer, balance: 0, invoiceSent: true, paymentNotified: true };
-        await updateCustomer(updatedCustomer);
-        await addTransaction({
-          customerId: customer.id,
-          amount: amount,
-          transactionId: bulkTransactionId.trim()
-        });
+      const isApiMode = deliveryModeRef.current === "api";
+      const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
 
-        // Background auto-notify for bulk manual payments
-        const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, true).catch(err => console.error("Auto notify error:", err));
+      const chunkedCustomers = [];
+      const chunkSize = 200; // Safe batch limit
+      for (let i = 0; i < customersToUpdate.length; i += chunkSize) {
+          chunkedCustomers.push(customersToUpdate.slice(i, i + chunkSize));
+      }
+
+      for (const chunk of chunkedCustomers) {
+          const batch = writeBatch(db);
+          for (const customer of chunk) {
+              const amount = customer.balance;
+              const updatedCustomer = { ...customer, balance: 0, invoiceSent: true, paymentNotified: true };
+              
+              // Direct batch update to avoid updateCustomer queries
+              batch.update(doc(db, 'customers', customer.id), updatedCustomer);
+
+              await addTransaction({
+                customerId: customer.id,
+                amount: amount,
+                transactionId: bulkTransactionId.trim()
+              });
+
+              // Background auto-notify for bulk manual payments
+              if (settings.automation?.smartNotifications) {
+                const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
+                const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+                sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode).catch(err => console.error("Auto notify error:", err));
+              }
+          }
+          await batch.commit();
+          await new Promise(resolve => setTimeout(resolve, 800)); // Sleep between batches
       }
 
       setSelectedCustomerIds([]);
@@ -578,6 +604,18 @@ export function PaymentsView() {
                     className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
                     placeholder="Enter transaction ID for this batch..."
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">Delivery Method</label>
+                  <select 
+                    className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+                    onChange={(e) => deliveryModeRef.current = e.target.value}
+                    defaultValue="api"
+                  >
+                    <option value="api">WhatsApp Cloud API (Automated)</option>
+                    <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+                  </select>
                 </div>
 
                 <div className="flex gap-3 pt-4">
