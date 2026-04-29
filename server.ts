@@ -291,24 +291,41 @@ async function startServer() {
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
 
+      console.log(`[Webhook] Received verification request for owner: ${ownerId}`);
+      console.log(`[Webhook] hub.mode: ${mode}, hub.verify_token: ${token ? 'PROVIDED' : 'MISSING'}`);
+
       if (mode && token) {
-        if (!admin.apps.length) return res.status(500).send("Admin not initialized");
-        const db = admin.firestore();
-        const settingsDoc = await db.collection("settings").doc(ownerId).get();
-        if (!settingsDoc.exists) return res.sendStatus(403);
-        
-        const storedToken = settingsDoc.data()?.metaWhatsAppVerifyToken;
-        if (mode === "subscribe" && token === storedToken) {
-           console.log("WEBHOOK_VERIFIED for user:", ownerId);
-           res.status(200).send(challenge);
+        let storedToken = process.env.META_VERIFY_TOKEN;
+
+        // Try to fetch from Firebase if not in ENV and Admin is initialized
+        if (!storedToken && admin.apps.length) {
+          try {
+            const db = admin.firestore();
+            const settingsDoc = await db.collection("settings").doc(ownerId).get();
+            if (settingsDoc.exists) {
+              storedToken = settingsDoc.data()?.metaWhatsAppVerifyToken;
+            }
+          } catch (err) {
+            console.error(`[Webhook] Error fetching settings for ${ownerId}:`, err);
+          }
+        }
+
+        if (mode === "subscribe" && token === storedToken && storedToken) {
+           console.log(`[Webhook] VERIFIED successfully for user: ${ownerId}`);
+           res.set('Content-Type', 'text/plain');
+           return res.status(200).send(challenge);
         } else {
-           res.sendStatus(403);
+           console.warn(`[Webhook] Verification FAILED for user: ${ownerId}. 
+             Expectation: ${storedToken ? 'Token defined' : 'Token MISSING in DB/ENV'} 
+             Received: ${token === storedToken ? 'MATCH' : 'MISMATCH'}`);
+           return res.sendStatus(403);
         }
       } else {
-        res.sendStatus(400);
+        console.warn("[Webhook] Missing hub.mode or hub.token in query parameters");
+        return res.sendStatus(400);
       }
     } catch (err) {
-      console.error(err);
+      console.error("[Webhook] Verification Error:", err);
       res.sendStatus(500);
     }
   });
