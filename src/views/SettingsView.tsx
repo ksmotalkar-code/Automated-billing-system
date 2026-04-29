@@ -909,6 +909,10 @@ export function SettingsView() {
                 <p className="text-sm neu-text-muted">Irreversible actions that affect your entire account data.</p>
               </div>
             </div>
+            <div className="w-full mt-4 p-4 rounded-xl bg-slate-100 text-xs text-slate-600 font-mono flex flex-col gap-1 border border-slate-200">
+              <p>Owner ID: <span className="font-bold">{auth.currentUser?.uid}</span></p>
+              <p>App URL: <span className="font-bold">{window.location.origin}</span></p>
+            </div>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 mt-4 w-full">
               <motion.button 
                 whileHover={{ scale: 1.05 }}
