@@ -69,7 +69,8 @@ export const sendWhatsAppNotification = async (
   settings: AppSettings, 
   attachment?: Blob, 
   attachmentName?: string,
-  isBulkMode?: boolean
+  isBulkMode?: boolean,
+  includePortalLink: boolean = true
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
     console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
@@ -89,6 +90,8 @@ export const sendWhatsAppNotification = async (
   } else if (settings.preferredNotificationMethod === 'api' && !whatsappService.isConfigured()) {
     usePortalLink = true;
   }
+
+  usePortalLink = usePortalLink && includePortalLink;
 
   if (usePortalLink) {
     try {
@@ -160,7 +163,16 @@ export const sendWhatsAppNotification = async (
 
   // 3. Fallback to manual link if not in bulk mode
   if (!isBulkMode) {
-    const url = `https://wa.me/91${customer.mobileNumber}?text=${encodeURIComponent(finalMessage)}`;
+    const mobile = customer.mobileNumber.replace(/\D/g, '');
+    let formattedTo = mobile;
+    if (mobile.length === 10) {
+      formattedTo = `91${mobile}`;
+    } else if (mobile.length === 12 && mobile.startsWith('91')) {
+      formattedTo = mobile;
+    } else {
+      formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    }
+    const url = `https://wa.me/${formattedTo}?text=${encodeURIComponent(finalMessage)}`;
     window.open(url, '_blank');
     return { success: true, fellBackToManual: true };
   }

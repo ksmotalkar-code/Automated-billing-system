@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send, Camera } from "lucide-react";
+import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send, Camera, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, saveSettings, AppSettings, updateCustomer } from "../lib/db";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { MeterScanner } from "../components/MeterScanner";
 import { MeterReadingResult } from "../lib/meterReader";
 import { writeBatch, doc } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
 
 export function BillingView() {
   const { t } = useTranslation();
@@ -35,6 +35,18 @@ export function BillingView() {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [showPaidAndSent, setShowPaidAndSent] = useState(false);
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+  const [isIndividualNotifyOpen, setIsIndividualNotifyOpen] = useState(false);
+  const [individualNotifyCustomer, setIndividualNotifyCustomer] = useState<Customer | null>(null);
+  const [notifyMessage, setNotifyMessage] = useState("");
+  const [isSendingNotify, setIsSendingNotify] = useState(false);
+
+  const preloadedMessages = [
+    "Your bill is overdue. Please pay immediately.",
+    "Your service will be disconnected tomorrow due to non-payment.",
+    "Thank you for your payment!",
+    "Your next billing cycle starts next week."
+  ];
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -172,7 +184,13 @@ export function BillingView() {
   };
 
   const handleSendWhatsApp = async (customer: Customer) => {
-    const message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
+    const status = getMockStatus(customer);
+    let message = "";
+    if (status === "Pending" || status === "Overdue") {
+      message = `Dear ${customer.name}, your water bill for ${currentMonth} is currently due. Your outstanding balance is ₹${customer.balance}. Please make the payment at your earliest convenience to avoid any service interruption. Attached is your official invoice.`;
+    } else {
+      message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official receipt.`;
+    }
     
     // Generate PDF
     const pdfBlob = generateInvoicePDF(customer, settings);
@@ -186,6 +204,71 @@ export function BillingView() {
        // Mark as sent
        await updateCustomer({ ...customer, invoiceSent: true, paymentNotified: true });
        showAlert("Success", "Notification sent successfully!");
+    }
+  };
+
+  const handleOpenIndividualNotify = (e: React.MouseEvent, customer: Customer) => {
+    e.stopPropagation();
+    setIndividualNotifyCustomer(customer);
+    
+    const status = getMockStatus(customer);
+    let defaultMsg = "";
+    if (status === "Pending" || status === "Overdue") {
+      defaultMsg = `Hi ${customer.name},\nYour current balance is ₹${customer.balance}. Please make the payment at your earliest convenience to avoid any service interruption.`;
+    } else if (status === "Paid" || status === "Paid & Notified") {
+      defaultMsg = `Hi ${customer.name},\nThank you for your recent payment. Your account balance is now ₹${customer.balance}.`;
+    } else {
+      defaultMsg = `Hi ${customer.name},\n`;
+    }
+    
+    setNotifyMessage(defaultMsg);
+    setIsIndividualNotifyOpen(true);
+  };
+
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const handleUploadAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+    
+    setIsUploadingAttachment(true);
+    try {
+      const { storage } = await import('../firebase');
+      const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
+      const fileRef = ref(storage, `attachments/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+      setNotifyMessage(prev => prev + `\n\nAttachment: ${url}`);
+      showAlert("Success", "Attachment uploaded and link added to message.");
+    } catch(err) {
+      console.error(err);
+      showAlert("Failed", "Could not upload attachment.");
+    } finally {
+      setIsUploadingAttachment(false);
+      e.target.value = ''; // clear input
+    }
+  };
+
+  const handleSendIndividualNotify = async () => {
+    if (!individualNotifyCustomer || !notifyMessage.trim() || !settings) return;
+    
+    setIsSendingNotify(true);
+    try {
+      // Message is already pre-filled with the customer name
+      const message = notifyMessage;
+      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, undefined, undefined, false);
+      
+      if (result.success) {
+        showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
+        setIsIndividualNotifyOpen(false);
+        setIndividualNotifyCustomer(null);
+        setNotifyMessage("");
+      } else {
+        showAlert("Failed", result.error || "Could not send notification.");
+      }
+    } catch (err) {
+      showAlert("Error", "An unexpected error occurred.");
+    } finally {
+      setIsSendingNotify(false);
     }
   };
 
@@ -279,7 +362,23 @@ export function BillingView() {
         
         setIsSendingBulk(false);
         if (errors.length > 0) {
-          showAlert("Completed with Errors", `Some customers couldn't be notified:\n\n${errors.join('\n')}`);
+          if (isApiMode) {
+            setConfirmConfig({
+              isOpen: true,
+              title: "API Delivery Failed",
+              message: `Some customers couldn't be notified via API:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
+              isDestructive: false,
+              showCancel: true,
+              onConfirm: () => {
+                const genericMessage = `Important Notice:\n\nWater bills have been generated for this cycle. Please check your app or portal.`;
+                const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+                window.open(url, '_blank');
+                setConfirmConfig({...confirmConfig, isOpen: false});
+              }
+            });
+          } else {
+            showAlert("Completed with Errors", `Some customers couldn't be notified:\n\n${errors.join('\n')}`);
+          }
         } else {
           showAlert("Success", "WhatsApp notifications queued and statuses updated!");
         }
@@ -537,7 +636,14 @@ export function BillingView() {
                              <Camera className="w-4 h-4" />
                           </button>
                           <button 
-                            onClick={() => {
+                            className="p-1.5 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+                            onClick={(e) => handleOpenIndividualNotify(e, customer)}
+                            title="Message Customer"
+                          >
+                            <Send className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={(_) => {
                               if (status === 'Paid & Notified') {
                                 promptResendNotification(customer);
                               } else {
@@ -818,6 +924,81 @@ export function BillingView() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Individual Notify Modal */}
+      {isIndividualNotifyOpen && individualNotifyCustomer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="neu-bg p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/20"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-bold">Message Customer</h3>
+                <p className="text-xs neu-text-muted">Sending to {individualNotifyCustomer.name}</p>
+              </div>
+              <button 
+                onClick={() => setIsIndividualNotifyOpen(false)}
+                className="p-2 hover:bg-black/10 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                  Quick Messages
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {preloadedMessages.slice(0, 3).map((msg, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setNotifyMessage(`Hi ${individualNotifyCustomer?.name || ''},\n${msg}`)}
+                      className="px-3 py-1.5 neu-flat hover:bg-blue-50 hover:text-blue-600 rounded-lg text-xs transition-colors"
+                    >
+                      {msg.split('.')[0]}...
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                  Your Message
+                </label>
+                <textarea
+                  value={notifyMessage}
+                  onChange={e => setNotifyMessage(e.target.value)}
+                  placeholder="Type your message here..."
+                  className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2"
+                />
+                <div className="flex items-center gap-2">
+                  <label className={`flex items-center gap-2 px-3 py-2 cursor-pointer bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-bold ${isUploadingAttachment ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    {isUploadingAttachment ? <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span> : <Paperclip className="w-4 h-4" />}
+                    {isUploadingAttachment ? 'Uploading...' : 'Attach File'}
+                    <input type="file" className="hidden" disabled={isUploadingAttachment} onChange={handleUploadAttachment} />
+                  </label>
+                  <span className="text-xs text-gray-500">Uploads a file & appends a link</span>
+                </div>
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleSendIndividualNotify}
+                disabled={isSendingNotify || !notifyMessage.trim()}
+                className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {isSendingNotify ? <span className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></span> : <Send className="w-5 h-5" />}
+                {isSendingNotify ? "Sending..." : "Send via WhatsApp"}
+              </motion.button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={confirmConfig.isOpen}

@@ -14,6 +14,7 @@ import { SettingsView } from "./views/SettingsView";
 import { DataUploadView } from "./views/DataUploadView";
 import { ComplaintsView } from "./views/ComplaintsView";
 import { ReportsView } from "./views/ReportsView";
+import { ManualView } from "./views/ManualView";
 import { AnimatePresence, motion } from "motion/react";
 import { Menu, X } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
@@ -143,6 +144,7 @@ export default function App() {
       case "reports": return <ReportsView key="reports" />;
       case "upload": return <DataUploadView key="upload" />;
       case "settings": return <SettingsView key="settings" />;
+      case "manual": return <ManualView key="manual" />;
       default: 
         return (
           <motion.div 

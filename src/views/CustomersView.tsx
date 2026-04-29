@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect, useRef } from "react";
 import { Customer, subscribeToCustomers, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, deleteAllCustomers, subscribeToSettings, AppSettings } from "../lib/db";
@@ -18,6 +18,8 @@ export function CustomersView() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
+  const [isIndividualNotifyOpen, setIsIndividualNotifyOpen] = useState(false);
+  const [individualNotifyCustomer, setIndividualNotifyCustomer] = useState<Customer | null>(null);
   const [notifyMessage, setNotifyMessage] = useState("");
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
@@ -161,7 +163,14 @@ export function CustomersView() {
 
   useEffect(() => {
     const unsub = subscribeToCustomers(setCustomers);
-    const unsubSettings = subscribeToSettings((s) => setSettings(s));
+    const unsubSettings = subscribeToSettings((s) => {
+      setSettings(s);
+      if (s?.metaWhatsAppApiKey && s?.metaWhatsAppPhoneNumberId) {
+        import("../services/whatsappService").then(({ whatsappService }) => {
+          whatsappService.updateConfig(s.metaWhatsAppApiKey!, s.metaWhatsAppPhoneNumberId!);
+        });
+      }
+    });
     return () => {
       unsub();
       unsubSettings();
@@ -333,6 +342,59 @@ export function CustomersView() {
     setIsEditModalOpen(true);
   };
 
+  const handleOpenIndividualNotify = (e: React.MouseEvent, customer: Customer) => {
+    e.stopPropagation();
+    setIndividualNotifyCustomer(customer);
+    setNotifyMessage(`Hi ${customer.name},\n`);
+    setIsIndividualNotifyOpen(true);
+  };
+
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const handleUploadAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !auth.currentUser) return;
+    
+    setIsUploadingAttachment(true);
+    try {
+      const { storage } = await import('../firebase');
+      const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
+      const fileRef = ref(storage, `attachments/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+      setNotifyMessage(prev => prev + `\n\nAttachment: ${url}`);
+      showAlert("Success", "Attachment uploaded and link added to message.");
+    } catch(err) {
+      console.error(err);
+      showAlert("Failed", "Could not upload attachment.");
+    } finally {
+      setIsUploadingAttachment(false);
+      e.target.value = ''; // clear input
+    }
+  };
+
+  const handleSendIndividualNotify = async () => {
+    if (!individualNotifyCustomer || !notifyMessage.trim() || !settings) return;
+    
+    setIsSendingNotify(true);
+    try {
+      const message = notifyMessage;
+      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, undefined, undefined, false, false);
+      
+      if (result.success) {
+        showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
+        setIsIndividualNotifyOpen(false);
+        setIndividualNotifyCustomer(null);
+        setNotifyMessage("");
+      } else {
+        showAlert("Failed", result.error || "Could not send notification.");
+      }
+    } catch (err) {
+      showAlert("Error", "An unexpected error occurred.");
+    } finally {
+      setIsSendingNotify(false);
+    }
+  };
+
   const deliveryModeRef = useRef("api");
 
   const handleNotifyActive = async () => {
@@ -382,7 +444,7 @@ export function CustomersView() {
           const customer = activeCustomers[i];
           const message = `Dear ${customer.name}, ${notifyMessage}`;
           
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, undefined, undefined, isApiMode);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, undefined, undefined, isApiMode, false);
           if (!result.success) {
             errors.push(`${customer.name}: ${result.error}`);
           }
@@ -395,7 +457,23 @@ export function CustomersView() {
         setNotifyMessage("");
         
         if (errors.length > 0) {
-          showAlert("Completed with Errors", `Notifications finished with some errors:\n\n${errors.join('\n')}`);
+          if (isApiMode) {
+            setConfirmConfig({
+              isOpen: true,
+              title: "API Delivery Failed",
+              message: `Notifications finished with errors (${errors.length} failed):\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
+              isDestructive: false,
+              showCancel: true,
+              onConfirm: () => {
+                const genericMessage = `Important Notice:\n\n${notifyMessage}`;
+                const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+                window.open(url, '_blank');
+                setConfirmConfig({...confirmConfig, isOpen: false});
+              }
+            });
+          } else {
+            showAlert("Completed with Errors", `Notifications finished with some errors:\n\n${errors.join('\n')}`);
+          }
         } else {
           showAlert("Success", "All active customers notified successfully!");
         }
@@ -430,7 +508,7 @@ export function CustomersView() {
       const customer = activeCustomers[i];
       const message = `Dear ${customer.name}, ${notifyMessage}`;
       
-      const result = await sendWhatsAppNotification(customer, message, settings as AppSettings, undefined, undefined, true);
+      const result = await sendWhatsAppNotification(customer, message, settings as AppSettings, undefined, undefined, true, false);
       if (!result.success) {
         errors.push(`${customer.name}: ${result.error}`);
       }
@@ -702,15 +780,24 @@ export function CustomersView() {
                     </td>
                     <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
                     <td className="px-4 py-4 text-right">
-                      <button 
-                        className="p-1 hover:bg-black/10 rounded-lg transition-colors"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRowClick(customer);
-                        }}
-                      >
-                        <MoreVertical className="w-4 h-4 neu-text-muted" />
-                      </button>
+                      <div className="flex justify-end items-center gap-1">
+                        <button 
+                          className="p-1 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+                          onClick={(e) => handleOpenIndividualNotify(e, customer)}
+                          title="Message Customer"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                        <button 
+                          className="p-1 hover:bg-black/10 rounded-lg transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRowClick(customer);
+                          }}
+                        >
+                          <MoreVertical className="w-4 h-4 neu-text-muted" />
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 ))}
@@ -775,6 +862,22 @@ export function CustomersView() {
                 <div className="flex justify-between items-end mt-1 pl-8">
                   <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
                   <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
+                </div>
+                <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)]">
+                   <motion.button
+                     whileTap={{ scale: 0.95 }}
+                     onClick={(e) => handleOpenIndividualNotify(e, customer)}
+                     className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2"
+                   >
+                     <Send className="w-3.5 h-3.5" /> Message
+                   </motion.button>
+                   <motion.button
+                     whileTap={{ scale: 0.95 }}
+                     onClick={() => handleRowClick(customer)}
+                     className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold flex items-center gap-2"
+                   >
+                     <MoreVertical className="w-3.5 h-3.5" /> Details
+                   </motion.button>
                 </div>
               </motion.div>
             ))}
@@ -1024,6 +1127,81 @@ export function CustomersView() {
                   </div>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Individual Notify Modal */}
+        {isIndividualNotifyOpen && individualNotifyCustomer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="neu-bg p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/20"
+            >
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h3 className="text-xl font-bold">Message Customer</h3>
+                  <p className="text-xs neu-text-muted">Sending to {individualNotifyCustomer.name}</p>
+                </div>
+                <button 
+                  onClick={() => setIsIndividualNotifyOpen(false)}
+                  className="p-2 hover:bg-black/10 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                    Quick Messages
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {preloadedMessages.slice(0, 3).map((msg, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setNotifyMessage(`Hi ${individualNotifyCustomer?.name || ''},\n${msg}`)}
+                        className="px-3 py-1.5 neu-flat hover:bg-blue-50 hover:text-blue-600 rounded-lg text-xs transition-colors"
+                      >
+                        {msg.split('.')[0]}...
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                    Your Message
+                  </label>
+                  <textarea
+                    value={notifyMessage}
+                    onChange={e => setNotifyMessage(e.target.value)}
+                    placeholder="Type your message here..."
+                    className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2"
+                  />
+                  <div className="flex items-center gap-2">
+                    <label className={`flex items-center gap-2 px-3 py-2 cursor-pointer bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-bold ${isUploadingAttachment ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      {isUploadingAttachment ? <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span> : <Paperclip className="w-4 h-4" />}
+                      {isUploadingAttachment ? 'Uploading...' : 'Attach File'}
+                      <input type="file" className="hidden" disabled={isUploadingAttachment} onChange={handleUploadAttachment} />
+                    </label>
+                    <span className="text-xs text-gray-500">Uploads a file & appends a link</span>
+                  </div>
+                </div>
+
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSendIndividualNotify}
+                  disabled={isSendingNotify || !notifyMessage.trim()}
+                  className="w-full py-4 bg-emerald-600 text-white rounded-2xl font-bold shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSendingNotify ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                  {isSendingNotify ? "Sending..." : "Send via WhatsApp"}
+                </motion.button>
+              </div>
             </motion.div>
           </div>
         )}

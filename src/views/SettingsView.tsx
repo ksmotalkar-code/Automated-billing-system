@@ -10,7 +10,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 
 export function SettingsView() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway'>('billing');
+  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway' | 'broadcast'>('billing');
   const [settings, setSettings] = useState<AppSettings>({
     upiQrCodeImage: null,
     billingAmount: 200,
@@ -20,6 +20,7 @@ export function SettingsView() {
     defaultBillingDate: '1',
     metaWhatsAppApiKey: '',
     metaWhatsAppPhoneNumberId: '',
+    metaWhatsAppVerifyToken: '',
     paymentGatewayKey: '',
     paymentGatewaySecret: '',
     automation: {
@@ -32,6 +33,9 @@ export function SettingsView() {
     }
   });
 
+  const [isTestLoading, setIsTestLoading] = useState(false);
+  const [isTriggerLoading, setIsTriggerLoading] = useState(false);
+  const [testMobile, setTestMobile] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -62,12 +66,73 @@ export function SettingsView() {
 
   useEffect(() => {
     const unsubSettings = subscribeToSettings((s) => {
-      if (s) setSettings(s);
+      if (s) {
+        setSettings(s);
+        if (s.metaWhatsAppApiKey && s.metaWhatsAppPhoneNumberId) {
+          import("../services/whatsappService").then(({ whatsappService }) => {
+            whatsappService.updateConfig(s.metaWhatsAppApiKey, s.metaWhatsAppPhoneNumberId);
+          });
+        }
+      }
     });
     return () => {
       unsubSettings();
     };
   }, []);
+
+  const handleTestWhatsApp = async () => {
+    if (!testMobile) {
+      showAlert("Missing Phone Number", "Please enter a mobile number to send the test message to.");
+      return;
+    }
+    setIsTestLoading(true);
+    try {
+      const resp = await fetch('/api/whatsapp/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerId: auth.currentUser?.uid, testMobile, apiKey: settings.metaWhatsAppApiKey, phoneId: settings.metaWhatsAppPhoneNumberId })
+      });
+      const data = await resp.json();
+      if (resp.ok) {
+        showAlert("Test Successful", data.info);
+      } else {
+        showAlert("Test Failed", data.error || "Check your API credentials.");
+      }
+    } catch (err) {
+      showAlert("Error", "Network error while testing WhatsApp.");
+    } finally {
+      setIsTestLoading(false);
+    }
+  };
+
+  const handleTriggerAutomation = () => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Run Billing Automation Now?",
+      message: "CAUTION: This will bypass the current date check and immediately run the billing logic, add balances, and send notifications to all active customers. Only run this if you know what you are doing.",
+      showCancel: true,
+      onConfirm: async () => {
+        setConfirmConfig({ ...confirmConfig, isOpen: false });
+        setIsTriggerLoading(true);
+        try {
+          const resp = await fetch('/api/cron/daily', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ownerId: auth.currentUser?.uid })
+          });
+          if (resp.ok) {
+            showAlert("Automation Triggered", "The daily automation cycle has been manually started for your customers. Balances will be updated and notifications sent based on your rules.");
+          } else {
+            showAlert("Failed", "Could not trigger automation. Ensure Firebase Admin is configured on the server.");
+          }
+        } catch (err) {
+          showAlert("Error", "Network error while triggering automation.");
+        } finally {
+          setIsTriggerLoading(false);
+        }
+      }
+    });
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -187,6 +252,110 @@ export function SettingsView() {
     }
   ];
 
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [manualCustomers, setManualCustomers] = useState<any[]>([]);
+  const [manualIndex, setManualIndex] = useState(0);
+  const [isManualModalOpen, setIsManualModalOpen] = useState(false);
+
+  const startManualBroadcast = async () => {
+    try {
+      const { db } = await import('../firebase');
+      const { collection, query, where, getDocs } = await import('firebase/firestore');
+      const q = query(collection(db, 'customers'), where('ownerId', '==', auth.currentUser?.uid), where('status', '==', 'Active'));
+      const snap = await getDocs(q);
+      const custs = snap.docs.map(d => d.data());
+      if (custs.length === 0) {
+        showAlert("No Customers", "No active customers found.");
+        return;
+      }
+      setManualCustomers(custs);
+      setManualIndex(0);
+      setIsManualModalOpen(true);
+    } catch(err) {
+      console.error(err);
+      showAlert("Error", "Could not load customers for manual broadcast.");
+    }
+  };
+
+  const skipManualCustomer = () => {
+    if (manualIndex < manualCustomers.length - 1) {
+      setManualIndex(manualIndex + 1);
+    } else {
+      setIsManualModalOpen(false);
+      showAlert("Completed", "Manual broadcast finished.");
+    }
+  };
+
+  const sendManualCustomer = () => {
+    const cust = manualCustomers[manualIndex];
+    if (cust.mobileNumber) {
+      const mobile = cust.mobileNumber.replace(/\D/g, '');
+      const formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+      const url = `https://wa.me/${formattedTo}?text=${encodeURIComponent(broadcastMessage)}`;
+      window.open(url, '_blank');
+    }
+    
+    skipManualCustomer();
+  };
+
+  const handleBroadcast = async () => {
+    if (!broadcastMessage.trim()) {
+      showAlert("Message Empty", "Please enter a message to broadcast.");
+      return;
+    }
+    
+    if (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) {
+      setConfirmConfig({
+        isOpen: true,
+        title: "API Not Configured",
+        message: "You haven't configured the Meta WhatsApp API. Would you like to send messages manually via the WhatsApp App instead?",
+        onConfirm: () => {
+          setConfirmConfig({ ...confirmConfig, isOpen: false });
+          startManualBroadcast();
+        },
+        showCancel: true
+      });
+      return;
+    }
+
+    setConfirmConfig({
+      isOpen: true,
+      title: "Confirm Broadast?",
+      message: "Are you sure you want to send this message to ALL active customers? This will use your Meta WhatsApp credits.",
+      onConfirm: async () => {
+        setIsBroadcasting(true);
+        try {
+          const resp = await fetch('/api/whatsapp/broadcast', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ownerId: auth.currentUser?.uid, message: broadcastMessage, apiKey: settings.metaWhatsAppApiKey, phoneId: settings.metaWhatsAppPhoneNumberId })
+          });
+          const data = await resp.json();
+          if (resp.ok) {
+            showAlert("Broadcast Completed", `Sent to ${data.success} customers. Failed for ${data.failed}.`);
+            setBroadcastMessage('');
+          } else {
+            setConfirmConfig({
+              isOpen: true,
+              title: "API Broadcast Failed",
+              message: "The API broadcast failed. Would you like to fallback to manual messaging (opening WhatsApp App for each customer)?",
+              onConfirm: () => {
+                startManualBroadcast();
+              },
+              showCancel: true
+            });
+          }
+        } catch (err) {
+          showAlert("Error", "Network error during broadcast.");
+        } finally {
+          setIsBroadcasting(false);
+        }
+      },
+      showCancel: true
+    });
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
@@ -249,6 +418,18 @@ export function SettingsView() {
           </div>
         </button>
         <button
+          onClick={() => setActiveTab('broadcast')}
+          className={`px-6 py-3 font-bold text-sm transition-colors whitespace-nowrap ${
+            activeTab === 'broadcast' 
+              ? 'text-purple-600 border-b-2 border-purple-600' 
+              : 'neu-text-muted hover:text-purple-600'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4" /> Bulk Broadcast
+          </div>
+        </button>
+        <button
           onClick={() => setActiveTab('security')}
           className={`px-6 py-3 font-bold text-sm transition-colors whitespace-nowrap ${
             activeTab === 'security' 
@@ -262,6 +443,56 @@ export function SettingsView() {
         </button>
       </div>
 
+      {activeTab === 'broadcast' && (
+        <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
+          <Card className="border-2 border-purple-500/20">
+            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+              <div className="p-2 neu-pressed rounded-xl text-purple-600">
+                <Globe className="w-6 h-6" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Bulk WhatsApp Broadcast</CardTitle>
+                <p className="text-sm neu-text-muted">Send a personalized or general announcement to all active customers at once.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
+                 <p className="text-xs text-purple-800 font-bold mb-1">Requirements:</p>
+                 <ul className="text-xs text-purple-700 list-disc ml-4 space-y-1">
+                   <li>Meta WhatsApp API must be configured and token must be active.</li>
+                   <li>Messages outside 24h window might require an approved Template (depending on your Meta configuration).</li>
+                   <li>Ensure you follow WhatsApp’s Anti-Spam policies to avoid number suspension.</li>
+                 </ul>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
+                  Announcement Message
+                </label>
+                <textarea
+                  value={broadcastMessage}
+                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  rows={6}
+                  className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none"
+                  placeholder="Type your message here... (e.g. Due to maintenance, water supply will be restricted tomorrow for 2 hours.)"
+                />
+              </div>
+
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleBroadcast}
+                disabled={isBroadcasting || !settings.metaWhatsAppApiKey}
+                className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-500/30 flex items-center justify-center gap-3 disabled:opacity-50"
+              >
+                {isBroadcasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <MessageCircle className="w-5 h-5" />}
+                {isBroadcasting ? "Broadcasting..." : "Send to All Active Customers"}
+              </motion.button>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
       {activeTab === 'whatsapp' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-emerald-500/20 mb-6">
@@ -270,16 +501,14 @@ export function SettingsView() {
                 <MessageCircle className="w-6 h-6" />
               </div>
               <div>
-                <CardTitle className="text-lg">WhatsApp API Configuration</CardTitle>
-                <p className="text-sm neu-text-muted">Enter your Meta WhatsApp Business API credentials for automated background sending.</p>
+                <CardTitle className="text-lg">Automated WhatsApp Messaging</CardTitle>
+                <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal to seamlessly send automated bills to customers.</p>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="grid gap-6 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
-                    WhatsApp API Key (Bearer Token)
-                  </label>
+                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">Meta Access Token</label>
                   <input
                     type="password"
                     value={settings.metaWhatsAppApiKey || ''}
@@ -287,7 +516,7 @@ export function SettingsView() {
                     className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
                     placeholder="••••••••••••••"
                   />
-                  <p className="text-xs neu-text-muted ml-1 mt-1">Found in your Meta App Dashboard &gt; WhatsApp &gt; API Setup &gt; Temporary or Permanent access token.</p>
+                  <p className="text-xs neu-text-muted ml-1 mt-1">From Meta App Dashboard &gt; WhatsApp &gt; API Setup.</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
@@ -303,9 +532,32 @@ export function SettingsView() {
                   <p className="text-xs neu-text-muted ml-1 mt-1">Found in your Meta App Dashboard &gt; WhatsApp &gt; API Setup &gt; Phone number ID.</p>
                 </div>
                 
+                <div className="space-y-4 md:col-span-2 pt-6 mt-2 border-t border-[var(--shadow-dark)]">
+                  <h4 className="font-bold text-md text-emerald-600">Test Your API Connection</h4>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input
+                      type="text"
+                      value={testMobile}
+                      onChange={(e) => setTestMobile(e.target.value)}
+                      className="flex-1 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                      placeholder="Your mobile number (with country code, e.g. 919000000000)"
+                    />
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleTestWhatsApp}
+                      disabled={isTestLoading || !settings.metaWhatsAppApiKey}
+                      className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Test Message"}
+                    </motion.button>
+                  </div>
+                  <p className="text-xs neu-text-muted italic">Click this after saving your API credentials to confirm everything is working correctly.</p>
+                </div>
+                
                 <div className="space-y-4 md:col-span-2 pt-4 mt-2 border-t border-[var(--shadow-dark)]">
-                  <h4 className="font-bold text-md text-emerald-600">Chatbot & Webhook Setup</h4>
-                  <p className="text-sm neu-text-muted">Configure this to allow customers to send messages to your WhatsApp number. The system will automatically log them as Complaints.</p>
+                  <h4 className="font-bold text-md text-emerald-600">Receive Customer Messages (Webhook)</h4>
+                  <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complain".</p>
                   
                   <div className="space-y-2">
                     <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
@@ -431,6 +683,25 @@ export function SettingsView() {
               </div>
             </CardHeader>
             <CardContent className="pt-6">
+              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mb-6 flex flex-col gap-3">
+                  <p className="text-sm font-bold text-amber-800 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" /> Manual Automation Override
+                  </p>
+                  <p className="text-xs text-amber-700">
+                    This will bypass the current date check and immediately run the billing logic, add balances, and send notifications to all active customers. 
+                    <strong> Use with caution as customers will receive notifications.</strong>
+                  </p>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleTriggerAutomation}
+                    disabled={isTriggerLoading}
+                    className="w-full py-3 bg-amber-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-amber-500/30 disabled:opacity-70 flex items-center justify-center gap-2"
+                  >
+                    {isTriggerLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Run Billing Automation Now"}
+                  </motion.button>
+               </div>
+
               <div className="grid gap-4">
                 {[
                   { key: 'billingLifecycle', label: 'Automated Billing Lifecycle' },
@@ -724,6 +995,57 @@ export function SettingsView() {
         message={confirmConfig.message}
         showCancel={confirmConfig.showCancel}
       />
+
+      {isManualModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="neu-bg p-6 rounded-2xl w-full max-w-sm shadow-2xl border border-[var(--shadow-dark)]"
+          >
+            <h3 className="text-xl font-bold mb-2">Manual Broadcast</h3>
+            <div className="mb-4 text-center">
+              <p className="text-sm neu-text-muted mb-4">
+                Sending to customer {manualIndex + 1} of {manualCustomers.length}
+              </p>
+              <p className="font-bold text-lg text-emerald-600 mb-1">
+                {manualCustomers[manualIndex]?.name}
+              </p>
+              <p className="text-xs neu-text-muted">
+                {manualCustomers[manualIndex]?.mobileNumber}
+              </p>
+            </div>
+            
+            <div className="flex flex-col gap-3 mt-6">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={sendManualCustomer}
+                className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2"
+              >
+                <MessageCircle className="w-5 h-5" /> Open in WhatsApp
+              </motion.button>
+              
+              <button
+                onClick={skipManualCustomer}
+                className="w-full py-3 neu-flat text-[#1e1e2d] rounded-xl font-bold transition-all text-sm hover:opacity-80"
+              >
+                Skip Customer
+              </button>
+              
+              <button
+                onClick={() => {
+                  setIsManualModalOpen(false);
+                  showAlert("Aborted", "Manual broadcast cancelled.");
+                }}
+                className="w-full py-3 text-rose-500 rounded-xl font-bold transition-all text-sm mt-2"
+              >
+                Cancel Broadcast
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </motion.div>
   );
 }

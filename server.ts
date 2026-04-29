@@ -3,7 +3,7 @@ import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
-import * as admin from "firebase-admin";
+import admin from "firebase-admin";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
@@ -142,11 +142,19 @@ async function startServer() {
               // Automate WhatsApp Receipt
               if (newBalance === 0 && ownerId) {
                  const settingsDoc = await db.collection("settings").doc(ownerId).get();
-                 const settings = settingsDoc.data();
+                 const settings = settingsDoc.data() as any;
                  if (settings?.automation?.smartNotifications && settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
                    const mobile = customer?.mobileNumber?.replace(/\D/g, '');
                    if (mobile && mobile.length >= 10) {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
+                     let formattedTo = mobile;
+                     if (mobile.length === 10) {
+                       formattedTo = `91${mobile}`;
+                     } else if (mobile.length === 12 && mobile.startsWith('91')) {
+                       formattedTo = mobile;
+                     } else {
+                       formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+                     }
                      await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
                        method: 'POST',
                        headers: {
@@ -155,7 +163,7 @@ async function startServer() {
                        },
                        body: JSON.stringify({
                          messaging_product: 'whatsapp',
-                         to: mobile.startsWith('91') ? mobile : `91${mobile}`,
+                         to: formattedTo,
                          type: 'text',
                          text: { body: message }
                        }),
@@ -179,7 +187,106 @@ async function startServer() {
     }
   });
 
-// 2. Daily Cron Automation Trigger
+  // Helper for Meta WhatsApp API
+  async function sendMetaWhatsApp(settings: any, to: string, message: string) {
+    if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+      throw new Error("WhatsApp API not configured");
+    }
+
+    const mobile = to.replace(/\D/g, '');
+    let formattedTo = mobile;
+    if (mobile.length === 10) {
+      formattedTo = `91${mobile}`;
+    } else if (mobile.length === 12 && mobile.startsWith('91')) {
+      formattedTo = mobile;
+    } else if (mobile.length === 13 && mobile.startsWith('0')) { // Sometimes people add 091 ?
+       formattedTo = mobile.substring(mobile.length - 12);
+    } else {
+       // fallback, if it's strangely formatted just prepend 91 and hope for the best if it doesn't have it
+       formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    }
+    
+    console.log(`[WhatsApp] Sending to ${formattedTo}...`);
+    const response = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: formattedTo,
+        type: 'text',
+        text: { body: message }
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error(`[WhatsApp] Meta API Error:`, data.error);
+      throw new Error(data.error?.message || "Meta API Error");
+    }
+    return data;
+  }
+
+  // Reusable Automation Engine
+  async function runDailyAutomation(specificOwnerId: string | null = null) {
+     if (!admin.apps.length) return;
+     const db = admin.firestore();
+     
+     // 1. Fetch settings
+     let settingsSnap;
+     if (specificOwnerId) {
+        const doc = await db.collection('settings').doc(specificOwnerId).get();
+        if (!doc.exists) return;
+        settingsSnap = { docs: [doc] };
+     } else {
+        settingsSnap = await db.collection('settings').get();
+     }
+     
+     for (const doc of settingsSnap.docs) {
+       const settings = doc.data() as AppSettings;
+       if (!settings.automation || !settings.automation.scheduledBilling) continue;
+
+       const ownerId = doc.id;
+       console.log(`[Automation] Processing user: ${ownerId}`);
+       
+       const today = new Date();
+       const defaultDate = parseInt(settings.defaultBillingDate || "1");
+       
+       // Handle Billing Cycle
+       if (today.getDate() === defaultDate || specificOwnerId) {
+          console.log(`[Automation] Billing cycle triggered for ${ownerId}`);
+          
+          const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
+          const customersSnap = await custRef.get();
+          
+          for (const cDoc of customersSnap.docs) {
+             const customer = cDoc.data();
+             const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+             
+             await cDoc.ref.update({
+                balance: newBalance,
+                invoiceSent: false,
+                paymentNotified: false
+             });
+             
+             // Send Automated WhatsApp Bill
+             if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId && settings.automation.smartNotifications) {
+               const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
+               try {
+                 await sendMetaWhatsApp(settings, customer.mobileNumber, message);
+               } catch (e: any) {
+                 console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
+               }
+             }
+          }
+          await doc.ref.update({ lastBillingDate: new Date().toISOString() });
+       }
+     }
+  }
+
+  // 2. Daily Cron Automation Trigger
   // Runs at midnight every day
   cron.schedule('0 0 * * *', async () => {
     console.log("Running Daily Automation Engine (Cron)...");
@@ -210,76 +317,136 @@ async function startServer() {
       console.error("Failed to auto-delete old complaints", err);
     }
     
-    // 1. Fetch settings to read automation toggles
-    const settingsSnap = await db.collection('settings').get();
-    
-    for (const doc of settingsSnap.docs) {
-      const settings = doc.data() as AppSettings;
-      if (!settings.automation || !settings.automation.scheduledBilling) continue;
-
-      const ownerId = doc.id;
-      console.log(`Processing automation for user: ${ownerId}`);
-      
-      const today = new Date();
-      const defaultDate = parseInt(settings.defaultBillingDate || "1");
-      
-      if (today.getDate() === defaultDate) {
-         console.log(`Billing cycle started for ${ownerId}`);
-         
-         const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
-         const customersSnap = await custRef.get();
-         
-         for (const cDoc of customersSnap.docs) {
-            const customer = cDoc.data();
-            const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
-            
-            await cDoc.ref.update({
-               balance: newBalance,
-               invoiceSent: false,
-               paymentNotified: false
-            });
-            
-            // Send Automated WhatsApp Bill
-            if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
-               const mobile = customer.mobileNumber?.replace(/\D/g, '');
-               if (mobile && mobile.length >= 10) {
-                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
-                 try {
-                   await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
-                     method: 'POST',
-                     headers: {
-                       'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
-                       'Content-Type': 'application/json',
-                     },
-                     body: JSON.stringify({
-                       messaging_product: 'whatsapp',
-                       to: mobile.startsWith('91') ? mobile : `91${mobile}`,
-                       type: 'text',
-                       text: { body: message }
-                     }),
-                   });
-                 } catch (e) {
-                   console.error("Failed to auto-send bill", e);
-                 }
-               }
-            }
-         }
-         
-         await doc.ref.update({ lastBillingDate: new Date().toISOString() });
-      }
-    }
+    await runDailyAutomation();
   });
 
   app.post("/api/cron/daily", async (req, res) => {
     try {
-      console.log("Starting Manual Daily Automation Engine Trigger...");
-      // Placeholder for triggered automation call
+      const { ownerId } = req.body;
+      console.log(`Starting Manual Daily Automation Engine Trigger for ${ownerId || 'ALL'}...`);
+      await runDailyAutomation(ownerId);
       res.json({ status: "success" });
     } catch (error) {
        console.error("Cron Error", error);
        res.status(500).json({ error: "Automation failed" });
     }
   });
+
+  // Send Individual Message API (Proxied for CORS safety)
+  app.post("/api/whatsapp/send", async (req, res) => {
+    try {
+      const { ownerId, to, message, apiKey, phoneId } = req.body;
+      if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
+      
+      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
+      if (!apiKey && admin.apps.length) {
+         const db = admin.firestore();
+         const settingsDoc = await db.collection("settings").doc(ownerId).get();
+         settings = settingsDoc.data() as any;
+      }
+      
+      const data = await sendMetaWhatsApp(settings, to, message);
+      res.json({ success: true, messageId: data.messages?.[0]?.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Bulk Broadcast API
+  app.post("/api/whatsapp/broadcast", async (req, res) => {
+    try {
+      const { ownerId, message, apiKey, phoneId, recipients } = req.body;
+      if (!message) return res.status(400).json({ error: "Missing message" });
+      
+      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
+      if (!apiKey && admin.apps.length) {
+         const db = admin.firestore();
+         const settingsDoc = await db.collection("settings").doc(ownerId).get();
+         if (settingsDoc.exists) settings = settingsDoc.data() as any;
+      }
+      if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+        return res.status(400).json({ error: "WhatsApp API not configured" });
+      }
+
+      let customers = recipients || [];
+      if (!recipients && admin.apps.length) {
+         const db = admin.firestore();
+         const customersSnap = await db.collection("customers")
+           .where("ownerId", "==", ownerId)
+           .where("status", "==", "Active")
+           .get();
+         customers = customersSnap.docs.map(d => d.data());
+      }
+
+      console.log(`Broadcasting to ${customers.length} customers...`);
+      
+      const results = { success: 0, failed: 0 };
+      
+      for (const customer of customers) {
+        try {
+          await sendMetaWhatsApp(settings, customer.mobileNumber, message);
+          results.success++;
+        } catch (e) {
+          results.failed++;
+        }
+      }
+
+      res.json({ status: "completed", ...results });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: "Broadcast failed" });
+    }
+  });
+
+  // Test WhatsApp API Configuration
+  app.post("/api/whatsapp/test", async (req, res) => {
+    try {
+      const { ownerId, testMobile, apiKey, phoneId } = req.body;
+      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
+      if (!apiKey && admin.apps.length) {
+         const db = admin.firestore();
+         const settingsDoc = await db.collection("settings").doc(ownerId).get();
+         settings = settingsDoc.data() as any;
+      }
+      if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+        return res.status(400).json({ error: "WhatsApp API not configured in settings" });
+      }
+
+      const mobile = testMobile.replace(/\D/g, '');
+      let formattedTo = mobile;
+      if (mobile.length === 10) {
+        formattedTo = `91${mobile}`;
+      } else if (mobile.length === 12 && mobile.startsWith('91')) {
+        formattedTo = mobile;
+      } else {
+        formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+      }
+
+      const response = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          to: formattedTo,
+          type: 'text',
+          text: { body: "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅" }
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        return res.status(response.status).json({ error: data.error?.message || "Meta API Error" });
+      }
+
+      res.json({ status: "success", info: "Message sent! Check your phone." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+;
 
   // 3. WhatsApp Chatbot Webhooks
 
@@ -363,7 +530,8 @@ async function startServer() {
               }
 
               if (matchedCustomer) {
-                  // Save as a complaint
+                   if (msgBody.toLowerCase().includes('complain')) {
+                       // Save as a complaint
                   const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
                   await db.collection("complaints").doc(complaintId).set({
                      id: complaintId,
@@ -375,6 +543,7 @@ async function startServer() {
                      ownerId: ownerId
                   });
                   console.log(`Logged complaint for ${matchedCustomer.name}`);
+                   }
                   
                   // In a real system, you'd use the settings.metaWhatsAppApiKey here to send an API reply acknowledging receipt.
               } else {
@@ -505,7 +674,20 @@ async function startServer() {
       
       let chatId = to;
       if (!chatId.includes('@')) {
-         chatId = `91${chatId.replace(/\D/g, '')}@c.us`; 
+         let mobile = chatId.replace(/\D/g, '');
+         if (mobile.length === 10) {
+           mobile = `91${mobile}`;
+         } else if (mobile.length === 12 && mobile.startsWith('91')) {
+           // already has 91
+         } else if (mobile.length === 13 && mobile.startsWith('0')) {
+           mobile = mobile.substring(mobile.length - 12);
+         } else if (mobile.startsWith('91')) {
+           // fallback but avoid double 91 if it seems long enough
+           mobile = mobile;
+         } else {
+           mobile = `91${mobile}`; // generic fallback
+         }
+         chatId = `${mobile}@c.us`; 
       }
       
       let media = null;

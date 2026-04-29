@@ -33,6 +33,17 @@ export function AlertsView() {
     showCancel: true
   });
 
+  const showAlert = (title: string, message: string) => {
+    setConfirmConfig({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {},
+      isDestructive: false,
+      showCancel: false
+    });
+  };
+
   useEffect(() => {
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubSettings = subscribeToSettings(setSettings);
@@ -94,7 +105,7 @@ export function AlertsView() {
     setNotifyingId(null);
     
     if (!result.success) {
-      alert(`Could not notify ${customer.name}: ${result.error}`);
+      showAlert('Notice', `Could not notify ${customer.name}: ${result.error}`);
       return;
     }
 
@@ -154,9 +165,25 @@ export function AlertsView() {
         
         setIsSendingBulk(false);
         if (errors.length > 0) {
-           alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: Make sure recipients are in your Meta Developer allowed list if using a test number.`);
+          if (isApiMode) {
+            setConfirmConfig({
+              isOpen: true,
+              title: "API Delivery Failed",
+              message: `Some customers couldn't be notified via API:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
+              isDestructive: false,
+              showCancel: true,
+              onConfirm: () => {
+                const genericMessage = `Important Notice:\n\nYour water bill payment has been processed. Thank you!`;
+                const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+                window.open(url, '_blank');
+                setConfirmConfig({...confirmConfig, isOpen: false});
+              }
+            });
+          } else {
+            showAlert('Notice', `Completed with some errors:\n\n${errors.join('\n')}\n\nNote: Make sure recipients are in your Meta Developer allowed list if using a test number.`);
+          }
         } else {
-           alert("All valid paid customers have been notified!");
+           showAlert('Notice', "All valid paid customers have been notified!");
         }
       }
     });
@@ -224,9 +251,25 @@ export function AlertsView() {
         
         setIsSendingBulk(false);
         if (errors.length > 0) {
-           alert(`Completed with some errors:\n\n${errors.join('\n')}\n\nNote: If using a Meta test number, recipients must be in your allowed list.`);
+          if (isApiMode) {
+            setConfirmConfig({
+              isOpen: true,
+              title: "API Delivery Failed",
+              message: `Some customers couldn't be notified via API:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
+              isDestructive: false,
+              showCancel: true,
+              onConfirm: () => {
+                const genericMessage = `Important Notice:\n\nYou have an outstanding balance on your water bill. Please check your app or portal.`;
+                const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+                window.open(url, '_blank');
+                setConfirmConfig({...confirmConfig, isOpen: false});
+              }
+            });
+          } else {
+            showAlert('Notice', `Completed with some errors:\n\n${errors.join('\n')}\n\nNote: If using a Meta test number, recipients must be in your allowed list.`);
+          }
         } else {
-           alert("All valid unpaid customers have been notified!");
+           showAlert('Notice', "All valid unpaid customers have been notified!");
         }
       }
     });
