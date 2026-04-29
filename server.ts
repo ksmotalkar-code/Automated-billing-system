@@ -246,7 +246,7 @@ async function startServer() {
      
      for (const doc of settingsSnap.docs) {
        const settings = doc.data() as AppSettings;
-       if (!settings.automation || !settings.automation.scheduledBilling) continue;
+       if (!settings.automation) continue;
 
        const ownerId = doc.id;
        console.log(`[Automation] Processing user: ${ownerId}`);
@@ -255,7 +255,7 @@ async function startServer() {
        const defaultDate = parseInt(settings.defaultBillingDate || "1");
        
        // Handle Billing Cycle
-       if (today.getDate() === defaultDate || specificOwnerId) {
+       if (settings.automation.scheduledBilling && (today.getDate() === defaultDate || specificOwnerId)) {
           console.log(`[Automation] Billing cycle triggered for ${ownerId}`);
           
           const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
@@ -502,62 +502,76 @@ async function startServer() {
     try {
       const { ownerId } = req.params;
       
+      // Fast acknowledge to Meta
+      res.sendStatus(200);
+
       const body = req.body;
-      if (body.object) {
-        if (body.entry && body.entry[0].changes && body.entry[0].changes[0] && body.entry[0].changes[0].value.messages && body.entry[0].changes[0].value.messages[0]) {
-           const messageObj = body.entry[0].changes[0].value.messages[0];
-           const fromMobile = messageObj.from; // WhatsApp returns mobile e.g. "919000000000"
-           const msgBody = messageObj.text?.body;
-           
-           console.log(`Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
+      if (!body.object) return;
 
-           if (msgBody && admin.apps.length) {
-              const db = admin.firestore();
-              
-              // Formatting: Strip standard prefixes like "91" if our DB format doesn't use it, 
-              // or perform a highly forgiving query (in a real production app we'd standardize E.164 formats everywhere)
-              // We'll search across active customers.
-              const customersSnap = await db.collection("customers").where("ownerId", "==", ownerId).get();
-              
-              let matchedCustomer = null;
-              for (const doc of customersSnap.docs) {
-                 const data = doc.data();
-                 // Naive matching - if the whatsapp number ends with the customer's mobile number
-                 if (fromMobile.endsWith(data.mobileNumber.replace(/\D/g, ''))) {
-                    matchedCustomer = data;
-                    break;
-                 }
-              }
+      const entries = body.entry || [];
+      for (const entry of entries) {
+        const changes = entry.changes || [];
+        for (const change of changes) {
+          const messages = change.value?.messages || [];
+          for (const messageObj of messages) {
+            const fromMobile = messageObj.from;
+            const msgBody = messageObj.text?.body;
+            
+            console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
 
-              if (matchedCustomer) {
-                   if (msgBody.toLowerCase().includes('complain')) {
-                       // Save as a complaint
-                  const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-                  await db.collection("complaints").doc(complaintId).set({
-                     id: complaintId,
-                     customerId: matchedCustomer.id,
-                     customerName: matchedCustomer.name,
-                     message: msgBody,
-                     status: 'Pending',
-                     createdAt: new Date().toISOString(),
-                     ownerId: ownerId
-                  });
-                  console.log(`Logged complaint for ${matchedCustomer.name}`);
+            if (msgBody && admin.apps.length) {
+              try {
+                const db = admin.firestore();
+                const customersSnap = await db.collection("customers").where("ownerId", "==", ownerId).get();
+                
+                let matchedCustomer = null;
+                const cleanMobile = fromMobile.replace(/\D/g, '');
+                for (const doc of customersSnap.docs) {
+                   const data = doc.data();
+                   const dataMobile = (data.mobileNumber || '').replace(/\D/g, '');
+                   if (cleanMobile.endsWith(dataMobile)) {
+                      matchedCustomer = { id: doc.id, ...data };
+                      break;
                    }
-                  
-                  // In a real system, you'd use the settings.metaWhatsAppApiKey here to send an API reply acknowledging receipt.
-              } else {
-                 console.log("Message received from unknown number. Ignored.");
+                }
+
+                if (matchedCustomer) {
+                     const settingsDoc = await db.collection("settings").doc(ownerId).get();
+                     const settings = settingsDoc.exists ? settingsDoc.data() : null;
+                     if (msgBody.toLowerCase().includes('complain') && settings?.automation?.autoCreateComplaints !== false) {
+                        const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+                        await db.collection("complaints").doc(complaintId).set({
+                           id: complaintId,
+                           customerId: matchedCustomer.id,
+                           customerName: matchedCustomer.name,
+                           message: msgBody,
+                           status: 'Pending',
+                           createdAt: new Date().toISOString(),
+                           ownerId: ownerId
+                        });
+                        console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
+
+                        // Auto-reply
+                        if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+                          try {
+                            await sendMetaWhatsApp(settings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
+                          } catch (e) {
+                            console.error("[Webhook] Failed to send auto-reply:", e);
+                          }
+                        }
+                     }
+                } else {
+                   console.log("[Webhook] Message received from unknown number. Ignored.");
+                }
+              } catch (innerErr) {
+                console.error("[Webhook] Processing error:", innerErr);
               }
-           }
+            }
+          }
         }
-        res.sendStatus(200);
-      } else {
-        res.sendStatus(404);
       }
     } catch (err) {
-      console.error(err);
-      res.sendStatus(500);
+      console.error("[Webhook] Handler error:", err);
     }
   });
 

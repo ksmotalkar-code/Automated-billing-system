@@ -482,7 +482,7 @@ export function SettingsView() {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleBroadcast}
-                disabled={isBroadcasting || !settings.metaWhatsAppApiKey}
+                disabled={isBroadcasting || !settings.metaWhatsAppApiKey || !settings?.automation?.bulkProcessing}
                 className="w-full py-4 bg-purple-600 text-white rounded-2xl font-bold shadow-lg shadow-purple-500/30 flex items-center justify-center gap-3 disabled:opacity-50"
               >
                 {isBroadcasting ? <Loader2 className="w-5 h-5 animate-spin" /> : <MessageCircle className="w-5 h-5" />}
@@ -710,7 +710,8 @@ export function SettingsView() {
                   { key: 'scheduledBilling', label: 'Scheduled Billing Cycles' },
                   { key: 'bulkProcessing', label: 'Bulk Processing Engine' },
                   { key: 'smartNotifications', label: 'Smart Notification Timing' },
-                  { key: 'autoShareReports', label: 'Automate Report Sharing' }
+                  { key: 'autoShareReports', label: 'Automate Report Sharing' },
+                  { key: 'autoCreateComplaints', label: 'Auto Create Complaints via WhatsApp Response' }
                 ].map(item => (
                   <label key={item.key} className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer">
                     <span className="text-sm font-bold">{item.label}</span>

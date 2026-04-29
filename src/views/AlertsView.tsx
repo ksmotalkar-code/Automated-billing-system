@@ -85,8 +85,7 @@ export function AlertsView() {
     let attachment: Blob | undefined = undefined;
     
     if (isPaid) {
-      if (customer.paymentNotified) return; // Skip if already notified
-      message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
+            message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
     } else {
       const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
       const totalAmount = customer.balance + penaltyAmount;
@@ -291,7 +290,7 @@ export function AlertsView() {
           <div className="flex items-center gap-3">
             <button 
               onClick={handleNotifyAllUnpaid}
-              disabled={isSendingBulk}
+              disabled={isSendingBulk || !settings?.automation?.bulkProcessing}
               className="px-4 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-rose-500/30 hover:bg-rose-700 transition-colors disabled:opacity-70 flex items-center gap-2"
             >
               {isSendingBulk ? (
@@ -318,7 +317,7 @@ export function AlertsView() {
             {paidCustomers.length > 0 && viewMode === 'paid' && (
               <button 
                 onClick={handleNotifyAllPaid}
-                disabled={isSendingBulk}
+                disabled={isSendingBulk || !settings?.automation?.bulkProcessing}
                 className="px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors disabled:opacity-70 flex items-center gap-2"
               >
                 {isSendingBulk ? (
@@ -458,7 +457,7 @@ export function AlertsView() {
                         )}
                       </td>
                       <td className="px-4 py-4 text-center">
-                        {(!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) ? null : (!isPaid || !customer.paymentNotified) && (
+                        {(!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) ? null : (
                             <button 
                               onClick={() => handleSendWhatsApp(customer, isPaid)}
                               disabled={notifyingId === customer.id}
@@ -467,7 +466,7 @@ export function AlertsView() {
                               } disabled:opacity-70`}
                             >
                               {notifyingId === customer.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <MessageCircle className="w-4 h-4" />}
-                              {notifyingId === customer.id ? 'Sending...' : 'Notify'}
+                              {notifyingId === customer.id ? 'Sending...' : (isPaid && customer.paymentNotified ? 'Resend' : 'Notify')}
                             </button>
                         )}
                       </td>

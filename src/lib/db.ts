@@ -112,6 +112,7 @@ export interface AutomationSettings {
   bulkProcessing: boolean;
   smartNotifications: boolean;
   autoShareReports?: boolean;
+  autoCreateComplaints?: boolean;
 }
 
 export interface AppSettings {

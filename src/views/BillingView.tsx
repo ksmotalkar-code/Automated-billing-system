@@ -543,7 +543,7 @@ export function BillingView() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={handleSendMonthlyPaidBills}
-            disabled={isSendingBulk}
+            disabled={isSendingBulk || !settings?.automation?.bulkProcessing}
             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 disabled:opacity-70"
           >
             {isSendingBulk ? (
