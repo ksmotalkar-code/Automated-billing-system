@@ -261,25 +261,43 @@ async function startServer() {
           const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
           const customersSnap = await custRef.get();
           
-          for (const cDoc of customersSnap.docs) {
-             const customer = cDoc.data();
-             const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
-             
-             await cDoc.ref.update({
-                balance: newBalance,
-                invoiceSent: false,
-                paymentNotified: false
-             });
-             
-             // Send Automated WhatsApp Bill
-             if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId && settings.automation.smartNotifications) {
-               const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
-               try {
-                 await sendMetaWhatsApp(settings, customer.mobileNumber, message);
-               } catch (e: any) {
-                 console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
+          if (!customersSnap.empty) {
+            let batch = db.batch();
+            let count = 0;
+            
+            for (const cDoc of customersSnap.docs) {
+               const customer = cDoc.data();
+               const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+               
+               batch.update(cDoc.ref, {
+                  balance: newBalance,
+                  invoiceSent: false,
+                  paymentNotified: false
+               });
+               count++;
+               if (count === 400) {
+                 await batch.commit();
+                 batch = db.batch();
+                 count = 0;
                }
-             }
+            }
+            if (count > 0) {
+              await batch.commit();
+            }
+
+            // Send Automated WhatsApp Bill (after DB updates)
+            if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId && settings.automation.smartNotifications) {
+              for (const cDoc of customersSnap.docs) {
+                const customer = cDoc.data();
+                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+                const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
+                try {
+                  await sendMetaWhatsApp(settings, customer.mobileNumber, message);
+                } catch (e: any) {
+                  console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
+                }
+              }
+            }
           }
           await doc.ref.update({ lastBillingDate: new Date().toISOString() });
        }
