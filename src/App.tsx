@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { DashboardView } from "./views/DashboardView";
 import { CustomersView } from "./views/CustomersView";
@@ -103,10 +103,12 @@ export default function App() {
   }, [user]);
 
   // Run automation cycle when data is ready
+  const hasRunAutomation = useRef(false);
   useEffect(() => {
     // If the server environment does not have firebase-admin cron logic running,
     // we use the local dashboard as the execution engine while it is open.
-    if (user && customers.length > 0 && settings && settings.automation) {
+    if (user && customers.length > 0 && settings && settings.automation && !hasRunAutomation.current) {
+       hasRunAutomation.current = true;
        runAutomationCycle(customers, settings).catch(e => console.error("Auto Cycle Error", e));
     }
   }, [user, customers.length, settings]);

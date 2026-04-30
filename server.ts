@@ -188,7 +188,7 @@ async function startServer() {
   });
 
   // Helper for Meta WhatsApp API
-  async function sendMetaWhatsApp(settings: any, to: string, message: string) {
+  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
     }
@@ -207,18 +207,80 @@ async function startServer() {
     }
     
     console.log(`[WhatsApp] Sending to ${formattedTo}...`);
+
+    let mediaId: string | undefined = undefined;
+
+    // Upload media to Meta first if provided
+    if (mediaBase64) {
+      try {
+        const base64Data = mediaBase64.split(',')[1] || mediaBase64;
+        const mimeType = mediaBase64.split(';')[0].split(':')[1] || 'application/pdf';
+        const isImage = mimeType.startsWith('image/');
+        
+        const buffer = Buffer.from(base64Data, 'base64');
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: mimeType });
+        formData.append('file', blob, mediaName || (isImage ? 'image.png' : 'document.pdf'));
+        formData.append('messaging_product', 'whatsapp');
+
+        const uploadRes = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`
+          },
+          body: formData as any
+        });
+        
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          console.error(`[WhatsApp] Media Upload Error:`, uploadData);
+          throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
+        }
+        mediaId = uploadData.id;
+        console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
+      } catch (err) {
+        console.error(`[WhatsApp] Error handling media:`, err);
+        // Continue and send as text message if media upload fails?
+        // Let's just append an error log but send text anyway
+      }
+    }
+
+    let bodyPayload: any = {
+      messaging_product: 'whatsapp',
+      to: formattedTo
+    };
+
+    if (mediaId) {
+      // Determine if it's an image or generic document
+      const mimeType = mediaBase64?.split(';')[0].split(':')[1] || '';
+      const isImage = mimeType.startsWith('image/');
+      
+      if (isImage) {
+        bodyPayload.type = 'image';
+        bodyPayload.image = {
+          id: mediaId,
+          caption: message
+        };
+      } else {
+        bodyPayload.type = 'document';
+        bodyPayload.document = {
+          id: mediaId,
+          caption: message,
+          filename: mediaName || 'document.pdf'
+        };
+      }
+    } else {
+      bodyPayload.type = 'text';
+      bodyPayload.text = { body: message };
+    }
+
     const response = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: formattedTo,
-        type: 'text',
-        text: { body: message }
-      }),
+      body: JSON.stringify(bodyPayload),
     });
 
     const data = await response.json();
@@ -353,7 +415,7 @@ async function startServer() {
   // Send Individual Message API (Proxied for CORS safety)
   app.post("/api/whatsapp/send", async (req, res) => {
     try {
-      const { ownerId, to, message, apiKey, phoneId } = req.body;
+      const { ownerId, to, message, apiKey, phoneId, mediaBase64, mediaName } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
       
       let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
@@ -363,7 +425,7 @@ async function startServer() {
          settings = settingsDoc.data() as any;
       }
       
-      const data = await sendMetaWhatsApp(settings, to, message);
+      const data = await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName);
       res.json({ success: true, messageId: data.messages?.[0]?.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -373,7 +435,7 @@ async function startServer() {
   // Bulk Broadcast API
   app.post("/api/whatsapp/broadcast", async (req, res) => {
     try {
-      const { ownerId, message, apiKey, phoneId, recipients } = req.body;
+      const { ownerId, message, apiKey, phoneId, recipients, mediaBase64, mediaName } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
       
       let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
@@ -402,7 +464,7 @@ async function startServer() {
       
       for (const customer of customers) {
         try {
-          await sendMetaWhatsApp(settings, customer.mobileNumber, message);
+          await sendMetaWhatsApp(settings, customer.mobileNumber, message, mediaBase64, mediaName);
           results.success++;
         } catch (e) {
           results.failed++;

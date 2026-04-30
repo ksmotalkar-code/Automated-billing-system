@@ -8,7 +8,8 @@ import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { sendWhatsAppNotification, generateInvoicePDF } from "../lib/automation";
 import { writeBatch, doc } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase";
+import { v4 as uuidv4 } from "uuid";
 
 export function PaymentsView() {
   const { t } = useTranslation();
@@ -218,10 +219,14 @@ export function PaymentsView() {
               // Direct batch update to avoid updateCustomer queries
               batch.update(doc(db, 'customers', customer.id), updatedCustomer);
 
-              await addTransaction({
+              const txnId = `TXN-${uuidv4().substring(0, 8).toUpperCase()}`;
+              batch.set(doc(db, 'transactions', txnId), {
+                id: txnId,
                 customerId: customer.id,
                 amount: amount,
-                transactionId: bulkTransactionId.trim()
+                transactionId: bulkTransactionId.trim(),
+                date: new Date().toISOString(),
+                ownerId: auth.currentUser?.uid || ''
               });
 
               // Background auto-notify for bulk manual payments

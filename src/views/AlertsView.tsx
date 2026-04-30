@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send, Loader2 } from "lucide-react";
+import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send, Loader2, Paperclip, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer } from "../lib/db";
+import { writeBatch, doc } from "firebase/firestore";
+import { db } from "../firebase";
 import { sendWhatsAppNotification } from "../lib/automation";
 import { base64ToBlob } from "../lib/utils";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -15,6 +17,8 @@ export function AlertsView() {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [notifyingId, setNotifyingId] = useState<string | null>(null);
   const deliveryModeRef = useRef("api");
+  const [customAttachment, setCustomAttachment] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -63,9 +67,9 @@ export function AlertsView() {
 
   if (!settings) return null;
 
-  const paidCustomers = customers.filter(c => c.balance === 0 && !c.paymentNotified);
-  const paidNotifiedCustomers = customers.filter(c => c.balance === 0 && c.paymentNotified);
-  const unpaidCustomers = customers.filter(c => c.balance > 0);
+  const paidCustomers = customers.filter(c => c.status === 'Active' && c.balance === 0 && !c.paymentNotified);
+  const paidNotifiedCustomers = customers.filter(c => c.status === 'Active' && c.balance === 0 && c.paymentNotified);
+  const unpaidCustomers = customers.filter(c => c.status === 'Active' && c.balance > 0);
 
   const displayedCustomers = viewMode === 'paid' ? paidCustomers : viewMode === 'paid_notified' ? paidNotifiedCustomers : viewMode === 'unpaid' ? unpaidCustomers : customers;
   const totalPages = Math.ceil(displayedCustomers.length / itemsPerPage);
@@ -83,6 +87,7 @@ export function AlertsView() {
     setNotifyingId(customer.id!);
     let message = "";
     let attachment: Blob | undefined = undefined;
+    let fileName: string | undefined = undefined;
     
     if (isPaid) {
             message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
@@ -90,17 +95,22 @@ export function AlertsView() {
       const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
       const totalAmount = customer.balance + penaltyAmount;
       message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending (including late fees if applicable). Please pay immediately to avoid service disconnection.`;
-      
+    }
+
+    if (customAttachment) {
+      attachment = customAttachment;
+      fileName = customAttachment.name;
+    } else if (!isPaid && settings.upiQrCodeImage) {
       // Attach QR code if available
-      if (settings.upiQrCodeImage) {
-        try {
-          attachment = base64ToBlob(settings.upiQrCodeImage);
-        } catch (e) {
-          console.error("Failed to convert QR code to blob", e);
-        }
+      try {
+        attachment = base64ToBlob(settings.upiQrCodeImage);
+        fileName = 'payment_qr.png';
+      } catch (e) {
+        console.error("Failed to convert QR code to blob", e);
       }
     }
-    const result = await sendWhatsAppNotification(customer, message, settings, attachment, attachment ? 'payment_qr.png' : undefined, false);
+
+    const result = await sendWhatsAppNotification(customer, message, settings, attachment, fileName, false);
     setNotifyingId(null);
     
     if (!result.success) {
@@ -147,19 +157,49 @@ export function AlertsView() {
         const isApiMode = deliveryModeRef.current === "api";
         const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
 
+        const batch = writeBatch(db);
+        let updatesSkipped = 0;
+
         for (let i = 0; i < targets.length; i++) {
           const customer = targets[i];
-          const message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
+          let message = `Dear ${customer.name}, thank you for your payment! Your account is now clear. We appreciate your promptness.`;
 
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, undefined, undefined, isApiMode);
+          let attachment: Blob | undefined = undefined;
+          let fileName: string | undefined = undefined;
+          if (customAttachment) {
+            attachment = customAttachment;
+            fileName = customAttachment.name;
+          }
+
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode);
           if (result.success) {
-             await updateCustomer({ ...customer, paymentNotified: true });
+             batch.update(doc(db, 'customers', customer.id), { paymentNotified: true });
+             updatesSkipped++;
+
+             if (updatesSkipped % 100 === 0) {
+                 try {
+                     await batch.commit();
+                 } catch (e: any) {
+                     if (e.code === 'resource-exhausted') {
+                         errors.push("Quota Exceeded: Reached Firebase free limits.");
+                         break;
+                     }
+                 }
+             }
           } else {
              errors.push(`${customer.name}: ${result.error}`);
           }
           
           setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
           await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
+        }
+
+        if (updatesSkipped % 100 !== 0) {
+            try {
+                await batch.commit();
+            } catch (e: any) {
+                if (e.code === 'resource-exhausted') errors.push("Quota Exceeded: Reached Firebase free limits.");
+            }
         }
         
         setIsSendingBulk(false);
@@ -226,18 +266,24 @@ export function AlertsView() {
           const customer = targets[i];
           const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
           const totalAmount = customer.balance + penaltyAmount;
-          const message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending. Please pay immediately to avoid service disconnection.`;
+          let message = `Dear ${customer.name}, your water bill of ${formatCurrency(totalAmount)} is pending. Please pay immediately to avoid service disconnection.`;
           
           let attachment: Blob | undefined = undefined;
-          if (settings.upiQrCodeImage) {
+          let fileName: string | undefined = undefined;
+
+          if (customAttachment) {
+            attachment = customAttachment;
+            fileName = customAttachment.name;
+          } else if (settings.upiQrCodeImage) {
             try {
               attachment = base64ToBlob(settings.upiQrCodeImage);
+              fileName = 'payment_qr.png';
             } catch (e) {
               console.error("Failed to convert QR code to blob", e);
             }
           }
 
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, attachment ? 'payment_qr.png' : undefined, isApiMode);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode);
           if (!result.success) {
              errors.push(`${customer.name}: ${result.error}`);
           }
@@ -285,6 +331,39 @@ export function AlertsView() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Alerts & Notifications</h2>
           <p className="neu-text-muted">Monitor payments and send reminders</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            onChange={(e) => setCustomAttachment(e.target.files?.[0] || null)}
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl text-sm font-bold shadow-sm hover:bg-slate-200 transition-colors flex items-center gap-2"
+          >
+            {customAttachment ? (
+              <>
+                <CheckCircle className="w-4 h-4 text-emerald-600" /> 
+                <span className="truncate max-w-[120px]">{customAttachment.name}</span>
+                <div 
+                  className="p-1 hover:bg-slate-300 rounded-full ml-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCustomAttachment(null);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                >
+                  <X className="w-3 h-3 text-rose-500" />
+                </div>
+              </>
+            ) : (
+              <>
+                <Paperclip className="w-4 h-4" /> Attach File
+              </>
+            )}
+          </button>
         </div>
         {unpaidCustomers.length > 0 && viewMode === 'unpaid' && (
           <div className="flex items-center gap-3">

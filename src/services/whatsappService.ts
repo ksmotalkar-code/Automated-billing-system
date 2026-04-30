@@ -57,11 +57,17 @@ class WhatsAppService {
         return { success: false, error: 'USER_NOT_AUTHENTICATED' };
       }
 
-      // If there's an attachment, we currently still use the direct Meta upload if possible, 
-      // but for simple text messages (the most common case), we use the proxy.
+      let mediaBase64: string | undefined = undefined;
+      let mediaName: string | undefined = undefined;
+
       if (params.attachment) {
-        // Fallback or handle media upload via proxy too? 
-        // For now, let's keep it simple and handle text via proxy.
+         mediaName = params.attachmentName || (params.attachment instanceof File ? params.attachment.name : 'attachment');
+         mediaBase64 = await new Promise((resolve, reject) => {
+           const reader = new FileReader();
+           reader.onloadend = () => resolve(reader.result as string);
+           reader.onerror = reject;
+           reader.readAsDataURL(params.attachment!);
+         });
       }
 
       const response = await fetch('/api/whatsapp/send', {
@@ -72,7 +78,9 @@ class WhatsAppService {
         body: JSON.stringify({
           ownerId,
           to: params.to,
-          message: params.message
+          message: params.message,
+          mediaBase64,
+          mediaName
         }),
       });
 

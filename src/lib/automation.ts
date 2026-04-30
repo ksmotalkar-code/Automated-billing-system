@@ -182,50 +182,59 @@ export const sendWhatsAppNotification = async (
 
 export const runAutomationCycle = async (customers: Customer[], settings: AppSettings) => {
   if (!settings.automation) return;
-  const { automation } = settings;
-  const now = new Date();
-  const lastBilling = settings.lastBillingDate ? new Date(settings.lastBillingDate) : null;
-  const lastPenalty = settings.lastPenaltyDate ? new Date(settings.lastPenaltyDate) : null;
-  const lastNotification = settings.lastNotificationDate ? new Date(settings.lastNotificationDate) : null;
+  if ((window as any)._automationRunning) return;
+  (window as any)._automationRunning = true;
 
-  let updatedSettings = { ...settings };
-  let needsSettingsUpdate = false;
+  try {
+    const { automation } = settings;
+    const now = new Date();
+    const lastBilling = settings.lastBillingDate ? new Date(settings.lastBillingDate) : null;
+    const lastPenalty = settings.lastPenaltyDate ? new Date(settings.lastPenaltyDate) : null;
+    const lastNotification = settings.lastNotificationDate ? new Date(settings.lastNotificationDate) : null;
 
-  // 1. Automatic Bill Generation
-  const defaultDay = parseInt(settings.defaultBillingDate || '1');
-  const isBillingDay = now.getDate() === defaultDay;
-  const monthsSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24 * 30.44) : 999;
-  
-  if (automation.scheduledBilling && isBillingDay && monthsSinceLastBill >= settings.billingCycleMonths) {
-    console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
-    const activeCustomers = customers.filter(c => c.status === 'Active');
+    let updatedSettings = { ...settings };
+    let needsSettingsUpdate = false;
+
+    // 1. Automatic Bill Generation
+    const defaultDay = parseInt(settings.defaultBillingDate || '1');
+    const isBillingDay = now.getDate() === defaultDay;
+    const monthsSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24 * 30.44) : 999;
     
-    // Process in batches
-    for (let i = 0; i < activeCustomers.length; i += 400) {
-      const batch = writeBatch(db);
-      const chunk = activeCustomers.slice(i, i + 400);
+    if (automation.scheduledBilling && isBillingDay && monthsSinceLastBill >= settings.billingCycleMonths) {
+      console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
+      const activeCustomers = customers.filter(c => c.status === 'Active');
       
-      for (const customer of chunk) {
-        const newBalance = customer.balance + settings.billingAmount;
-        batch.update(doc(db, 'customers', customer.id), {
-          balance: newBalance,
-          invoiceSent: false,
-          paymentNotified: false
-        });
+      // Prevent loop immediately by saving locally
+      updatedSettings.lastBillingDate = now.toISOString();
+      await saveSettings(updatedSettings).catch(()=>null);
+      needsSettingsUpdate = false;
 
-        // If smart notifications are enabled, automatically text them their new bill
-        if (automation.smartNotifications && automation.bulkProcessing) {
-          const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
-          const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
-          sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto billing notice error", e));
+      // Process in batches
+      for (let i = 0; i < activeCustomers.length; i += 400) {
+        const batch = writeBatch(db);
+        const chunk = activeCustomers.slice(i, i + 400);
+        
+        for (const customer of chunk) {
+          const newBalance = customer.balance + settings.billingAmount;
+          batch.update(doc(db, 'customers', customer.id), {
+            balance: newBalance,
+            invoiceSent: false,
+            paymentNotified: false
+          });
+
+          // If smart notifications are enabled, automatically text them their new bill
+          if (automation.smartNotifications && automation.bulkProcessing) {
+            const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
+            const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
+            sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto billing notice error", e));
+          }
         }
+        try {
+          await batch.commit();
+        } catch(e) { console.error("Quota Exceeded on Billing", e); break; }
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
       }
-      await batch.commit();
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
-    updatedSettings.lastBillingDate = now.toISOString();
-    needsSettingsUpdate = true;
-  }
 
   // 2. Automatic Penalty Application
   const daysSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24) : 0;
@@ -233,7 +242,12 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     console.log("Automated Penalty Application Triggered");
     const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
     
-    for (let i = 0; i < activeCustomers.length; i += 400) {
+    // Pre-save to avoid quota loop
+    updatedSettings.lastPenaltyDate = now.toISOString();
+    await saveSettings(updatedSettings).catch(()=>null);
+    needsSettingsUpdate = false;
+    
+      for (let i = 0; i < activeCustomers.length; i += 400) {
       const batch = writeBatch(db);
       const chunk = activeCustomers.slice(i, i + 400);
 
@@ -242,7 +256,9 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
           balance: customer.balance + settings.penaltyAmount
         });
       }
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch(e) { console.error("Quota Exceeded on Penalty", e); break; }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
     updatedSettings.lastPenaltyDate = now.toISOString();
@@ -268,7 +284,9 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
            sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true).catch(e => console.error("Escalation notice error", e));
          }
       }
-      await batch.commit();
+      try {
+        await batch.commit();
+      } catch(e) { console.error("Quota Exceeded on Escalation", e); break; }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
   }
@@ -284,7 +302,13 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   }
 
   if (needsSettingsUpdate) {
-    await saveSettings(updatedSettings);
+    try {
+      await saveSettings(updatedSettings);
+    } catch(e) { console.error("Failed to update final automation timestamps", e); }
+  }
+
+  } finally {
+     setTimeout(() => { (window as any)._automationRunning = false; }, 5000);
   }
 };
 

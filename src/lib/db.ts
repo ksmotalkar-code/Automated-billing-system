@@ -26,8 +26,10 @@ export interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -43,7 +45,14 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     },
     operationType,
     path
+  };
+
+  if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
+    console.warn('Firestore Quota Exceeded. You have hit the daily free limits (20,000 writes/50,000 reads). Please wait for the daily reset or upgrade your Firebase plan.');
+    // We still throw so UI can catch it and show relevant warnings
+    throw new Error(JSON.stringify(errInfo));
   }
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
@@ -393,8 +402,14 @@ export const saveUploadedData = async (fileName: string, data: any[]) => {
 
 export const resetAllBalances = async (customers: Customer[]) => {
   if (!auth.currentUser) return;
-  for (const c of customers) {
-    await updateCustomer({ ...c, balance: 0 });
+  const batchLimit = 400;
+  for (let i = 0; i < customers.length; i += batchLimit) {
+    const chunk = customers.slice(i, i + batchLimit);
+    const batch = writeBatch(db);
+    for (const c of chunk) {
+      batch.update(doc(db, 'customers', c.id), { balance: 0 });
+    }
+    await batch.commit();
   }
 };
 

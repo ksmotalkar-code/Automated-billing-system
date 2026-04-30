@@ -254,6 +254,7 @@ export function SettingsView() {
 
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
+  const [broadcastAttachment, setBroadcastAttachment] = useState<File | null>(null);
   const [manualCustomers, setManualCustomers] = useState<any[]>([]);
   const [manualIndex, setManualIndex] = useState(0);
   const [isManualModalOpen, setIsManualModalOpen] = useState(false);
@@ -326,10 +327,30 @@ export function SettingsView() {
       onConfirm: async () => {
         setIsBroadcasting(true);
         try {
+          let mediaBase64: string | undefined = undefined;
+          let mediaName: string | undefined = undefined;
+          
+          if (broadcastAttachment) {
+            mediaName = broadcastAttachment.name;
+            mediaBase64 = await new Promise((resolve, reject) => {
+               const reader = new FileReader();
+               reader.onloadend = () => resolve(reader.result as string);
+               reader.onerror = reject;
+               reader.readAsDataURL(broadcastAttachment);
+            });
+          }
+
           const resp = await fetch('/api/whatsapp/broadcast', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ownerId: auth.currentUser?.uid, message: broadcastMessage, apiKey: settings.metaWhatsAppApiKey, phoneId: settings.metaWhatsAppPhoneNumberId })
+            body: JSON.stringify({ 
+               ownerId: auth.currentUser?.uid, 
+               message: broadcastMessage, 
+               apiKey: settings.metaWhatsAppApiKey, 
+               phoneId: settings.metaWhatsAppPhoneNumberId,
+               mediaBase64,
+               mediaName
+            })
           });
           const data = await resp.json();
           if (resp.ok) {
@@ -476,6 +497,19 @@ export function SettingsView() {
                   className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none"
                   placeholder="Type your message here... (e.g. Due to maintenance, water supply will be restricted tomorrow for 2 hours.)"
                 />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2 px-3 py-2 cursor-pointer bg-purple-50 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors text-sm font-bold">
+                  <span className="font-bold">Attach File</span>
+                  <input type="file" className="hidden" onChange={(e) => setBroadcastAttachment(e.target.files?.[0] || null)} />
+                </label>
+                <span className="text-xs text-gray-500">
+                  {broadcastAttachment ? broadcastAttachment.name : "Supported via API Mode"}
+                </span>
+                {broadcastAttachment && (
+                    <button onClick={() => setBroadcastAttachment(null)} className="text-red-500 hover:text-red-700 text-xs">Remove</button>
+                )}
               </div>
 
               <motion.button

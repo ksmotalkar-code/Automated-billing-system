@@ -306,7 +306,7 @@ export function BillingView() {
   const deliveryModeRef = useRef("api");
 
   const handleSendMonthlyPaidBills = () => {
-    const paidCustomers = customers.filter(c => getMockStatus(c) === "Paid" && c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
+    const paidCustomers = customers.filter(c => c.status === 'Active' && getMockStatus(c) === "Paid" && c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
     if (paidCustomers.length === 0) {
       showAlert("No Pending Invoices", "No valid customers currently need a paid bill receipt sent.");
       return;
@@ -342,6 +342,9 @@ export function BillingView() {
         // Temporarily enforce bulk API usage preference in memory for this run
         const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" }; // By clearing api key, it forces manual if Web is selected
 
+        const batch = writeBatch(db);
+        let updatesSkipped = 0;
+
         for (let i = 0; i < paidCustomers.length; i++) {
           const customer = paidCustomers[i];
           const message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
@@ -351,13 +354,33 @@ export function BillingView() {
           
           const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode);
           if (result.success) {
-            await updateCustomer({ ...customer, invoiceSent: true, paymentNotified: true });
+             batch.update(doc(db, 'customers', customer.id), { invoiceSent: true, paymentNotified: true });
+             updatesSkipped++;
+
+             if (updatesSkipped % 100 === 0) {
+                 try {
+                     await batch.commit();
+                 } catch (e: any) {
+                     if (e.code === 'resource-exhausted') {
+                         errors.push("Quota Exceeded on db update");
+                         break;
+                     }
+                 }
+             }
           } else {
             errors.push(`${customer.name}: ${result.error}`);
           }
           
           setBulkProgress(Math.floor(((i + 1) / paidCustomers.length) * 100));
           await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500)); // Delay to avoid WhatsApp rate limits
+        }
+
+        if (updatesSkipped % 100 !== 0) {
+            try {
+                await batch.commit();
+            } catch (e: any) {
+                if (e.code === 'resource-exhausted') errors.push("Quota Exceeded on db update");
+            }
         }
         
         setIsSendingBulk(false);
@@ -411,7 +434,12 @@ export function BillingView() {
               invoiceSent: false
             });
           }
-          await batch.commit();
+           try {
+               await batch.commit();
+           } catch(e) {
+               showAlert("Error", "Quota Exceeded on db update");
+               break;
+           }
           await new Promise(resolve => setTimeout(resolve, 800));
         }
         showAlert("Success", "Billing cycle completed successfully!");
@@ -436,7 +464,12 @@ export function BillingView() {
               balance: customer.balance + settings.penaltyAmount 
             });
           }
-          await batch.commit();
+           try {
+               await batch.commit();
+           } catch(e) {
+               showAlert("Error", "Quota Exceeded on db update");
+               break;
+           }
           await new Promise(resolve => setTimeout(resolve, 800));
         }
         showAlert("Success", "Penalties applied successfully!");
