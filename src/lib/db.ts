@@ -48,14 +48,27 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
 
   if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
-    console.warn('Firestore Quota Exceeded. You have hit the daily free limits (20,000 writes/50,000 reads). Please wait for the daily reset or upgrade your Firebase plan.');
-    // We still throw so UI can catch it and show relevant warnings
+    // Set quota exceeded flag for 24 hours (until next UTC reset roughly)
+    const nextReset = new Date();
+    nextReset.setHours(24, 0, 0, 0); 
+    localStorage.setItem('firestore_quota_expiry', nextReset.getTime().toString());
+    console.warn('Firestore Quota Exceeded. Writes blocked locally until reset.');
     throw new Error(JSON.stringify(errInfo));
   }
 
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+export const isQuotaExceeded = () => {
+  const expiry = localStorage.getItem('firestore_quota_expiry');
+  if (!expiry) return false;
+  const isExcluded = Date.now() < parseInt(expiry);
+  if (!isExcluded) {
+    localStorage.removeItem('firestore_quota_expiry');
+  }
+  return isExcluded;
+};
 
 export interface Customer {
   id: string;
@@ -124,6 +137,43 @@ export interface AutomationSettings {
   autoCreateComplaints?: boolean;
 }
 
+export interface WhatsAppProvider {
+  id: string; // The ID of the provider, e.g., 'meta', 'cunnekt', etc.
+  name: string; // The name of the provider, e.g., 'Meta Official API', 'Cunnekt API'
+  baseUrl: string; // The base URL for the API
+  requiresApiKey: boolean; // Does the provider require an API key?
+  requiresPhoneId: boolean; // Does the provider require a Phone ID?
+  isActive: boolean; // Is the provider active?
+}
+
+export const getProviders = async (): Promise<WhatsAppProvider[]> => {
+  if (!auth.currentUser) return [];
+  const providersCol = collection(db, 'providers');
+  const snapshot = await getDocs(providersCol);
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppProvider));
+};
+
+export const addProvider = async (provider: WhatsAppProvider) => {
+  if (!auth.currentUser || auth.currentUser.email !== 'ksmotalkar@gmail.com') throw new Error("Not authorized");
+  checkQuotaBeforeWrite("Add Provider");
+  const { id, ...providerData } = provider;
+  try {
+    await setDoc(doc(db, 'providers', id), providerData);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'providers');
+  }
+};
+
+export const deleteProvider = async (id: string) => {
+  if (!auth.currentUser || auth.currentUser.email !== 'ksmotalkar@gmail.com') throw new Error("Not authorized");
+  checkQuotaBeforeWrite("Delete Provider");
+  try {
+    await deleteDoc(doc(db, 'providers', id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'providers');
+  }
+};
+
 export interface AppSettings {
   upiQrCodeImage: string | null;
   billingAmount: number;
@@ -140,7 +190,9 @@ export interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
-  preferredNotificationMethod?: 'api' | 'manual_link' | 'whatsapp_web';
+  cunnektApiKey?: string;
+  cunnektBaseUrl?: string;
+  preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
@@ -157,6 +209,13 @@ export interface UploadedData {
 
 export const cleanupOldData = async () => {
   if (!auth.currentUser) return;
+  
+  const lastCleanup = localStorage.getItem(`last_cleanup_${auth.currentUser.uid}`);
+  const today = new Date().toDateString();
+  if (lastCleanup === today) return; // Already cleaned up today
+  
+  localStorage.setItem(`last_cleanup_${auth.currentUser.uid}`, today);
+
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
   
@@ -179,19 +238,31 @@ export const cleanupOldData = async () => {
     const confSnap = await getDocs(qComplaints);
 
     if (dataSnap.size > 0 || confSnap.size > 0) {
-      const batch = writeBatch(db);
-      dataSnap.docs.forEach(doc => batch.delete(doc.ref));
-      confSnap.docs.forEach(doc => batch.delete(doc.ref));
-      await batch.commit();
-      console.log(`Cleaned up ${dataSnap.size + confSnap.size} old records.`);
+      const docsToDelete = [...dataSnap.docs, ...confSnap.docs];
+      // Use deleteInBatches helper
+      const batchLimit = 400;
+      for (let i = 0; i < docsToDelete.length; i += batchLimit) {
+        const batch = writeBatch(db);
+        const chunk = docsToDelete.slice(i, i + batchLimit);
+        chunk.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+      }
+      console.log(`Cleaned up ${docsToDelete.length} old records.`);
     }
   } catch (error) {
     console.error("Error cleaning up old data:", error);
   }
 };
 
+const checkQuotaBeforeWrite = (action: string) => {
+  if (isQuotaExceeded()) {
+    throw new Error(`Quota Exceeded: ${action} temporarily disabled to protect your database. Free tier limit reached.`);
+  }
+};
+
 export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): Promise<Customer> => {
   if (!auth.currentUser) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Add Customer");
   
   // Check for duplicates
   const q = query(
@@ -239,35 +310,41 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
   }
 };
 
-export const updateCustomer = async (updatedCustomer: Customer) => {
+export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateCheck = false) => {
   if (!auth.currentUser) throw new Error("Not authenticated");
-  
-  // Check for duplicates (if mobile number changed)
-  const q = query(
-      collection(db, 'customers'), 
-      where('ownerId', '==', auth.currentUser.uid),
-      where('mobileNumber', '==', updatedCustomer.mobileNumber)
-  );
-  const snapshot = await getDocs(q);
+  if (isQuotaExceeded()) throw new Error("Quota Exceeded: Cannot update customer.");
   
   let isDuplicate = false;
-  snapshot.forEach(docSnap => {
-      if (docSnap.id !== updatedCustomer.id) {
-          isDuplicate = true;
-      }
-  });
-  
-  if (isDuplicate) {
-      updatedCustomer.status = 'Faulty';
+  let snapshotDocs: any[] = [];
+
+  if (!skipDuplicateCheck) {
+    // Check for duplicates (if mobile number changed)
+    const q = query(
+        collection(db, 'customers'), 
+        where('ownerId', '==', auth.currentUser.uid),
+        where('mobileNumber', '==', updatedCustomer.mobileNumber)
+    );
+    const snapshot = await getDocs(q);
+    snapshotDocs = snapshot.docs;
+    
+    snapshot.forEach(docSnap => {
+        if (docSnap.id !== updatedCustomer.id) {
+            isDuplicate = true;
+        }
+    });
+    
+    if (isDuplicate) {
+        updatedCustomer.status = 'Faulty';
+    }
   }
 
   try {
     await updateDoc(doc(db, 'customers', updatedCustomer.id), { ...updatedCustomer });
     
     // If duplicate, update other docs to Faulty
-    if (isDuplicate) {
+    if (isDuplicate && snapshotDocs.length > 0) {
         const batch = writeBatch(db);
-        snapshot.docs.forEach(docSnap => {
+        snapshotDocs.forEach(docSnap => {
             if (docSnap.id !== updatedCustomer.id) {
                 batch.update(docSnap.ref, { status: 'Faulty' });
             }
@@ -292,6 +369,7 @@ const deleteInBatches = async (querySnapshot: any) => {
 
 export const deleteCustomer = async (id: string) => {
   if (!auth.currentUser) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Delete Customer");
   try {
     const batch = writeBatch(db);
     // Delete customer doc
@@ -359,6 +437,7 @@ export const deleteAllCustomers = async () => {
 
 export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'>): Promise<Transaction> => {
   if (!auth.currentUser) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Add Transaction");
   const newTransaction: Transaction = {
     ...transaction,
     id: `TXN-${uuidv4().substring(0, 8).toUpperCase()}`,
@@ -376,6 +455,7 @@ export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date
 
 export const saveSettings = async (settings: AppSettings) => {
   if (!auth.currentUser) throw new Error("Not authenticated");
+  if (isQuotaExceeded()) throw new Error("Quota Exceeded: Writes temporarily disabled.");
   try {
     await setDoc(doc(db, 'settings', auth.currentUser.uid), { ...settings, ownerId: auth.currentUser.uid });
   } catch (error) {
@@ -402,6 +482,7 @@ export const saveUploadedData = async (fileName: string, data: any[]) => {
 
 export const resetAllBalances = async (customers: Customer[]) => {
   if (!auth.currentUser) return;
+  checkQuotaBeforeWrite("Reset Balances");
   const batchLimit = 400;
   for (let i = 0; i < customers.length; i += batchLimit) {
     const chunk = customers.slice(i, i + batchLimit);
@@ -536,6 +617,8 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
         defaultBillingDate: '1',
         metaWhatsAppApiKey: '',
         metaWhatsAppPhoneNumberId: '',
+        cunnektApiKey: '',
+        cunnektBaseUrl: 'https://app2.cunnekt.com/v1',
         automation: {
           billingLifecycle: true,
           ruleBased: true,

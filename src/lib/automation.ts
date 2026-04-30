@@ -183,14 +183,26 @@ export const sendWhatsAppNotification = async (
 export const runAutomationCycle = async (customers: Customer[], settings: AppSettings) => {
   if (!settings.automation) return;
   if ((window as any)._automationRunning) return;
+  
+  const { isQuotaExceeded } = await import('./db');
+  if (isQuotaExceeded()) {
+    console.log("Automation skipped: Quota Limit Exceeded");
+    return;
+  }
+
   (window as any)._automationRunning = true;
 
   try {
     const { automation } = settings;
     const now = new Date();
-    const lastBilling = settings.lastBillingDate ? new Date(settings.lastBillingDate) : null;
-    const lastPenalty = settings.lastPenaltyDate ? new Date(settings.lastPenaltyDate) : null;
-    const lastNotification = settings.lastNotificationDate ? new Date(settings.lastNotificationDate) : null;
+    
+    const localLastBillingSafe = localStorage.getItem(`automation_billing_${settings.ownerId || 'sys'}`);
+    const localLastPenaltySafe = localStorage.getItem(`automation_penalty_${settings.ownerId || 'sys'}`);
+    const localLastNotifSafe = localStorage.getItem(`automation_notif_${settings.ownerId || 'sys'}`);
+
+    const lastBilling = (localLastBillingSafe || settings.lastBillingDate) ? new Date((localLastBillingSafe || settings.lastBillingDate) as string) : null;
+    const lastPenalty = (localLastPenaltySafe || settings.lastPenaltyDate) ? new Date((localLastPenaltySafe || settings.lastPenaltyDate) as string) : null;
+    const lastNotification = (localLastNotifSafe || settings.lastNotificationDate) ? new Date((localLastNotifSafe || settings.lastNotificationDate) as string) : null;
 
     let updatedSettings = { ...settings };
     let needsSettingsUpdate = false;
@@ -205,9 +217,9 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       const activeCustomers = customers.filter(c => c.status === 'Active');
       
       // Prevent loop immediately by saving locally
+      localStorage.setItem(`automation_billing_${settings.ownerId || 'sys'}`, now.toISOString());
       updatedSettings.lastBillingDate = now.toISOString();
-      await saveSettings(updatedSettings).catch(()=>null);
-      needsSettingsUpdate = false;
+      needsSettingsUpdate = true;
 
       // Process in batches
       for (let i = 0; i < activeCustomers.length; i += 400) {
@@ -231,7 +243,11 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         }
         try {
           await batch.commit();
-        } catch(e) { console.error("Quota Exceeded on Billing", e); break; }
+        } catch(e: any) { 
+          console.error("Quota Exceeded on Billing", e); 
+          if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e; 
+          break; 
+        }
         await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
       }
     }
@@ -243,9 +259,9 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
     
     // Pre-save to avoid quota loop
+    localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
     updatedSettings.lastPenaltyDate = now.toISOString();
-    await saveSettings(updatedSettings).catch(()=>null);
-    needsSettingsUpdate = false;
+    needsSettingsUpdate = true;
     
       for (let i = 0; i < activeCustomers.length; i += 400) {
       const batch = writeBatch(db);
@@ -258,11 +274,13 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       }
       try {
         await batch.commit();
-      } catch(e) { console.error("Quota Exceeded on Penalty", e); break; }
+      } catch(e: any) { 
+        console.error("Quota Exceeded on Penalty", e); 
+        if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e;
+        break; 
+      }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
-    updatedSettings.lastPenaltyDate = now.toISOString();
-    needsSettingsUpdate = true;
   }
 
   // 3. Escalation Check
@@ -271,6 +289,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     console.log("Automated Escalation / Suspension Triggered");
     const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
     
+    localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
     for (let i = 0; i < suspendedCustomers.length; i += 400) {
       const batch = writeBatch(db);
       const chunk = suspendedCustomers.slice(i, i + 400);
@@ -286,7 +305,11 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       }
       try {
         await batch.commit();
-      } catch(e) { console.error("Quota Exceeded on Escalation", e); break; }
+      } catch(e: any) { 
+        console.error("Quota Exceeded on Escalation", e); 
+        if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e;
+        break; 
+      }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
   }
@@ -296,6 +319,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       const isNewDay = !lastNotification || new Date(lastNotification).toDateString() !== now.toDateString();
       if (isNewDay) {
         console.log("Daily Notification Flag Set");
+        localStorage.setItem(`automation_notif_${settings.ownerId || 'sys'}`, now.toISOString());
         updatedSettings.lastNotificationDate = now.toISOString();
         needsSettingsUpdate = true;
       }
@@ -308,7 +332,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   }
 
   } finally {
-     setTimeout(() => { (window as any)._automationRunning = false; }, 5000);
+     setTimeout(() => { (window as any)._automationRunning = false; }, 60000); // 1 minute lock to prevent flapping
   }
 };
 

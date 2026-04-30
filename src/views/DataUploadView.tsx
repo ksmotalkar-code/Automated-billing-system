@@ -206,7 +206,7 @@ export function DataUploadView() {
   const confirmBulkUpload = async () => {
     setIsUploading(true);
     try {
-      const batchLimit = 500;
+      const batchLimit = 400; // Safer batch limit for free-tier quotas
       for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const chunk = stagingCustomers.slice(i, i + batchLimit);
         const batch = writeBatch(db);
@@ -222,7 +222,19 @@ export function DataUploadView() {
       setRawText("");
     } catch (err) {
       console.error(err);
-      setStatus({ type: 'error', message: 'Failed to save the records.' });
+      if (err instanceof Error && (err.message.includes('Quota') || err.message.includes('quota'))) {
+        setStatus({ type: 'error', message: 'Quota limit exceeded. Bulk upload paused to protect your database. Wait for 24 hours or upgrade to a paid plan.' });
+      } else {
+        setStatus({ type: 'error', message: 'Failed to save the records. Please check console for details.' });
+      }
+      
+      // Still log to internal tracker
+      const { OperationType, handleFirestoreError } = await import('../lib/db');
+      try {
+        handleFirestoreError(err, OperationType.WRITE, 'customers_bulk_import');
+      } catch (innerErr) {
+        // Just let it fail if it can't even log
+      }
     } finally {
       setIsUploading(false);
     }

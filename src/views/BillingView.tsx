@@ -225,27 +225,13 @@ export function BillingView() {
     setIsIndividualNotifyOpen(true);
   };
 
-  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [individualAttachment, setIndividualAttachment] = useState<File | null>(null);
+
   const handleUploadAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file || !auth.currentUser) return;
-    
-    setIsUploadingAttachment(true);
-    try {
-      const { storage } = await import('../firebase');
-      const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
-      const fileRef = ref(storage, `attachments/${auth.currentUser.uid}/${Date.now()}_${file.name}`);
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-      setNotifyMessage(prev => prev + `\n\nAttachment: ${url}`);
-      showAlert("Success", "Attachment uploaded and link added to message.");
-    } catch(err) {
-      console.error(err);
-      showAlert("Failed", "Could not upload attachment.");
-    } finally {
-      setIsUploadingAttachment(false);
-      e.target.value = ''; // clear input
-    }
+    if (!file) return;
+    setIndividualAttachment(file);
+    e.target.value = ''; // clear input
   };
 
   const handleSendIndividualNotify = async () => {
@@ -255,13 +241,14 @@ export function BillingView() {
     try {
       // Message is already pre-filled with the customer name
       const message = notifyMessage;
-      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, undefined, undefined, false);
+      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, individualAttachment || undefined, individualAttachment?.name, false, false);
       
       if (result.success) {
         showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
         setIsIndividualNotifyOpen(false);
         setIndividualNotifyCustomer(null);
         setNotifyMessage("");
+        setIndividualAttachment(null);
       } else {
         showAlert("Failed", result.error || "Could not send notification.");
       }
@@ -1009,12 +996,17 @@ export function BillingView() {
                   className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2"
                 />
                 <div className="flex items-center gap-2">
-                  <label className={`flex items-center gap-2 px-3 py-2 cursor-pointer bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-bold ${isUploadingAttachment ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    {isUploadingAttachment ? <span className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></span> : <Paperclip className="w-4 h-4" />}
-                    {isUploadingAttachment ? 'Uploading...' : 'Attach File'}
-                    <input type="file" className="hidden" disabled={isUploadingAttachment} onChange={handleUploadAttachment} />
+                  <label className="flex items-center gap-2 px-3 py-2 cursor-pointer bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-bold">
+                    <Paperclip className="w-4 h-4" />
+                    Attach File
+                    <input type="file" className="hidden" onChange={handleUploadAttachment} />
                   </label>
-                  <span className="text-xs text-gray-500">Uploads a file & appends a link</span>
+                  <span className="text-xs text-gray-500">
+                    {individualAttachment ? individualAttachment.name : "Supported via API Mode"}
+                  </span>
+                  {individualAttachment && (
+                     <button onClick={() => setIndividualAttachment(null)} className="text-red-500 hover:text-red-700 text-xs">Remove</button>
+                  )}
                 </div>
               </div>
 

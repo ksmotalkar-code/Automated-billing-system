@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard } from "lucide-react";
 import { motion } from "motion/react";
-import { subscribeToSettings, saveSettings, AppSettings, resetDatabase } from "../lib/db";
+import { subscribeToSettings, saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { Trash2, LogOut, MessageCircle, Loader2 } from "lucide-react";
 import { auth, logout } from "../firebase";
@@ -34,6 +34,10 @@ export function SettingsView() {
   });
 
   const [isTestLoading, setIsTestLoading] = useState(false);
+  const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
+  const isAdmin = auth.currentUser?.email === 'ksmotalkar@gmail.com';
+  const [newProvider, setNewProvider] = useState<Partial<WhatsAppProvider>>({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
+
   const [isTriggerLoading, setIsTriggerLoading] = useState(false);
   const [testMobile, setTestMobile] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -75,6 +79,17 @@ export function SettingsView() {
         }
       }
     });
+
+    const loadProviders = async () => {
+      try {
+        const provs = await getProviders();
+        setProviders(provs);
+      } catch(e) {
+        console.error("Failed to load providers", e);
+      }
+    };
+    loadProviders();
+
     return () => {
       unsubSettings();
     };
@@ -90,7 +105,15 @@ export function SettingsView() {
       const resp = await fetch('/api/whatsapp/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerId: auth.currentUser?.uid, testMobile, apiKey: settings.metaWhatsAppApiKey, phoneId: settings.metaWhatsAppPhoneNumberId })
+        body: JSON.stringify({ 
+          ownerId: auth.currentUser?.uid, 
+          testMobile, 
+          apiKey: settings.metaWhatsAppApiKey, 
+          phoneId: settings.metaWhatsAppPhoneNumberId,
+          cunnektApiKey: settings.cunnektApiKey,
+          cunnektBaseUrl: settings.cunnektBaseUrl,
+          method: settings.preferredNotificationMethod
+        })
       });
       const data = await resp.json();
       if (resp.ok) {
@@ -138,37 +161,43 @@ export function SettingsView() {
     setIsSaving(true);
     let updatedSettings = { ...settings };
 
-    // WhatsApp Configuration Validation
+    // WhatsApp Configuration Validation (Meta)
     if (updatedSettings.preferredNotificationMethod === 'api') {
       const apiKey = updatedSettings.metaWhatsAppApiKey?.trim() || '';
       const phoneId = updatedSettings.metaWhatsAppPhoneNumberId?.trim() || '';
       
       const isMissingKeys = !apiKey || !phoneId;
-      const isInvalidTokenStructure = apiKey.length > 0 && apiKey.length < 50; // Meta tokens are very long, usually starting with EA
+      const isInvalidTokenStructure = apiKey.length > 0 && apiKey.length < 50; 
       const isInvalidPhoneId = phoneId.length > 0 && !/^\d+$/.test(phoneId);
 
       if (isMissingKeys || isInvalidTokenStructure || isInvalidPhoneId) {
         setIsSaving(false);
         let errorReason = "Your Meta WhatsApp API Key or Phone Number ID is missing or invalid.";
         if (isInvalidTokenStructure) errorReason = "Meta Bearer tokens are typically long strings starting with 'EAA...'.";
-        if (isInvalidPhoneId) errorReason = "Your Phone Number ID must contain ONLY numbers (e.g., 1012345678). Do NOT paste the entire URL or words like 'messages'.";
+        if (isInvalidPhoneId) errorReason = "Your Phone Number ID must contain ONLY numbers.";
 
         showAlert(
-          "WhatsApp Configuration Incomplete",
+          "Meta Configuration Incomplete",
           `${errorReason} ` +
-          "To ensure the app continues to function perfectly, the notification method has been safely fallen back to the failproof 'Public Portal Link (Manual)'. " +
-          "Please check your Meta Developer Dashboard > WhatsApp > API Setup for the correct keys before enabling Automated Attachments."
+          "To ensure the app continues to function perfectly, the notification method has been safely fallen back to the failproof 'Public Portal Link (Manual)'."
         );
         updatedSettings.preferredNotificationMethod = 'manual_link';
-        setSettings(updatedSettings);
-        
-        // Save the fallback setting, but we've alerted the user
-        try {
-          await saveSettings(updatedSettings);
-        } catch (error) {
-          console.error("Error saving fallback setting", error);
-        }
-        return; // Halt here since we showed an alert
+      }
+    }
+
+    // WhatsApp Configuration Validation (Cunnekt)
+    if (updatedSettings.preferredNotificationMethod === 'cunnekt') {
+      const apiKey = updatedSettings.cunnektApiKey?.trim() || '';
+      const baseUrl = updatedSettings.cunnektBaseUrl?.trim() || '';
+      
+      if (!apiKey || !baseUrl) {
+        setIsSaving(false);
+        showAlert(
+          "Cunnekt Configuration Incomplete",
+          "Your Cunnekt API Key or Base URL is missing. " +
+          "To ensure functionality, the notification method has been safely fallen back to 'Public Portal Link (Manual)'."
+        );
+        updatedSettings.preferredNotificationMethod = 'manual_link';
       }
     }
 
@@ -306,11 +335,11 @@ export function SettingsView() {
       return;
     }
     
-    if (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) {
+    if (!settings.metaWhatsAppApiKey && !settings.cunnektApiKey) {
       setConfirmConfig({
         isOpen: true,
         title: "API Not Configured",
-        message: "You haven't configured the Meta WhatsApp API. Would you like to send messages manually via the WhatsApp App instead?",
+        message: "You haven't configured any WhatsApp API (Meta or Cunnekt). Would you like to send messages manually via the WhatsApp App instead?",
         onConfirm: () => {
           setConfirmConfig({ ...confirmConfig, isOpen: false });
           startManualBroadcast();
@@ -323,7 +352,7 @@ export function SettingsView() {
     setConfirmConfig({
       isOpen: true,
       title: "Confirm Broadast?",
-      message: "Are you sure you want to send this message to ALL active customers? This will use your Meta WhatsApp credits.",
+      message: `Are you sure you want to send this message to ALL active customers using ${settings.preferredNotificationMethod === 'cunnekt' ? 'Cunnekt' : 'Meta API'}?`,
       onConfirm: async () => {
         setIsBroadcasting(true);
         try {
@@ -348,6 +377,8 @@ export function SettingsView() {
                message: broadcastMessage, 
                apiKey: settings.metaWhatsAppApiKey, 
                phoneId: settings.metaWhatsAppPhoneNumberId,
+               cunnektApiKey: settings.cunnektApiKey,
+               cunnektBaseUrl: settings.cunnektBaseUrl,
                mediaBase64,
                mediaName
             })
@@ -536,35 +567,92 @@ export function SettingsView() {
               </div>
               <div>
                 <CardTitle className="text-lg">Automated WhatsApp Messaging</CardTitle>
-                <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal to seamlessly send automated bills to customers.</p>
+                <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal or Cunnekt to seamlessly send automated bills to customers.</p>
               </div>
             </CardHeader>
             <CardContent className="pt-6">
               <div className="grid gap-6 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">Meta Access Token</label>
-                  <input
-                    type="password"
-                    value={settings.metaWhatsAppApiKey || ''}
-                    onChange={(e) => setSettings({ ...settings, metaWhatsAppApiKey: e.target.value })}
-                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
-                    placeholder="••••••••••••••"
-                  />
-                  <p className="text-xs neu-text-muted ml-1 mt-1">From Meta App Dashboard &gt; WhatsApp &gt; API Setup.</p>
+                <div className="md:col-span-2 p-4 bg-emerald-50 rounded-xl border border-emerald-200 mb-2">
+                  <p className="text-sm font-bold text-emerald-800">Choose Provider:</p>
+                  <div className="flex flex-wrap gap-4 mt-2">
+                    <button 
+                      onClick={() => setSettings({...settings, preferredNotificationMethod: 'api'})}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settings.preferredNotificationMethod === 'api' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-emerald-600'}`}
+                    >
+                      Meta Official API
+                    </button>
+                    {providers.map(provider => (
+                      <button 
+                        key={provider.id}
+                        onClick={() => {
+                           setSettings({
+                               ...settings, 
+                               preferredNotificationMethod: provider.id,
+                               cunnektBaseUrl: provider.baseUrl
+                           });
+                        }}
+                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settings.preferredNotificationMethod === provider.id ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-emerald-600'}`}
+                      >
+                        {provider.name}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
-                    Phone Number ID
-                  </label>
-                  <input
-                    type="text"
-                    value={settings.metaWhatsAppPhoneNumberId || ''}
-                    onChange={(e) => setSettings({ ...settings, metaWhatsAppPhoneNumberId: e.target.value })}
-                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
-                    placeholder="101xxxxxxxxxxxx"
-                  />
-                  <p className="text-xs neu-text-muted ml-1 mt-1">Found in your Meta App Dashboard &gt; WhatsApp &gt; API Setup &gt; Phone number ID.</p>
-                </div>
+
+                {settings.preferredNotificationMethod === 'api' ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">Meta Access Token</label>
+                      <input
+                        type="password"
+                        value={settings.metaWhatsAppApiKey || ''}
+                        onChange={(e) => setSettings({ ...settings, metaWhatsAppApiKey: e.target.value })}
+                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                        placeholder="••••••••••••••"
+                      />
+                      <p className="text-xs neu-text-muted ml-1 mt-1">From Meta App Dashboard &gt; WhatsApp &gt; API Setup.</p>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
+                        Phone Number ID
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.metaWhatsAppPhoneNumberId || ''}
+                        onChange={(e) => setSettings({ ...settings, metaWhatsAppPhoneNumberId: e.target.value })}
+                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                        placeholder="101xxxxxxxxxxxx"
+                      />
+                      <p className="text-xs neu-text-muted ml-1 mt-1">Found in your Meta App Dashboard &gt; WhatsApp &gt; API Setup &gt; Phone number ID.</p>
+                    </div>
+                  </>
+                ) : settings.preferredNotificationMethod ? (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">Provide API Key</label>
+                      <input
+                        type="password"
+                        value={settings.cunnektApiKey || ''}
+                        onChange={(e) => setSettings({ ...settings, cunnektApiKey: e.target.value })}
+                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                        placeholder="••••••••••••••"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
+                        Provider Base URL
+                      </label>
+                      <input
+                        type="text"
+                        value={settings.cunnektBaseUrl || ''}
+                        onChange={(e) => setSettings({ ...settings, cunnektBaseUrl: e.target.value })}
+                        disabled
+                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium opacity-70"
+                        placeholder="Configured by Provider"
+                      />
+                    </div>
+                  </>
+                ) : null}
                 
                 <div className="space-y-4 md:col-span-2 pt-6 mt-2 border-t border-[var(--shadow-dark)]">
                   <h4 className="font-bold text-md text-emerald-600">Test Your API Connection</h4>
@@ -580,7 +668,7 @@ export function SettingsView() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={handleTestWhatsApp}
-                      disabled={isTestLoading || !settings.metaWhatsAppApiKey}
+                      disabled={isTestLoading || (!settings.metaWhatsAppApiKey && !settings.cunnektApiKey)}
                       className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 disabled:opacity-50 whitespace-nowrap"
                     >
                       {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Test Message"}
@@ -686,12 +774,23 @@ export function SettingsView() {
                   </label>
                   <select
                     value={settings.preferredNotificationMethod || 'api'}
-                    onChange={(e) => setSettings({ ...settings, preferredNotificationMethod: e.target.value as 'api' | 'manual_link' | 'whatsapp_web' })}
+                    onChange={(e) => {
+                       const selected = e.target.value;
+                       const providerMatch = providers.find(p => p.id === selected);
+                       setSettings({ 
+                         ...settings, 
+                         preferredNotificationMethod: selected,
+                         cunnektBaseUrl: providerMatch ? providerMatch.baseUrl : settings.cunnektBaseUrl
+                       });
+                    }}
                     className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-bold text-emerald-600"
                   >
-                    <option value="api">Automated Attachments (Requires Meta API setup)</option>
-                    <option value="whatsapp_web">WhatsApp Web Scan (No Meta API Required, Unofficial)</option>
-                    <option value="manual_link">Public Portal Link (Works without Meta API via Web)</option>
+                    <option value="api">Meta Automated API (Official)</option>
+                    {providers.map(provider => (
+                      <option key={provider.id} value={provider.id}>{provider.name} ({provider.baseUrl})</option>
+                    ))}
+                    <option value="whatsapp_web">WhatsApp Web Scan (Unofficial)</option>
+                    <option value="manual_link">Public Portal Link (Manual)</option>
                   </select>
                   <p className="text-xs neu-text-muted ml-1 mt-2">
                     If set to <strong className="text-blue-500">Public Portal Link</strong>, customers will receive a clickable link instead of attachments, opening their invoice and QR securely on their phone without requiring your API to be approved by Meta. <br/><br/>
@@ -989,6 +1088,93 @@ export function SettingsView() {
               </Card>
             ))}
           </div>
+        </motion.div>
+      )}
+
+      {isAdmin && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <Card className="border-2 border-amber-500/20 mb-6 mt-8">
+            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+              <div className="p-2 neu-pressed rounded-xl text-amber-600">
+                <Database className="w-6 h-6" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Global Providers Administration</CardTitle>
+                <p className="text-sm neu-text-muted">Admin-only feature to add custom WhatsApp providers dynamically.</p>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6">
+               <div className="flex flex-col gap-4">
+                  {providers.map(provider => (
+                     <div key={provider.id} className="p-4 neu-flat rounded-xl flex items-center justify-between">
+                        <div>
+                           <p className="font-bold">{provider.name}</p>
+                           <p className="text-xs neu-text-muted" style={{ wordBreak: 'break-all' }}>{provider.baseUrl}</p>
+                        </div>
+                        <button 
+                           onClick={async () => {
+                             if(window.confirm("Delete provider?")) {
+                               try {
+                                  await deleteProvider(provider.id);
+                                  setProviders(providers.filter(p => p.id !== provider.id));
+                               } catch(e) { console.error(e); }
+                             }
+                           }}
+                           className="p-2 bg-rose-50 text-rose-600 rounded-lg hover:bg-rose-100"
+                        >
+                           <Trash2 className="w-4 h-4"/>
+                        </button>
+                     </div>
+                  ))}
+               </div>
+
+               <div className="mt-6 p-4 rounded-xl border border-[var(--shadow-dark)] bg-[var(--bg-color)]">
+                 <p className="font-bold mb-4 text-sm uppercase tracking-wider neu-text-muted">Add New Provider</p>
+                 <div className="grid gap-4 md:grid-cols-2">
+                    <input 
+                       type="text" 
+                       placeholder="Provider ID (e.g. wati, twilio, messagebird)" 
+                       value={newProvider.id || ''} 
+                       onChange={e => setNewProvider({ ...newProvider, id: e.target.value })}
+                       className="px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium w-full"
+                    />
+                    <input 
+                       type="text" 
+                       placeholder="Provider Name (e.g. WATI API)" 
+                       value={newProvider.name || ''} 
+                       onChange={e => setNewProvider({ ...newProvider, name: e.target.value })}
+                       className="px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium w-full"
+                    />
+                    <input 
+                       type="text" 
+                       placeholder="Base URL (e.g. https://api.twilio.com/v1)" 
+                       value={newProvider.baseUrl || ''} 
+                       onChange={e => setNewProvider({ ...newProvider, baseUrl: e.target.value })}
+                       className="px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium w-full md:col-span-2"
+                    />
+                    <button
+                       onClick={async () => {
+                         if (!newProvider.id || !newProvider.name || !newProvider.baseUrl) {
+                           showAlert("Validation Error", "All fields are required.");
+                           return;
+                         }
+                         try {
+                           await addProvider(newProvider as WhatsAppProvider);
+                           setProviders([...providers, newProvider as WhatsAppProvider]);
+                           setNewProvider({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
+                           showAlert("Success", "Provider added successfully.");
+                         } catch (e: any) {
+                           showAlert("Error", e.message);
+                         }
+                       }}
+                       className="px-6 py-3 bg-amber-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-amber-500/30 w-full md:col-span-2"
+                    >
+                       Add Provider
+                    </button>
+                 </div>
+               </div>
+            </CardContent>
+          </Card>
         </motion.div>
       )}
 

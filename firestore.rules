@@ -122,5 +122,9 @@ service cloud.firestore {
       allow update: if isDocOwner() && ownerUnchanged();
       allow delete: if isDocOwner();
     }
+    match /providers/{providerId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
   }
 }

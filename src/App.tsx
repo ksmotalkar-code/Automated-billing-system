@@ -16,7 +16,7 @@ import { ComplaintsView } from "./views/ComplaintsView";
 import { ReportsView } from "./views/ReportsView";
 import { ManualView } from "./views/ManualView";
 import { AnimatePresence, motion } from "motion/react";
-import { Menu, X } from "lucide-react";
+import { Menu, X, AlertTriangle } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -103,20 +103,42 @@ export default function App() {
   }, [user]);
 
   // Run automation cycle when data is ready
-  const hasRunAutomation = useRef(false);
+  const lastRunRef = useRef<number>(0);
   useEffect(() => {
-    // If the server environment does not have firebase-admin cron logic running,
-    // we use the local dashboard as the execution engine while it is open.
-    if (user && customers.length > 0 && settings && settings.automation && !hasRunAutomation.current) {
-       hasRunAutomation.current = true;
-       runAutomationCycle(customers, settings).catch(e => console.error("Auto Cycle Error", e));
+    const minWait = 1000 * 60 * 5; // 5 minutes minimum between attempts in this session
+    if (user && customers.length > 0 && settings && settings.automation && (Date.now() - lastRunRef.current > minWait)) {
+       lastRunRef.current = Date.now();
+       console.log("Triggering automation cycle check...");
+       runAutomationCycle(customers, settings).catch(e => {
+         if (e.message?.includes('Quota') || e.code === 'resource-exhausted') {
+            console.warn("Automation cycle hit quota limits, will retry later.");
+         } else {
+            console.error("Auto Cycle Error", e);
+         }
+       });
     }
-  }, [user, customers.length, settings]);
+  }, [user, customers.length, !!settings]); // Use !!settings to only trigger when settings exists, not on every change to settings object
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
     document.documentElement.setAttribute("data-ui", uiStyle);
   }, [theme, uiStyle]);
+
+  const [quotaExceededFlag, setQuotaExceededFlag] = useState(false);
+  useEffect(() => {
+    const checkQuota = () => {
+      // Direct access from local storage to avoid complex imports if possible
+      const expiry = localStorage.getItem('firestore_quota_expiry');
+      if (expiry && Date.now() < parseInt(expiry)) {
+        setQuotaExceededFlag(true);
+      } else {
+        setQuotaExceededFlag(false);
+      }
+    };
+    checkQuota();
+    const interval = setInterval(checkQuota, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   // Auto-collapse sidebar on smaller screens
   useEffect(() => {
@@ -343,6 +365,27 @@ export default function App() {
         </div>
       </div>
       <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full">
+        {quotaExceededFlag && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4 text-rose-800 shadow-lg shadow-rose-500/10"
+          >
+            <div className="p-2 bg-rose-100 rounded-xl">
+              <AlertTriangle className="w-6 h-6 text-rose-600" />
+            </div>
+            <div className="flex-1 text-center sm:text-left">
+              <p className="font-bold">Database Quota Exceeded (Free Tier)</p>
+              <p className="text-sm opacity-90 leading-tight mt-1">You've reached the 20,000 daily write limit for your Firebase project. Most save/update actions are temporarily disabled to prevent data loss. Quota usually resets at midnight UTC.</p>
+            </div>
+            <button 
+              onClick={() => window.open('https://console.firebase.google.com/project/_/firestore/usage', '_blank')}
+              className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700 transition-colors whitespace-nowrap"
+            >
+              Check Usage
+            </button>
+          </motion.div>
+        )}
         <div className="flex justify-between items-center mb-4">
           <button 
             className="md:hidden p-2 neu-flat rounded-xl"

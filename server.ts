@@ -36,7 +36,9 @@ interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
-  preferredNotificationMethod?: 'api' | 'manual_link' | 'whatsapp_web';
+  cunnektApiKey?: string;
+  cunnektBaseUrl?: string;
+  preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
   automation?: AutomationSettings;
 }
@@ -143,32 +145,11 @@ async function startServer() {
               if (newBalance === 0 && ownerId) {
                  const settingsDoc = await db.collection("settings").doc(ownerId).get();
                  const settings = settingsDoc.data() as any;
-                 if (settings?.automation?.smartNotifications && settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+                 if (settings?.automation?.smartNotifications && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
                    const mobile = customer?.mobileNumber?.replace(/\D/g, '');
                    if (mobile && mobile.length >= 10) {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
-                     let formattedTo = mobile;
-                     if (mobile.length === 10) {
-                       formattedTo = `91${mobile}`;
-                     } else if (mobile.length === 12 && mobile.startsWith('91')) {
-                       formattedTo = mobile;
-                     } else {
-                       formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
-                     }
-                     await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
-                       method: 'POST',
-                       headers: {
-                         'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
-                         'Content-Type': 'application/json',
-                       },
-                       body: JSON.stringify({
-                         messaging_product: 'whatsapp',
-                         to: formattedTo,
-                         type: 'text',
-                         text: { body: message }
-                       }),
-                     }).catch(e => console.error("Webhook Auto-Receipt failed", e));
-                     
+                     await sendWhatsAppMessage(settings, mobile, message).catch(e => console.error("Webhook Auto-Receipt failed", e));
                      await custRef.update({ paymentNotified: true });
                    }
                  }
@@ -291,6 +272,67 @@ async function startServer() {
     return data;
   }
 
+  // Helper for Cunnekt WhatsApp API
+  async function sendCunnektWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string) {
+    if (!settings?.cunnektApiKey || !settings?.cunnektBaseUrl) {
+      throw new Error("Cunnekt API not configured");
+    }
+
+    const mobile = to.replace(/\D/g, '');
+    let formattedTo = mobile;
+    if (mobile.length === 10) {
+      formattedTo = `91${mobile}`;
+    } else {
+      formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    }
+
+    console.log(`[Cunnekt] Sending to ${formattedTo}...`);
+
+    const baseUrl = settings.cunnektBaseUrl.replace(/\/$/, ''); // Remove trailing slash
+    
+    // Cunnekt standard message endpoint
+    const url = `${baseUrl}/messages`;
+
+    const payload: any = {
+      to: formattedTo,
+      type: 'text',
+      text: { body: message }
+    };
+
+    // Note: Cunnekt generic API often follows Meta's structure for text, 
+    // but we'll try a fallback if needed in a real scenario.
+    // For media, they often use a different structure or expect a URL.
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'apikey': settings.cunnektApiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error(`[Cunnekt] API Error:`, data);
+      throw new Error(data.message || "Cunnekt API Error");
+    }
+    return data;
+  }
+
+  // Generic Send WhatsApp API
+  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string) {
+    if (settings.preferredNotificationMethod && 
+        settings.preferredNotificationMethod !== 'api' && 
+        settings.preferredNotificationMethod !== 'whatsapp_web' && 
+        settings.preferredNotificationMethod !== 'manual_link') {
+      return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
+    } else {
+      // Default to Meta or explicit 'api'
+      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName);
+    }
+  }
+
   // Reusable Automation Engine
   async function runDailyAutomation(specificOwnerId: string | null = null) {
      if (!admin.apps.length) return;
@@ -348,13 +390,13 @@ async function startServer() {
             }
 
             // Send Automated WhatsApp Bill (after DB updates)
-            if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId && settings.automation.smartNotifications) {
+            if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications) {
               for (const cDoc of customersSnap.docs) {
                 const customer = cDoc.data();
                 const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
-                  await sendMetaWhatsApp(settings, customer.mobileNumber, message);
+                  await sendWhatsAppMessage(settings, customer.mobileNumber, message);
                 } catch (e: any) {
                   console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
                 }
@@ -415,18 +457,25 @@ async function startServer() {
   // Send Individual Message API (Proxied for CORS safety)
   app.post("/api/whatsapp/send", async (req, res) => {
     try {
-      const { ownerId, to, message, apiKey, phoneId, mediaBase64, mediaName } = req.body;
+      const { ownerId, to, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method, mediaBase64, mediaName } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
       
-      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
-      if (!apiKey && admin.apps.length) {
+      let settings: any = { 
+        metaWhatsAppApiKey: apiKey, 
+        metaWhatsAppPhoneNumberId: phoneId,
+        cunnektApiKey: cunnektApiKey,
+        cunnektBaseUrl: cunnektBaseUrl,
+        preferredNotificationMethod: method
+      };
+
+      if (!apiKey && !cunnektApiKey && admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          settings = settingsDoc.data() as any;
       }
       
-      const data = await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName);
-      res.json({ success: true, messageId: data.messages?.[0]?.id });
+      const data = await sendWhatsAppMessage(settings, to, message, mediaBase64, mediaName);
+      res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -435,16 +484,22 @@ async function startServer() {
   // Bulk Broadcast API
   app.post("/api/whatsapp/broadcast", async (req, res) => {
     try {
-      const { ownerId, message, apiKey, phoneId, recipients, mediaBase64, mediaName } = req.body;
+      const { ownerId, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, recipients, mediaBase64, mediaName } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
       
-      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
-      if (!apiKey && admin.apps.length) {
+      let settings: any = { 
+        metaWhatsAppApiKey: apiKey, 
+        metaWhatsAppPhoneNumberId: phoneId,
+        cunnektApiKey: cunnektApiKey,
+        cunnektBaseUrl: cunnektBaseUrl
+      };
+
+      if (!apiKey && !cunnektApiKey && admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          if (settingsDoc.exists) settings = settingsDoc.data() as any;
       }
-      if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey) {
         return res.status(400).json({ error: "WhatsApp API not configured" });
       }
 
@@ -464,7 +519,7 @@ async function startServer() {
       
       for (const customer of customers) {
         try {
-          await sendMetaWhatsApp(settings, customer.mobileNumber, message, mediaBase64, mediaName);
+          await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName);
           results.success++;
         } catch (e) {
           results.failed++;
@@ -481,45 +536,26 @@ async function startServer() {
   // Test WhatsApp API Configuration
   app.post("/api/whatsapp/test", async (req, res) => {
     try {
-      const { ownerId, testMobile, apiKey, phoneId } = req.body;
-      let settings = { metaWhatsAppApiKey: apiKey, metaWhatsAppPhoneNumberId: phoneId };
-      if (!apiKey && admin.apps.length) {
+      const { ownerId, testMobile, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method } = req.body;
+      let settings: any = { 
+        metaWhatsAppApiKey: apiKey, 
+        metaWhatsAppPhoneNumberId: phoneId,
+        cunnektApiKey: cunnektApiKey,
+        cunnektBaseUrl: cunnektBaseUrl,
+        preferredNotificationMethod: method
+      };
+
+      if (!apiKey && !cunnektApiKey && admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          settings = settingsDoc.data() as any;
       }
-      if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey) {
         return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }
 
-      const mobile = testMobile.replace(/\D/g, '');
-      let formattedTo = mobile;
-      if (mobile.length === 10) {
-        formattedTo = `91${mobile}`;
-      } else if (mobile.length === 12 && mobile.startsWith('91')) {
-        formattedTo = mobile;
-      } else {
-        formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
-      }
-
-      const response = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          to: formattedTo,
-          type: 'text',
-          text: { body: "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅" }
-        }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        return res.status(response.status).json({ error: data.error?.message || "Meta API Error" });
-      }
+      const message = "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
+      await sendWhatsAppMessage(settings, testMobile, message);
 
       res.json({ status: "success", info: "Message sent! Check your phone." });
     } catch (err: any) {
@@ -631,10 +667,10 @@ async function startServer() {
                         });
                         console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
 
-                        // Auto-reply
-                        if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+                         // Auto-reply
+                        if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
                           try {
-                            await sendMetaWhatsApp(settings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
+                            await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
                           } catch (e) {
                             console.error("[Webhook] Failed to send auto-reply:", e);
                           }

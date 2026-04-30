@@ -438,21 +438,6 @@ export function CustomersView() {
         const tempSettings = { ...settings!, metaWhatsAppApiKey: isApiMode ? settings!.metaWhatsAppApiKey : "" };
 
         let combinedMessage = notifyMessage;
-        if (customAttachment) {
-          try {
-            const { storage } = await import('../firebase');
-            const { ref, uploadBytes, getDownloadURL } = await import('firebase/storage');
-            const fileRef = ref(storage, `attachments/${auth.currentUser?.uid || 'anonymous'}/${Date.now()}_${customAttachment.name}`);
-            await uploadBytes(fileRef, customAttachment);
-            const url = await getDownloadURL(fileRef);
-            if (!isApiMode) {
-              combinedMessage += `\n\nAttachment: ${url}`;
-            }
-          } catch(err) {
-            console.error(err);
-            errors.push("Failed to upload attachment to cloud storage.");
-          }
-        }
 
         for (let i = 0; i < activeCustomers.length; i++) {
           const customer = activeCustomers[i];
