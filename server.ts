@@ -11,7 +11,11 @@ const require = createRequire(import.meta.url);
 import { initializeApp as initializeClientApp } from 'firebase/app';
 import { getFirestore as getClientFirestore, doc, getDoc as getDocClient, collection as collectionClient, query as queryClient, where as whereClient, getDocs as getDocsClient, setDoc as setDocClient } from 'firebase/firestore';
 import { getAuth as getClientAuth, signInWithEmailAndPassword } from 'firebase/auth';
-const firebaseConfig = require('./firebase-applet-config.json');
+import fs from 'fs';
+
+// Load config from root regardless of where the script runs
+const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 // We'll import node-cron when the user sets up their Firebase Admin
 import cron from "node-cron";
