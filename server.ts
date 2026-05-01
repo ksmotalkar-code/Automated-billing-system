@@ -7,6 +7,12 @@ import admin from "firebase-admin";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
+// Support for Client SDK Fallback (Service User Pattern)
+import { initializeApp as initializeClientApp } from 'firebase/app';
+import { getFirestore as getClientFirestore, doc, getDoc as getDocClient, collection as collectionClient, query as queryClient, where as whereClient, getDocs as getDocsClient, setDoc as setDocClient } from 'firebase/firestore';
+import { getAuth as getClientAuth, signInWithEmailAndPassword } from 'firebase/auth';
+const firebaseConfig = require('./firebase-applet-config.json');
+
 // We'll import node-cron when the user sets up their Firebase Admin
 import cron from "node-cron";
 
@@ -65,6 +71,53 @@ interface AppSettings {
     console.warn("FIREBASE_SERVICE_ACCOUNT not found. Webhook/Cron automation will be limited.");
   }
 
+  // Initialize Client SDK as a fallback for Hosted environments (Service User Pattern)
+  const clientApp = initializeClientApp(firebaseConfig);
+  const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+  const clientAuth = getClientAuth(clientApp);
+
+  // Attempt to log in as a "Service User" if configured
+  const botEmail = process.env.BACKEND_BOT_EMAIL;
+  const botPassword = process.env.BACKEND_BOT_PASSWORD;
+  
+  if (botEmail && botPassword) {
+    signInWithEmailAndPassword(clientAuth, botEmail, botPassword)
+      .then((user) => console.log(`✓ Backend LOGGED IN as service user: ${botEmail}`))
+      .catch((err) => console.error(`✗ Backend FAILED to log in as ${botEmail}:`, err.message));
+  } else if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+    console.warn("No FIREBASE_SERVICE_ACCOUNT and no BACKEND_BOT_EMAIL. Webhooks will not be able to access your database.");
+  }
+
+  // Database helpers to support both Admin SDK and Client SDK fallback
+  async function getSettings(ownerId: string) {
+    if (admin.apps.length) {
+      const doc = await admin.firestore().collection("settings").doc(ownerId).get();
+      return doc.exists ? doc.data() : null;
+    } else {
+      const docSnap = await getDocClient(doc(clientDb, "settings", ownerId));
+      return docSnap.exists() ? docSnap.data() : null;
+    }
+  }
+
+  async function getCustomers(ownerId: string) {
+    if (admin.apps.length) {
+      const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } else {
+      const q = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
+      const snap = await getDocsClient(q);
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+  }
+
+  async function saveComplaintData(complaintId: string, data: any) {
+    if (admin.apps.length) {
+      await admin.firestore().collection("complaints").doc(complaintId).set(data);
+    } else {
+      await setDocClient(doc(clientDb, "complaints", complaintId), data);
+    }
+  }
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -95,14 +148,9 @@ async function startServer() {
       const signature = req.headers['x-razorpay-signature'] || req.headers['x-webhook-signature'];
       
       let webhookSecret = null;
-
-      // Ensure Admin SDK is active to pull settings dynamically
-      if (admin.apps.length) {
-         const db = admin.firestore();
-         const settingsDoc = await db.collection("settings").doc(ownerId).get();
-         if (settingsDoc.exists) {
-            webhookSecret = settingsDoc.data()?.paymentGatewaySecret;
-         }
+      const settings = await getSettings(ownerId);
+      if (settings?.paymentGatewaySecret) {
+         webhookSecret = settings.paymentGatewaySecret;
       }
 
       // In production, we actively verify the signature here using webhookSecret or process.env variables
@@ -617,22 +665,14 @@ async function startServer() {
       const challenge = req.query["hub.challenge"];
 
       console.log(`[Webhook] Received verification request for owner: ${ownerId}`);
-      console.log(`[Webhook] hub.mode: ${mode}, hub.verify_token: ${token ? 'PROVIDED' : 'MISSING'}`);
 
       if (mode && token) {
         let storedToken = process.env.META_VERIFY_TOKEN;
 
-        // Try to fetch from Firebase if not in ENV and Admin is initialized
-        if (!storedToken && admin.apps.length) {
-          try {
-            const db = admin.firestore();
-            const settingsDoc = await db.collection("settings").doc(ownerId).get();
-            if (settingsDoc.exists) {
-              storedToken = settingsDoc.data()?.metaWhatsAppVerifyToken;
-            }
-          } catch (err) {
-            console.error(`[Webhook] Error fetching settings for ${ownerId}:`, err);
-          }
+        // Dynamic fetch using helper
+        const settings = await getSettings(ownerId);
+        if (settings?.metaWhatsAppVerifyToken) {
+           storedToken = settings.metaWhatsAppVerifyToken;
         }
 
         if (mode === "subscribe") {
@@ -690,56 +730,72 @@ async function startServer() {
             console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
 
             if (msgBody) {
-               if (admin.apps.length) {
-                 try {
-                   const db = admin.firestore();
-                   const customersSnap = await db.collection("customers").where("ownerId", "==", ownerId).get();
-                   
-                   let matchedCustomer = null;
-                   const cleanMobile = fromMobile.replace(/\D/g, '');
-                   for (const doc of customersSnap.docs) {
-                      const data = doc.data();
-                      const dataMobile = (data.mobileNumber || '').replace(/\D/g, '');
-                      if (cleanMobile.endsWith(dataMobile)) {
-                         matchedCustomer = { id: doc.id, ...data };
-                         break;
-                      }
+              try {
+                const customers = await getCustomers(ownerId);
+                let matchedCustomer = null;
+                const cleanMobile = fromMobile.replace(/\D/g, '');
+                
+                for (const customer of customers) {
+                   const dataMobile = (customer.mobileNumber || '').replace(/\D/g, '');
+                   if (cleanMobile.endsWith(dataMobile)) {
+                      matchedCustomer = customer;
+                      break;
                    }
+                }
 
-                   if (matchedCustomer) {
-                        const settingsDoc = await db.collection("settings").doc(ownerId).get();
-                        const settings = settingsDoc.exists ? settingsDoc.data() : null;
-                        if (msgBody.toLowerCase().includes('complain') && settings?.automation?.autoCreateComplaints !== false) {
-                           const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-                           await db.collection("complaints").doc(complaintId).set({
-                              id: complaintId,
-                              customerId: matchedCustomer.id,
-                              customerName: matchedCustomer.name,
-                              message: msgBody,
-                              status: 'Pending',
-                              createdAt: new Date().toISOString(),
-                              ownerId: ownerId
-                           });
-                           console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
-
-                            // Auto-reply
+                if (matchedCustomer) {
+                     const settings = await getSettings(ownerId);
+                     
+                     let handled = false;
+                     if (settings?.chatbotCommands && Array.isArray(settings.chatbotCommands)) {
+                       for (const cmd of settings.chatbotCommands) {
+                         if (cmd.isActive && cmd.triggerWord && msgBody.toLowerCase().includes(cmd.triggerWord.toLowerCase())) {
+                           console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
                              try {
-                               await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
+                                let responseText = cmd.response || '';
+                                responseText = responseText.replace(/{{name}}/g, matchedCustomer.name);
+                                responseText = responseText.replace(/{{balance}}/g, (matchedCustomer.balance || 0).toString());
+                                
+                                await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                                handled = true;
+                                break;
                              } catch (e) {
-                               console.error("[Webhook] Failed to send auto-reply:", e);
+                                console.error("[Webhook] Failed to send chatbot reply:", e);
                              }
                            }
+                         }
+                       }
+                     }
+
+                     if (!handled && msgBody.toLowerCase().includes('complain') && settings?.automation?.autoCreateComplaints !== false) {
+                        const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+                        await saveComplaintData(complaintId, {
+                           id: complaintId,
+                           customerId: matchedCustomer.id,
+                           customerName: matchedCustomer.name,
+                           message: msgBody,
+                           status: 'Pending',
+                           createdAt: new Date().toISOString(),
+                           ownerId: ownerId
+                        });
+                        console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
+
+                         // Auto-reply
+                        if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+                          try {
+                            await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
+                          } catch (e) {
+                            console.error("[Webhook] Failed to send auto-reply:", e);
+                          }
                         }
-                   } else {
-                      console.log("[Webhook] Message received from unknown number. Ignored.");
-                   }
-                 } catch (innerErr) {
-                   console.error("[Webhook] Processing error:", innerErr);
-                 }
-               } else {
-                 console.error(`[Webhook ERROR] Received WhatsApp message from ${fromMobile}, but FIREBASE_SERVICE_ACCOUNT is NOT configured. The backend cannot process this message!`);
-               }
+                     }
+                } else {
+                   console.log("[Webhook] Message received from unknown number. Ignored.");
+                }
+              } catch (innerErr) {
+                console.error("[Webhook] Processing error:", innerErr);
+              }
             }
           }
         }

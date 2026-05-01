@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { BookOpen, Key, BellRing, Settings, Users, MessageCircle, Info, ArrowRight, ExternalLink, Link as LinkIcon, AlertTriangle } from "lucide-react";
+import { BookOpen, Key, BellRing, Settings, Users, MessageCircle, Info, ArrowRight, ExternalLink, Link as LinkIcon, AlertTriangle, Shield } from "lucide-react";
 
 export function ManualView() {
   return (
@@ -110,6 +110,25 @@ export function ManualView() {
                     Go to your Firebase Console &rarr; Project Settings &rarr; Service Accounts &rarr; <strong>Generate New Private Key</strong>. 
                     Copy the entire downloaded JSON file content, and set it as an Environment Variable named <code className="bg-amber-100 px-1 rounded text-[11px]">FIREBASE_SERVICE_ACCOUNT</code> in your Render dashboard, then redeploy!
                   </p>
+
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-200 mt-4">
+                     <h4 className="text-sm font-bold text-blue-800 flex items-center gap-2">
+                        <Shield className="w-4 h-4" /> 
+                        Alternative: Use a "Service Bot" User
+                     </h4>
+                     <p className="text-xs text-blue-700 mt-2">
+                        If you can't generate a Private Key JSON, do this instead:
+                     </p>
+                     <ul className="list-decimal pl-5 mt-2 space-y-1 text-xs text-blue-700">
+                        <li>Open your app and <strong>Sign Up</strong> with email: <code className="font-bold">bot@smartbilling.app</code></li>
+                        <li>Verify the email (if enabled) or just keep the password safe.</li>
+                        <li>In your hosting dashboard (Render), set these 2 variables:
+                           <br/><code className="bg-blue-100 px-1 rounded">BACKEND_BOT_EMAIL</code> = <code className="font-bold text-black">bot@smartbilling.app</code>
+                           <br/><code className="bg-blue-100 px-1 rounded">BACKEND_BOT_PASSWORD</code> = <code className="font-bold text-black">(your-password)</code>
+                        </li>
+                        <li>Redeploy. The server will now "Log In" as this user to process messages!</li>
+                     </ul>
+                  </div>
                 </div>
               </div>
 

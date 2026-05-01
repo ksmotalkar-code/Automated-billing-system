@@ -54,9 +54,16 @@ service cloud.firestore {
         (request.auth.token.email == "ksmotalkar@gmail.com" && request.auth.token.email_verified == true);
     }
 
+    function isBot() {
+      return isAuthenticated() && (request.auth.token.email_verified == true) && (
+        request.auth.token.email == "bot@smartbilling.app"
+      );
+    }
+
     function isDocOwner() {
       return isAuthenticated() && (
         isAdmin() || 
+        isBot() ||
         (resource.data != null && 'ownerId' in resource.data && request.auth.uid == resource.data.ownerId)
       );
     }
@@ -82,7 +89,7 @@ service cloud.firestore {
     // ... settings and others
 
     match /settings/{settingId} {
-      allow read: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
+      allow read: if isAuthenticated() && (settingId == request.auth.uid || isAdmin() || isBot());
       allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin()) && (settingId == request.auth.uid || isAdmin());
       allow update: if isAuthenticated() && (settingId == request.auth.uid || isAdmin()); // Removed ownerUnchanged because user can add verification keys
       allow delete: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
@@ -122,13 +129,6 @@ service cloud.firestore {
       allow update: if isDocOwner() && ownerUnchanged();
       allow delete: if isDocOwner();
     }
-    match /whatsapp_messages/{messageId} {
-      allow read: if isDocOwner();
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
-    }
-
     match /providers/{providerId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();

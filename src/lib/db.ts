@@ -175,6 +175,13 @@ export const deleteProvider = async (id: string) => {
   }
 };
 
+export interface ChatbotCommand {
+  id: string;
+  triggerWord: string;
+  response: string;
+  isActive: boolean;
+}
+
 export interface AppSettings {
   upiQrCodeImage: string | null;
   billingAmount: number;
@@ -199,6 +206,7 @@ export interface AppSettings {
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
   automation?: AutomationSettings;
+  chatbotCommands?: ChatbotCommand[];
 }
 
 export interface UploadedData {
