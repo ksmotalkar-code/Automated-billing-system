@@ -710,7 +710,6 @@ ${chatbotSettings.knowledgeBase}
         { role: "user", content: message }
       ];
 
-      const fetch = (await import('node-fetch')).default;
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -874,7 +873,6 @@ ${chatbotSettings.knowledgeBase}
 
 User context: Customer Name is ${matchedCustomer.name}, Balance is Rs. ${matchedCustomer.balance || 0}.`;
 
-                           const fetch = (await import('node-fetch')).default;
                            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                              method: "POST",
                              headers: {
