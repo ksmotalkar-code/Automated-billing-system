@@ -1,5 +1,5 @@
 import { motion } from "motion/react";
-import { BookOpen, Key, BellRing, Settings, Users, MessageCircle, Info, ArrowRight, ExternalLink, Link as LinkIcon } from "lucide-react";
+import { BookOpen, Key, BellRing, Settings, Users, MessageCircle, Info, ArrowRight, ExternalLink, Link as LinkIcon, AlertTriangle } from "lucide-react";
 
 export function ManualView() {
   return (
