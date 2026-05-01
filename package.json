@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1024' vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --external:express --external:firebase-admin --external:cors --external:helmet --external:compression --external:node-cron --external:vite",
+    "build": "NODE_OPTIONS='--max-old-space-size=1024' vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --external:express --external:firebase-admin --external:firebase --external:cors --external:helmet --external:compression --external:node-cron --external:vite",
     "start": "NODE_ENV=production node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
