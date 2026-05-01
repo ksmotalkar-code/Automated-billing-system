@@ -135,6 +135,7 @@ export interface AutomationSettings {
   smartNotifications: boolean;
   autoShareReports?: boolean;
   autoCreateComplaints?: boolean;
+  enforceIstTimeWindow?: boolean; // Run 9AM-10AM IST
 }
 
 export interface WhatsAppProvider {
@@ -183,6 +184,7 @@ export interface AppSettings {
   escalationDays?: number;
   autoSuspend?: boolean;
   defaultBillingDate?: string;
+  nextBillingDate?: string;
   lastBillingDate?: string;
   lastPenaltyDate?: string;
   lastNotificationDate?: string;

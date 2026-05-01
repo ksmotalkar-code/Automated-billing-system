@@ -27,6 +27,7 @@ import { runAutomationCycle } from "./lib/automation";
 
 import { PortalView } from "./views/PortalView";
 import { ConnectivityStatus } from "./components/ConnectivityStatus";
+import { DraggableOrb } from "./components/DraggableOrb";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("dashboard");
@@ -315,6 +316,15 @@ export default function App() {
   return (
     <div className={`flex h-screen neu-bg font-sans neu-text overflow-hidden transition-colors duration-300 relative ${uiStyle === 'glassmorphism' ? 'bg-gradient-to-br from-[var(--bg-color)] to-slate-900/10' : ''}`}>
       <ConnectivityStatus />
+      {user && <DraggableOrb 
+         onSettingsClick={() => setActiveLayer('settings')} 
+         onAdminClick={() => {
+            setActiveLayer('settings');
+            setTimeout(() => {
+               document.getElementById('providers-admin')?.scrollIntoView({ behavior: 'smooth' });
+            }, 300);
+         }}
+      />}
       {/* Background Motion Graphics */}
       <div className={`absolute inset-0 overflow-hidden pointer-events-none z-0 ${uiStyle === 'glassmorphism' ? 'opacity-70' : 'opacity-30'}`}>
         <motion.div 

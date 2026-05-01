@@ -18,6 +18,8 @@ interface AutomationSettings {
   bulkProcessing: boolean;
   smartNotifications: boolean;
   autoShareReports?: boolean;
+  autoCreateComplaints?: boolean;
+  enforceIstTimeWindow?: boolean;
 }
 
 interface AppSettings {
@@ -29,6 +31,7 @@ interface AppSettings {
   escalationDays?: number;
   autoSuspend?: boolean;
   defaultBillingDate?: string;
+  nextBillingDate?: string;
   lastBillingDate?: string;
   lastPenaltyDate?: string;
   lastNotificationDate?: string;
@@ -355,11 +358,32 @@ async function startServer() {
        const ownerId = doc.id;
        console.log(`[Automation] Processing user: ${ownerId}`);
        
-       const today = new Date();
-       const defaultDate = parseInt(settings.defaultBillingDate || "1");
+       const istTime = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+       const istHour = istTime.getHours();
+       
+       if (settings.automation.enforceIstTimeWindow && !specificOwnerId) {
+          if (istHour < 9 || istHour >= 10) {
+             console.log(`[Automation] Skipping user ${ownerId} due to IST time window constraint (Current IST Hour: ${istHour})`);
+             continue;
+          }
+       }
+       
+       let shouldTriggerBilling = false;
+       if (settings.nextBillingDate) {
+           const nextStr = settings.nextBillingDate; // YYYY-MM-DD
+           const todayStr = istTime.toISOString().split('T')[0]; // YYYY-MM-DD in IST
+           if (todayStr >= nextStr) {
+               shouldTriggerBilling = true;
+           }
+       } else {
+           const defaultDate = parseInt(settings.defaultBillingDate || "1");
+           if (istTime.getDate() === defaultDate) {
+               shouldTriggerBilling = true;
+           }
+       }
        
        // Handle Billing Cycle
-       if (settings.automation.scheduledBilling && (today.getDate() === defaultDate || specificOwnerId)) {
+       if (settings.automation.scheduledBilling && (shouldTriggerBilling || specificOwnerId)) {
           console.log(`[Automation] Billing cycle triggered for ${ownerId}`);
           
           const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
@@ -403,7 +427,14 @@ async function startServer() {
               }
             }
           }
-          await doc.ref.update({ lastBillingDate: new Date().toISOString() });
+          
+          let updatePayload: any = { lastBillingDate: new Date().toISOString() };
+          if (settings.nextBillingDate) {
+              const nd = new Date(settings.nextBillingDate);
+              nd.setMonth(nd.getMonth() + 1);
+              updatePayload.nextBillingDate = nd.toISOString().split('T')[0];
+          }
+          await doc.ref.update(updatePayload);
        }
      }
   }

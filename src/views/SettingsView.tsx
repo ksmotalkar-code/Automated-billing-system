@@ -844,7 +844,8 @@ export function SettingsView() {
                   { key: 'bulkProcessing', label: 'Bulk Processing Engine' },
                   { key: 'smartNotifications', label: 'Smart Notification Timing' },
                   { key: 'autoShareReports', label: 'Automate Report Sharing' },
-                  { key: 'autoCreateComplaints', label: 'Auto Create Complaints via WhatsApp Response' }
+                  { key: 'autoCreateComplaints', label: 'Auto Create Complaints via WhatsApp Response' },
+                  { key: 'enforceIstTimeWindow', label: 'Enforce 9AM-10AM IST Time Window' }
                 ].map(item => (
                   <label key={item.key} className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer">
                     <span className="text-sm font-bold">{item.label}</span>
@@ -931,12 +932,25 @@ export function SettingsView() {
               <input
                 type="number"
                 min="1"
-                max="31"
+                max="28"
                 value={settings.defaultBillingDate || '1'}
                 onChange={(e) => setSettings({ ...settings, defaultBillingDate: e.target.value })}
                 className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-lg font-bold"
               />
-              <p className="text-xs neu-text-muted ml-1">The day of the month when bills are generated.</p>
+              <p className="text-xs neu-text-muted ml-1">The default day of the month when bills are generated.</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1 text-emerald-600">
+                Next Billing Date Override (Exact Date)
+              </label>
+              <input
+                type="date"
+                value={settings.nextBillingDate || ''}
+                onChange={(e) => setSettings({ ...settings, nextBillingDate: e.target.value })}
+                className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-lg font-bold text-emerald-700 border border-emerald-500/20"
+              />
+              <p className="text-xs neu-text-muted ml-1">Override default rules to specify the EXACT next billing date.</p>
             </div>
 
             <div className="space-y-2">
@@ -1092,7 +1106,7 @@ export function SettingsView() {
       )}
 
       {isAdmin && (
-        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+        <motion.div id="providers-admin" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-amber-500/20 mb-6 mt-8">
             <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-amber-600">

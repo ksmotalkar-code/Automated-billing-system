@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, subscribeToTransactions, subscribeToComplaints, Customer, Transaction, Complaint } from "../lib/db";
+import { subscribeToCustomers, subscribeToTransactions, subscribeToComplaints, subscribeToSettings, Customer, Transaction, Complaint, AppSettings } from "../lib/db";
 import { useTranslation } from "react-i18next";
 
 export function DashboardView() {
@@ -11,6 +11,7 @@ export function DashboardView() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [settings, setSettings] = useState<AppSettings | null>(null);
 
   const [whatsappWebStatus, setWhatsappWebStatus] = useState<any>(null);
 
@@ -18,6 +19,7 @@ export function DashboardView() {
     const unsubCustomers = subscribeToCustomers(setCustomers);
     const unsubTransactions = subscribeToTransactions(setTransactions);
     const unsubComplaints = subscribeToComplaints(setComplaints);
+    const unsubSettings = subscribeToSettings(setSettings);
     
     // Fetch WhatsApp Web Status
     const fetchWaStatus = async () => {
@@ -42,6 +44,7 @@ export function DashboardView() {
       unsubCustomers();
       unsubTransactions();
       unsubComplaints();
+      unsubSettings();
       clearInterval(interval);
     };
   }, []);
@@ -113,7 +116,7 @@ export function DashboardView() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -195,12 +198,39 @@ export function DashboardView() {
               <AlertTriangle className="h-12 w-12 text-red-500 -rotate-12" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">Overdue Accounts</CardTitle>
+              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">Overdue</CardTitle>
               <AlertTriangle className="h-4 w-4 text-red-500" />
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-black tracking-tighter">{overdueAccounts.toLocaleString('en-IN')}</div>
               <p className="text-xs text-red-500 font-bold mt-1">Requires follow-up</p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.5 }}
+          whileHover={{ scale: 1.05, y: -5 }}
+          className="group"
+        >
+          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md border-indigo-500/20 shadow-indigo-500/5">
+            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
+              <Bell className="h-12 w-12 text-indigo-500 rotate-12" />
+            </div>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">Next Billing</CardTitle>
+              <Bell className="h-4 w-4 text-indigo-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tracking-tighter">
+                {settings?.nextBillingDate 
+                  ? new Date(settings.nextBillingDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
+                  : `Day ${settings?.defaultBillingDate || '1'}`
+                }
+              </div>
+              <p className="text-xs text-indigo-500 font-bold mt-1">View Settings to change</p>
             </CardContent>
           </Card>
         </motion.div>
