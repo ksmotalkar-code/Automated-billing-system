@@ -204,15 +204,6 @@ export function SettingsView() {
     try {
       await saveSettings(updatedSettings);
 
-      // WhatsApp Web Engine Lifecycle Control
-      if (updatedSettings.enableWhatsappWeb) {
-        // Trigger startup
-        fetch('/api/whatsapp-web/start', { method: 'POST' }).catch(err => console.error("Failed to trigger WA Start", err));
-      } else {
-        // Trigger shutdown
-        fetch('/api/whatsapp-web/stop', { method: 'POST' }).catch(err => console.error("Failed to trigger WA Stop", err));
-      }
-
       showAlert("Settings Saved", "Your configuration has been updated successfully.");
     } catch (error) {
       console.error("Error saving settings:", error);
@@ -351,7 +342,7 @@ export function SettingsView() {
 
     setConfirmConfig({
       isOpen: true,
-      title: "Confirm Broadast?",
+      title: "Confirm Broadcast?",
       message: `Are you sure you want to send this message to ALL active customers using ${settings.preferredNotificationMethod === 'cunnekt' ? 'Cunnekt' : 'Meta API'}?`,
       onConfirm: async () => {
         setIsBroadcasting(true);
@@ -511,8 +502,7 @@ export function SettingsView() {
               <div className="p-4 bg-purple-50 rounded-xl border border-purple-200">
                  <p className="text-xs text-purple-800 font-bold mb-1">Requirements:</p>
                  <ul className="text-xs text-purple-700 list-disc ml-4 space-y-1">
-                   <li>Meta WhatsApp API must be configured and token must be active.</li>
-                   <li>Messages outside 24h window might require an approved Template (depending on your Meta configuration).</li>
+                   <li>If using Meta API: It must be configured and messages outside the 24h window require an approved template.</li>
                    <li>Ensure you follow WhatsApp’s Anti-Spam policies to avoid number suspension.</li>
                  </ul>
               </div>
@@ -723,52 +713,6 @@ export function SettingsView() {
                 </div>
                 
                 <div className="space-y-4 md:col-span-2 pt-4 mt-2 border-t border-[var(--shadow-dark)]">
-                  <h4 className="font-bold text-md text-emerald-600">WhatsApp Web (Experimental)</h4>
-                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mb-4">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="text-sm font-bold text-amber-800">Experimental Feature Warning</p>
-                        <p className="text-xs text-amber-700 mt-1">
-                          WhatsApp Web JS is an unofficial integration. It requires running a headless browser on the server, which consumes significant memory (RAM). 
-                          If your hosting environment (like Render Free Tier) has low memory, enabling this may cause the server to crash or become unresponsive.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <label className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer hover:bg-black/5 transition-colors">
-                    <div className="flex flex-col">
-                      <span className="font-bold text-sm">Enable WhatsApp Web Engine</span>
-                      <span className="text-xs neu-text-muted">Allow the server to start the WhatsApp Web controller</span>
-                    </div>
-                    <div className="relative inline-block w-12 h-6 rounded-full transition-colors duration-300" style={{ backgroundColor: settings.enableWhatsappWeb ? 'var(--accent)' : 'var(--shadow-dark)' }}>
-                      <input 
-                        type="checkbox" 
-                        className="sr-only" 
-                        checked={settings.enableWhatsappWeb || false} 
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setConfirmConfig({
-                              isOpen: true,
-                              title: "Enable Experimental Feature?",
-                              message: "Enabling WhatsApp Web will start a Chrome process on your server. This can lead to high memory usage and potential crashes on some hosting providers. Do you want to proceed?",
-                              onConfirm: () => {
-                                setSettings({ ...settings, enableWhatsappWeb: true });
-                              },
-                              showCancel: true
-                            });
-                          } else {
-                            setSettings({ ...settings, enableWhatsappWeb: false });
-                          }
-                        }} 
-                      />
-                      <motion.div animate={{ x: settings.enableWhatsappWeb ? 24 : 2 }} className="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
-                    </div>
-                  </label>
-                </div>
-
-                <div className="space-y-2 md:col-span-2 mt-4 pt-4 border-t border-[var(--shadow-dark)]">
                   <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
                     Notification Delivery Method
                   </label>
@@ -789,12 +733,10 @@ export function SettingsView() {
                     {providers.map(provider => (
                       <option key={provider.id} value={provider.id}>{provider.name} ({provider.baseUrl})</option>
                     ))}
-                    <option value="whatsapp_web">WhatsApp Web Scan (Unofficial)</option>
                     <option value="manual_link">Public Portal Link (Manual)</option>
                   </select>
                   <p className="text-xs neu-text-muted ml-1 mt-2">
-                    If set to <strong className="text-blue-500">Public Portal Link</strong>, customers will receive a clickable link instead of attachments, opening their invoice and QR securely on their phone without requiring your API to be approved by Meta. <br/><br/>
-                    If set to <strong className="text-blue-500">WhatsApp Web Scan</strong>, the server will log you in temporarily by scanning a QR on the Dashboard.
+                    If set to <strong className="text-blue-500">Public Portal Link</strong>, customers will receive a clickable link instead of attachments, opening their invoice and QR securely on their phone without requiring your API to be approved by Meta.
                   </p>
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 
 export enum OperationType {
@@ -207,6 +207,19 @@ export interface UploadedData {
   data: string;
   uploadedAt: string;
   ownerId?: string;
+}
+
+export interface WhatsappMessage {
+  id: string;
+  ownerId: string;
+  from: string;
+  to: string;
+  body: string;
+  timestamp: string;
+  direction: 'inbound' | 'outbound';
+  type: string; // 'chat', 'image', 'video', 'document', etc.
+  mediaUrl?: string;
+  read?: boolean;
 }
 
 export const cleanupOldData = async () => {
@@ -810,5 +823,36 @@ export const archiveComplaint = async (complaintId: string) => {
     
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `complaints/${complaintId}`);
+  }
+};
+
+export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) => void) => {
+  if (!auth.currentUser) return () => {};
+  const q = query(
+    collection(db, 'whatsapp_messages'), 
+    where('ownerId', '==', auth.currentUser.uid),
+    orderBy('timestamp', 'asc')
+  );
+  return onSnapshot(q, (snapshot) => {
+    callback(snapshot.docs.map(doc => doc.data() as WhatsappMessage));
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'whatsapp_messages');
+  });
+};
+
+export const addWhatsappMessageRecord = async (msg: Omit<WhatsappMessage, 'id' | 'ownerId'>) => {
+  if (!auth.currentUser) return;
+  try {
+    const docRef = doc(collection(db, 'whatsapp_messages'));
+    const fullMsg: WhatsappMessage = {
+      ...msg,
+      id: docRef.id,
+      ownerId: auth.currentUser.uid,
+    };
+    await setDoc(docRef, fullMsg);
+    return fullMsg;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'whatsapp_messages');
+    throw error;
   }
 };

@@ -55,6 +55,24 @@
         "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
       },
       "required": ["id", "fileName", "data", "uploadedAt", "ownerId"]
+    },
+    "WhatsappMessage": {
+      "title": "WhatsappMessage",
+      "description": "A WhatsApp message record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Message ID" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" },
+        "from": { "type": "string", "description": "Sender number" },
+        "to": { "type": "string", "description": "Receiver number" },
+        "body": { "type": "string", "description": "Message content" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp" },
+        "direction": { "type": "string", "enum": ["inbound", "outbound"], "description": "Message direction" },
+        "type": { "type": "string", "description": "Message type" },
+        "mediaUrl": { "type": "string", "description": "Media URL if any" },
+        "read": { "type": "boolean", "description": "Read status" }
+      },
+      "required": ["id", "ownerId", "from", "to", "body", "timestamp", "direction", "type"]
     }
   },
   "firestore": {
@@ -73,6 +91,10 @@
     "/uploadedData/{uploadId}": {
       "schema": { "$ref": "#/entities/UploadedData" },
       "description": "Uploaded Data collection"
+    },
+    "/whatsapp_messages/{messageId}": {
+      "schema": { "$ref": "#/entities/WhatsappMessage" },
+      "description": "WhatsApp Messages collection"
     }
   }
 }

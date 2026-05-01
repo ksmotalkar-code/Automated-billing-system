@@ -13,6 +13,9 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'pwa-192x192.svg', 'pwa-512x512.svg'],
+        workbox: {
+          maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+        },
         manifest: {
           name: 'Trismart Automated Billing System',
           short_name: 'Trismart ABS',
@@ -33,14 +36,15 @@ export default defineConfig(({mode}) => {
               purpose: 'any maskable'
             }
           ]
-        },
-        workbox: {
-          maximumFileSizeToCacheInBytes: 5000000 // 5 MB
         }
       })
     ],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ""),
+    },
+    build: {
+      sourcemap: false,
+      minify: false,
     },
     resolve: {
       alias: {

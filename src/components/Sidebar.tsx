@@ -11,7 +11,8 @@ import {
   UploadCloud,
   Languages,
   AlertTriangle,
-  BookOpen
+  BookOpen,
+  MessageSquare
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useState } from "react";
@@ -29,7 +30,7 @@ export const layers = [
   { id: "complaints", label: "Complaints", icon: AlertTriangle, description: "Manage Complaints" },
   { id: "reports", label: "Reports", icon: FileText, description: "Manage Broadcasts" },
   { id: "upload", label: "Data Upload", icon: UploadCloud, description: "Upload Excel/PDF" },
-  { id: "manual", label: "App Manual", icon: BookOpen, description: "App Documentation & Guide" },
+  { id: "manual", label: "App Manual", icon: BookOpen, description: "App Documentation & Guide" }
 ];
 
 const themes = [
