@@ -91,6 +91,28 @@ export function ManualView() {
                 </div>
               </div>
 
+              {/* Step 5 */}
+              <div className="flex flex-col md:flex-row gap-6 items-start">
+                <div className="bg-emerald-100 text-emerald-800 w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0">5</div>
+                <div className="space-y-3 flex-1">
+                  <h3 className="text-lg font-bold">Configure Webhooks & Firebase Admin (Important for Render/Custom Hosts)</h3>
+                  <p>To receive messages from customers (like complaints or payment receipts), Meta requires a webhook.</p>
+                  <ul className="list-disc pl-5 space-y-1 text-slate-600">
+                    <li>Create a custom password in Settings &rarr; <strong>Webhook Verify Token</strong>.</li>
+                    <li>Copy your <strong>Webhook URL</strong> from the App Settings page.</li>
+                    <li>In the Meta Dashboard, go to WhatsApp &rarr; Configuration &rarr; <strong>Edit Webhook</strong>, and paste the URL and Verify Token.</li>
+                  </ul>
+                  <p className="text-xs text-amber-600 mt-3 font-bold bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    <AlertTriangle className="inline w-4 h-4 mr-1" />
+                    <strong>CRITICAL FOR HOSTED ENVIRONMENTS (LIKE RENDER):</strong> <br/>
+                    The backend server cannot verify the webhook or save messages to Firebase unless you configure the <code className="bg-amber-100 px-1 rounded mx-1 text-[11px]">FIREBASE_SERVICE_ACCOUNT</code> environment variable. 
+                    <br/><br/>
+                    Go to your Firebase Console &rarr; Project Settings &rarr; Service Accounts &rarr; <strong>Generate New Private Key</strong>. 
+                    Copy the entire downloaded JSON file content, and set it as an Environment Variable named <code className="bg-amber-100 px-1 rounded text-[11px]">FIREBASE_SERVICE_ACCOUNT</code> in your Render dashboard, then redeploy!
+                  </p>
+                </div>
+              </div>
+
             </div>
 
             <p className="p-4 bg-emerald-50 text-emerald-900 border border-emerald-200 rounded-xl italic mt-6 font-bold flex items-start gap-3">

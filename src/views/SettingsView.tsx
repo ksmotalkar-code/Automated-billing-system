@@ -671,6 +671,18 @@ export function SettingsView() {
                   <h4 className="font-bold text-md text-emerald-600">Receive Customer Messages (Webhook)</h4>
                   <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complain".</p>
                   
+                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mb-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-bold text-amber-800">Critical Requirement: Firebase Admin SDK</p>
+                        <p className="text-xs text-amber-700 mt-1">
+                          If you deployed this app on Render (or another hosting platform), incoming webhooks <strong>will fail</strong> unless you set the <code>FIREBASE_SERVICE_ACCOUNT</code> environment variable on your server! Go to the "App Manual" tab for instructions on generating this key.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
                       Webhook Verify Token
