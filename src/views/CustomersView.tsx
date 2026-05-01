@@ -1,11 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect, useRef } from "react";
 import { Customer, subscribeToCustomers, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, deleteAllCustomers, subscribeToSettings, AppSettings } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { sendWhatsAppNotification } from "../lib/automation";
+import { createPortalLink } from "../lib/portal";
 import * as XLSX from 'xlsx';
 import { v4 as uuidv4 } from "uuid";
 import { db, auth } from "../firebase";
@@ -350,6 +351,23 @@ export function CustomersView() {
   const handleRowClick = (customer: Customer) => {
     setEditingCustomer(customer);
     setIsEditModalOpen(true);
+  };
+
+  const handleShareLink = async (e: React.MouseEvent, customer: Customer) => {
+    e.stopPropagation();
+    if (!settings) {
+      alert("Settings not loaded yet.");
+      return;
+    }
+    try {
+      const link = await createPortalLink(customer, settings);
+      const text = `Hi ${customer.name},\nHere is your secure portal link to view your invoice, generate QR and pay online:\n\n${link}\n\nThank you!`;
+      setIndividualNotifyCustomer(customer);
+      setNotifyMessage(text);
+      setIsIndividualNotifyOpen(true);
+    } catch(err: any) {
+      alert("Error generating link: " + String(err));
+    }
   };
 
   const handleOpenIndividualNotify = (e: React.MouseEvent, customer: Customer) => {
@@ -788,6 +806,13 @@ export function CustomersView() {
                     <td className="px-4 py-4 text-right">
                       <div className="flex justify-end items-center gap-1">
                         <button 
+                          className="p-1 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors"
+                          onClick={(e) => handleShareLink(e, customer)}
+                          title="Generate & Share Link"
+                        >
+                          <LinkIcon className="w-4 h-4" />
+                        </button>
+                        <button 
                           className="p-1 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
                           onClick={(e) => handleOpenIndividualNotify(e, customer)}
                           title="Message Customer"
@@ -869,11 +894,18 @@ export function CustomersView() {
                   <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
                   <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
                 </div>
-                <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)]">
+                <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)] overflow-x-auto pb-1">
+                   <motion.button
+                     whileTap={{ scale: 0.95 }}
+                     onClick={(e) => handleShareLink(e, customer)}
+                     className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+                   >
+                     <LinkIcon className="w-3.5 h-3.5" /> Link
+                   </motion.button>
                    <motion.button
                      whileTap={{ scale: 0.95 }}
                      onClick={(e) => handleOpenIndividualNotify(e, customer)}
-                     className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2"
+                     className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
                    >
                      <Send className="w-3.5 h-3.5" /> Message
                    </motion.button>
