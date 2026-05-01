@@ -834,6 +834,36 @@ export const archiveComplaint = async (complaintId: string) => {
   }
 };
 
+export interface ChatbotSettings {
+  isActive: boolean;
+  apiKey: string;
+  knowledgeBase: string;
+}
+
+export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {
+  if (!auth.currentUser) return null;
+  try {
+    const docSnap = await getDoc(doc(db, 'chatbotSettings', auth.currentUser.uid));
+    if (docSnap.exists()) {
+      return docSnap.data() as ChatbotSettings;
+    }
+    return null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `chatbotSettings/${auth.currentUser.uid}`);
+    return null;
+  }
+};
+
+export const saveChatbotSettings = async (settings: ChatbotSettings) => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  try {
+    const docRef = doc(db, 'chatbotSettings', auth.currentUser.uid);
+    await setDoc(docRef, settings, { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${auth.currentUser.uid}`);
+  }
+};
+
 export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) => void) => {
   if (!auth.currentUser) return () => {};
   const q = query(

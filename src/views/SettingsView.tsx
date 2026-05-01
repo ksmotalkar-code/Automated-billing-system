@@ -665,12 +665,16 @@ export function SettingsView() {
                       {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Test Message"}
                     </motion.button>
                   </div>
-                  <p className="text-xs neu-text-muted italic">Click this after saving your API credentials to confirm everything is working correctly.</p>
+                  <p className="text-xs neu-text-muted italic">
+                    Click this after saving your API credentials to confirm everything is working correctly. 
+                    <br/><br/>
+                    <strong className="text-amber-600">Important (Meta API):</strong> If using Meta's Cloud API, you MUST send a message ("hi") from your personal WhatsApp to your Business number first! Free-form messages are silently rejected by Meta if the recipient hasn't initiated a conversation in the last 24 hours.
+                  </p>
                 </div>
                 
                 <div className="space-y-4 md:col-span-2 pt-4 mt-2 border-t border-[var(--shadow-dark)]">
                   <h4 className="font-bold text-md text-emerald-600">Receive Customer Messages (Webhook)</h4>
-                  <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complain".</p>
+                  <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complaint".</p>
                   
                   <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 mb-4">
                     <div className="flex items-start gap-3">

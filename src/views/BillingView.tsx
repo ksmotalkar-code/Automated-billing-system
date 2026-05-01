@@ -110,8 +110,9 @@ export function BillingView() {
   };
 
   const filteredCustomers = customers.filter(c => {
-    const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         c.id.toLowerCase().includes(searchQuery.toLowerCase());
+    const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
+    const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
+    const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
     
     if (!matchesSearch) return false;
 

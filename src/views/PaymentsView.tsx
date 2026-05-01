@@ -102,10 +102,11 @@ export function PaymentsView() {
     }).format(amount);
   };
 
-  const filteredCustomers = customers.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.id.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredCustomers = customers.filter(c => {
+    const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
+    const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
+    return searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
+  });
 
   const sortedCustomers = [...filteredCustomers].sort((a, b) => {
     if (!sortConfig) return 0;

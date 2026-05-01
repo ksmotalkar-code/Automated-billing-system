@@ -15,6 +15,7 @@ import { DataUploadView } from "./views/DataUploadView";
 import { ComplaintsView } from "./views/ComplaintsView";
 import { ReportsView } from "./views/ReportsView";
 import { ManualView } from "./views/ManualView";
+import { ChatbotView } from "./views/ChatbotView";
 import { AnimatePresence, motion } from "motion/react";
 import { Menu, X, AlertTriangle } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
@@ -170,6 +171,7 @@ export default function App() {
       case "upload": return <DataUploadView key="upload" />;
       case "settings": return <SettingsView key="settings" />;
       case "manual": return <ManualView key="manual" />;
+      case "chatbot": return <ChatbotView key="chatbot" />;
       default: 
         return (
           <motion.div 

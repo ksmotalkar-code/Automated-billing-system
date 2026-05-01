@@ -6,7 +6,7 @@ let code = fs.readFileSync(path, 'utf8');
 code = code.replace(
   /if \(matchedCustomer\) \{\s*\/\/ Save as a complaint([\s\S]*?)console\.log\(`Logged complaint for \$\{matchedCustomer\.name\}`\);/,
   `if (matchedCustomer) {
-                   if (msgBody.toLowerCase().includes('complain')) {
+                   if (msgBody.toLowerCase().includes('complaint')) {
                        // Save as a complaint$1console.log(\`Logged complaint for \${matchedCustomer.name}\`);
                    }`
 );

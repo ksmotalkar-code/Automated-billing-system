@@ -21,7 +21,7 @@ code = code.replace(
 
 code = code.replace(
   /<h4 className="font-bold text-md text-emerald-600">Chatbot & Webhook Setup<\/h4>\s*<p className="text-sm neu-text-muted">Configure this to allow customers to send messages to your WhatsApp number\. The system will automatically log them as Complaints\.<\/p>/g,
-  '<h4 className="font-bold text-md text-emerald-600">Receive Customer Messages (Webhook)</h4>\\n                  <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complain".</p>'
+  '<h4 className="font-bold text-md text-emerald-600">Receive Customer Messages (Webhook)</h4>\\n                  <p className="text-sm neu-text-muted">Allow customers to send messages to your WhatsApp. Complaints will be logged automatically if they include the word "complaint".</p>'
 );
 
 fs.writeFileSync(path, code);

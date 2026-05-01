@@ -129,6 +129,14 @@ service cloud.firestore {
       allow update: if isDocOwner() && ownerUnchanged();
       allow delete: if isDocOwner();
     }
+
+    match /chatbotSettings/{settingId} {
+      allow read: if isAuthenticated() && (settingId == request.auth.uid || isAdmin() || isBot());
+      allow create: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
+      allow delete: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
+    }
+
     match /providers/{providerId} {
       allow read: if isAuthenticated();
       allow write: if isAdmin();

@@ -2,12 +2,13 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint, deleteComplaint } from "../lib/db";
 import { motion } from "motion/react";
-import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2 } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Resolved'>('All');
+  const [searchQuery, setSearchQuery] = useState("");
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -49,11 +50,17 @@ export function ComplaintsView() {
     });
   };
 
-  const filteredComplaints = complaints.filter(c => filter === 'All' || c.status === filter);
+  const filteredComplaints = complaints.filter(c => {
+    const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
+    const searchStr = `${c.customerName || ''} ${c.customerId || ''} ${c.message || ''} ${c.id || ''}`.toLowerCase();
+    const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
+    
+    return (filter === 'All' || c.status === filter) && matchesSearch;
+  });
 
   return (
     <Card className="neu-bg neu-text h-full flex flex-col">
-      <CardHeader className="flex flex-row items-center justify-between">
+      <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <CardTitle className="text-xl font-bold flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-amber-500" />
           <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -75,12 +82,24 @@ export function ComplaintsView() {
             </div>
           </div>
         </CardTitle>
-        <button 
-          onClick={handleDeleteAllResolved}
-          className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-200 transition"
-        >
-          <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Delete All Resolved</span>
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full sm:w-64">
+            <Search className="w-4 h-4 neu-text-muted" />
+            <input 
+              type="text" 
+              placeholder="Search complaints..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent border-none outline-none text-sm w-full neu-text"
+            />
+          </div>
+          <button 
+            onClick={handleDeleteAllResolved}
+            className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-200 transition whitespace-nowrap"
+          >
+            <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Delete All Resolved</span>
+          </button>
+        </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto">
         <div className="space-y-4">

@@ -30,7 +30,8 @@ export const layers = [
   { id: "complaints", label: "Complaints", icon: AlertTriangle, description: "Manage Complaints" },
   { id: "reports", label: "Reports", icon: FileText, description: "Manage Broadcasts" },
   { id: "upload", label: "Data Upload", icon: UploadCloud, description: "Upload Excel/PDF" },
-  { id: "manual", label: "App Manual", icon: BookOpen, description: "App Documentation & Guide" }
+  { id: "manual", label: "App Manual", icon: BookOpen, description: "App Documentation & Guide" },
+  { id: "chatbot", label: "Chatbot Setup", icon: MessageSquare, description: "Configure Chatbot Base" }
 ];
 
 const themes = [

@@ -103,6 +103,16 @@ interface AppSettings {
     }
   }
 
+  async function getChatbotSettings(ownerId: string) {
+    if (admin.apps.length) {
+      const doc = await admin.firestore().collection("chatbotSettings").doc(ownerId).get();
+      return doc.exists ? doc.data() : null;
+    } else {
+      const docSnap = await getDocClient(doc(clientDb, "chatbotSettings", ownerId));
+      return docSnap.exists() ? docSnap.data() : null;
+    }
+  }
+
   async function getCustomers(ownerId: string) {
     if (admin.apps.length) {
       const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
@@ -124,7 +134,7 @@ interface AppSettings {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Security and performance middleware
   app.use(helmet({
@@ -229,7 +239,7 @@ async function startServer() {
   });
 
   // Helper for Meta WhatsApp API
-  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string) {
+  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
     }
@@ -249,70 +259,78 @@ async function startServer() {
     
     console.log(`[WhatsApp] Sending to ${formattedTo}...`);
 
-    let mediaId: string | undefined = undefined;
-
-    // Upload media to Meta first if provided
-    if (mediaBase64) {
-      try {
-        const base64Data = mediaBase64.split(',')[1] || mediaBase64;
-        const mimeType = mediaBase64.split(';')[0].split(':')[1] || 'application/pdf';
-        const isImage = mimeType.startsWith('image/');
-        
-        const buffer = Buffer.from(base64Data, 'base64');
-        const formData = new FormData();
-        const blob = new Blob([buffer], { type: mimeType });
-        formData.append('file', blob, mediaName || (isImage ? 'image.png' : 'document.pdf'));
-        formData.append('messaging_product', 'whatsapp');
-
-        const uploadRes = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`
-          },
-          body: formData as any
-        });
-        
-        const uploadData = await uploadRes.json();
-        if (!uploadRes.ok) {
-          console.error(`[WhatsApp] Media Upload Error:`, uploadData);
-          throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
-        }
-        mediaId = uploadData.id;
-        console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
-      } catch (err) {
-        console.error(`[WhatsApp] Error handling media:`, err);
-        // Continue and send as text message if media upload fails?
-        // Let's just append an error log but send text anyway
-      }
-    }
-
     let bodyPayload: any = {
       messaging_product: 'whatsapp',
       to: formattedTo
     };
 
-    if (mediaId) {
-      // Determine if it's an image or generic document
-      const mimeType = mediaBase64?.split(';')[0].split(':')[1] || '';
-      const isImage = mimeType.startsWith('image/');
-      
-      if (isImage) {
-        bodyPayload.type = 'image';
-        bodyPayload.image = {
-          id: mediaId,
-          caption: message
-        };
-      } else {
-        bodyPayload.type = 'document';
-        bodyPayload.document = {
-          id: mediaId,
-          caption: message,
-          filename: mediaName || 'document.pdf'
-        };
-      }
+    if (isTestMessage) {
+       bodyPayload.type = 'template';
+       bodyPayload.template = {
+         name: "hello_world",
+         language: { code: "en_US" }
+       };
     } else {
-      bodyPayload.type = 'text';
-      bodyPayload.text = { body: message };
+      let mediaId: string | undefined = undefined;
+
+      // Upload media to Meta first if provided
+      if (mediaBase64) {
+        try {
+          const base64Data = mediaBase64.split(',')[1] || mediaBase64;
+          const mimeType = mediaBase64.split(';')[0].split(':')[1] || 'application/pdf';
+          const isImage = mimeType.startsWith('image/');
+          
+          const buffer = Buffer.from(base64Data, 'base64');
+          const formData = new FormData();
+          const blob = new Blob([buffer], { type: mimeType });
+          formData.append('file', blob, mediaName || (isImage ? 'image.png' : 'document.pdf'));
+          formData.append('messaging_product', 'whatsapp');
+
+          const uploadRes = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`
+            },
+            body: formData as any
+          });
+          
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) {
+            console.error(`[WhatsApp] Media Upload Error:`, uploadData);
+            throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
+          }
+          mediaId = uploadData.id;
+          console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
+        } catch (err) {
+          console.error(`[WhatsApp] Error handling media:`, err);
+          // Continue and send as text message if media upload fails?
+          // Let's just append an error log but send text anyway
+        }
+      }
+
+      if (mediaId) {
+        // Determine if it's an image or generic document
+        const mimeType = mediaBase64?.split(';')[0].split(':')[1] || '';
+        const isImage = mimeType.startsWith('image/');
+        
+        if (isImage) {
+          bodyPayload.type = 'image';
+          bodyPayload.image = {
+            id: mediaId,
+            caption: message
+          };
+        } else {
+          bodyPayload.type = 'document';
+          bodyPayload.document = {
+            id: mediaId,
+            caption: message,
+            filename: mediaName || 'document.pdf'
+          };
+        }
+      } else {
+        bodyPayload.type = 'text';
+        bodyPayload.text = { body: message };
+      }
     }
 
     const response = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`, {
@@ -327,7 +345,11 @@ async function startServer() {
     const data = await response.json();
     if (!response.ok) {
       console.error(`[WhatsApp] Meta API Error:`, data.error);
-      throw new Error(data.error?.message || "Meta API Error");
+      let errMsg = data.error?.message || "Meta API Error";
+      if (data.error?.type === 'OAuthException') {
+        errMsg = "OAuthException: Your Meta API Token is invalid or expired. Please generate a new permanent token as per the App Manual.";
+      }
+      throw new Error(errMsg);
     }
     return data;
   }
@@ -381,14 +403,14 @@ async function startServer() {
   }
 
   // Generic Send WhatsApp API
-  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string) {
+  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false) {
     if (settings.preferredNotificationMethod && 
         settings.preferredNotificationMethod !== 'api' && 
         settings.preferredNotificationMethod !== 'manual_link') {
       return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
     } else {
       // Default to Meta or explicit 'api'
-      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName);
+      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage);
     }
   }
 
@@ -649,7 +671,7 @@ async function startServer() {
       }
 
       const message = "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
-      await sendWhatsAppMessage(settings, testMobile, message);
+      await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
 
       res.json({ status: "success", info: "Message sent! Check your phone." });
     } catch (err: any) {
@@ -661,6 +683,58 @@ async function startServer() {
   // 3. WhatsApp Chatbot Webhooks
 
   // Meta Webhook Verification
+  app.post("/api/portal-chat/:ownerId", async (req, res) => {
+    try {
+      const { ownerId } = req.params;
+      const { message, history } = req.body;
+
+      if (!message) return res.status(400).json({ error: "Missing message" });
+
+      const chatbotSettings = await getChatbotSettings(ownerId);
+      if (!chatbotSettings || !chatbotSettings.isActive || !chatbotSettings.apiKey) {
+        return res.status(400).json({ error: "Chatbot is not enabled or not configured." });
+      }
+
+      const systemPrompt = `You are a helpful AI assistant for a Panchayat Waterworks department public portal.
+You must ONLY answer questions based on the knowledge database provided below.
+If the answer is not in the database, say: "I don't have that information in our current database. Please contact the office."
+Be helpful, polite, and concise. Use bullet points for lists.
+
+=== PANCHAYAT KNOWLEDGE DATABASE ===
+${chatbotSettings.knowledgeBase}
+=== END OF DATABASE ===`;
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...(history || []).map((h: any) => ({ role: h.role, content: h.content })),
+        { role: "user", content: message }
+      ];
+
+      const fetch = (await import('node-fetch')).default;
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${chatbotSettings.apiKey}`
+        },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash-lite-preview-02-05:free",
+          messages: messages
+        })
+      });
+      
+      const data = await response.json() as any;
+      if (data.choices && data.choices.length > 0) {
+        return res.json({ reply: data.choices[0].message.content });
+      } else {
+        return res.status(500).json({ error: "No response from AI." });
+      }
+    } catch (err) {
+      console.error("[Webhook] Portal AI error:", err);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+
   app.get("/api/whatsapp-webhook/:ownerId", async (req, res) => {
     try {
       const { ownerId } = req.params;
@@ -668,9 +742,9 @@ async function startServer() {
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
 
-      console.log(`[Webhook] Received verification request for owner: ${ownerId}`);
+      console.log(`[Webhook] Verification attempt for owner: ${ownerId}`);
 
-      if (mode && token) {
+      if (mode === "subscribe" && token && challenge) {
         let storedToken = process.env.META_VERIFY_TOKEN;
 
         // Dynamic fetch using helper
@@ -679,32 +753,17 @@ async function startServer() {
            storedToken = settings.metaWhatsAppVerifyToken;
         }
 
-        if (mode === "subscribe") {
-           // If we have a stored token, verify it. If we don't have Admin SDK, we might just warn and accept to let Meta connect,
-           // but it's safer to require the token. Let's be lenient if they are stuck with validation.
-           if (storedToken) {
-             if (token === storedToken) {
-               console.log(`[Webhook] VERIFIED successfully for user: ${ownerId}`);
-               res.set('Content-Type', 'text/plain');
-               return res.status(200).send(challenge);
-             } else {
-               console.warn(`[Webhook] Verification FAILED for user: ${ownerId}. Expected: ${storedToken}, Received: ${token}`);
-               return res.sendStatus(403);
-             }
-           } else {
-             // Admin SDK might be missing or token not set. 
-             // We accept it to let Meta save the URL, but warn heavily.
-             console.warn(`[Webhook] VERY IMPORTANT: Bypassed strict token match for ${ownerId} because FIREBASE_SERVICE_ACCOUNT is missing or token is not saved in DB!`);
-             res.set('Content-Type', 'text/plain');
-             return res.status(200).send(challenge);
-           }
+        // Verification logic
+        if (!storedToken || token === storedToken) {
+          console.log(`[Webhook] Verified owner: ${ownerId}`);
+          res.set('Content-Type', 'text/plain');
+          return res.status(200).send(challenge);
         } else {
-           return res.sendStatus(400);
+          console.warn(`[Webhook] Token mismatch. Expected: ${storedToken}, Got: ${token}`);
+          return res.sendStatus(403);
         }
-      } else {
-        console.warn("[Webhook] Missing hub.mode or hub.token in query parameters");
-        return res.sendStatus(400);
       }
+      return res.sendStatus(400);
     } catch (err) {
       console.error("[Webhook] Verification Error:", err);
       res.sendStatus(500);
@@ -739,7 +798,7 @@ async function startServer() {
                 let matchedCustomer = null;
                 const cleanMobile = fromMobile.replace(/\D/g, '');
                 
-                for (const customer of customers) {
+                for (const customer of (customers as any[])) {
                    const dataMobile = (customer.mobileNumber || '').replace(/\D/g, '');
                    if (cleanMobile.endsWith(dataMobile)) {
                       matchedCustomer = customer;
@@ -753,8 +812,9 @@ async function startServer() {
                      let handled = false;
                      if (settings?.chatbotCommands && Array.isArray(settings.chatbotCommands)) {
                        for (const cmd of settings.chatbotCommands) {
-                         if (cmd.isActive && cmd.triggerWord && msgBody.toLowerCase().includes(cmd.triggerWord.toLowerCase())) {
-                           console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
+                         const trigger = (cmd.triggerWord || '').toLowerCase().trim();
+                         if (cmd.isActive && trigger && msgBody.toLowerCase().includes(trigger)) {
+                           console.log(`[Webhook] Matched chatbot command: ${trigger} for ${matchedCustomer.name}`);
                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
                              try {
                                 let responseText = cmd.response || '';
@@ -772,7 +832,8 @@ async function startServer() {
                        }
                      }
 
-                     if (!handled && msgBody.toLowerCase().includes('complain') && settings?.automation?.autoCreateComplaints !== false) {
+                     const isComplaint = msgBody.toLowerCase().includes('complaint') || msgBody.toLowerCase().includes('complain');
+                     if (!handled && isComplaint && settings?.automation?.autoCreateComplaints !== false) {
                         const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
                         await saveComplaintData(complaintId, {
                            id: complaintId,
@@ -793,6 +854,54 @@ async function startServer() {
                             console.error("[Webhook] Failed to send auto-reply:", e);
                           }
                         }
+                        handled = true;
+                     }
+
+                     if (!handled) {
+                       const chatbotSettings = await getChatbotSettings(ownerId);
+                       if (chatbotSettings && chatbotSettings.isActive && chatbotSettings.apiKey) {
+                         try {
+                           console.log(`[Webhook] Passing to AI Chatbot for ${matchedCustomer.name}`);
+                           const systemPrompt = `You are a helpful AI assistant for a Panchayat Waterworks department.
+You must ONLY answer questions based on the knowledge database provided below.
+If the answer is not in the database, say: "I don't have that information in our current database. Please visit the Panchayat office or call for assistance."
+Be helpful, polite, and concise. Answer in the same language the user writes in.
+Do NOT make up information. Do NOT answer questions unrelated to Panchayat waterworks services.
+
+=== PANCHAYAT KNOWLEDGE DATABASE ===
+${chatbotSettings.knowledgeBase}
+=== END OF DATABASE ===
+
+User context: Customer Name is ${matchedCustomer.name}, Balance is Rs. ${matchedCustomer.balance || 0}.`;
+
+                           const fetch = (await import('node-fetch')).default;
+                           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+                             method: "POST",
+                             headers: {
+                               "Content-Type": "application/json",
+                               "Authorization": `Bearer ${chatbotSettings.apiKey}`
+                             },
+                             body: JSON.stringify({
+                               model: "google/gemini-2.5-flash-lite-preview-02-05:free",
+                               messages: [
+                                 { role: "system", content: systemPrompt },
+                                 { role: "user", content: msgBody }
+                               ]
+                             })
+                           });
+                           
+                           const data = await response.json() as any;
+                           if (data.choices && data.choices.length > 0) {
+                             const replyText = data.choices[0].message.content;
+                             await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, replyText);
+                             handled = true;
+                           } else {
+                             console.error("[Webhook] OpenRouter returned no choices or error", data);
+                           }
+                         } catch (aiErr) {
+                           console.error("[Webhook] OpenRouter AI failed:", aiErr);
+                         }
+                       }
                      }
                 } else {
                    console.log("[Webhook] Message received from unknown number. Ignored.");
