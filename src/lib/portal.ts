@@ -41,13 +41,13 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
     portalId,
     ownerId: auth.currentUser.uid,
     customerId: customer.id,
-    customerName: customer.name,
-    mobileNumber: customer.mobileNumber,
-    balance: customer.balance,
-    billingAmount: settings.billingAmount,
-    penaltyAmount: settings.penaltyAmount,
-    penaltyDays: settings.penaltyDays,
-    upiQrCodeImage: settings.upiQrCodeImage,
+    customerName: customer.name || "Customer",
+    mobileNumber: customer.mobileNumber || "",
+    balance: customer.balance || 0,
+    billingAmount: settings.billingAmount || 0,
+    penaltyAmount: settings.penaltyAmount || 0,
+    penaltyDays: settings.penaltyDays || 0,
+    upiQrCodeImage: settings.upiQrCodeImage || null,
     createdAt: Date.now()
   };
 
@@ -58,13 +58,9 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
 };
 
 export const getPortalData = async (portalId: string): Promise<PublicPortalData | null> => {
-  try {
-    const docSnap = await getDoc(doc(db, 'public_portals', portalId));
-    if (docSnap.exists()) {
-      return docSnap.data() as PublicPortalData;
-    }
-  } catch (error) {
-    console.error("Error fetching portal data:", error);
+  const docSnap = await getDoc(doc(db, 'public_portals', portalId));
+  if (docSnap.exists()) {
+    return docSnap.data() as PublicPortalData;
   }
   return null;
 };

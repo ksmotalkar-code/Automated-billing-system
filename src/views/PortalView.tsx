@@ -88,7 +88,7 @@ export function PortalView() {
           }
         }
       } catch (err: any) {
-        setError(err.message || "Failed to load portal.");
+        setError("Failed to load portal. " + (err.message || err));
       }
       setLoading(false);
     };

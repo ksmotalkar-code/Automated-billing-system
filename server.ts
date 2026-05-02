@@ -154,8 +154,9 @@ interface AppSettings {
        matched = true;
     } else if (msgLower === "system_qr_pay" || msgLower.includes("qr for pay")) {
        replyText = replyText || "Scan the attached UPI QR code to pay your bill.";
-       if (adminSettings?.upiQrCodeImage) {
-           attachments.push({ type: 'image', data: adminSettings.upiQrCodeImage });
+       const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
+       if (qrImage) {
+           attachments.push({ type: 'image', data: qrImage });
        } else {
            replyText = "Sorry, no UPI QR code has been set by the administration yet.";
        }
@@ -225,22 +226,32 @@ interface AppSettings {
   }
 
   async function getSettings(ownerId: string) {
-    if (admin.apps.length) {
-      const doc = await admin.firestore().collection("settings").doc(ownerId).get();
-      return doc.exists ? doc.data() : null;
-    } else {
-      const docSnap = await getDocClient(doc(clientDb, "settings", ownerId));
-      return docSnap.exists() ? docSnap.data() : null;
+    try {
+      if (admin.apps.length) {
+        const doc = await admin.firestore().collection("settings").doc(ownerId).get();
+        return doc.exists ? doc.data() : null;
+      } else {
+        const docSnap = await getDocClient(doc(clientDb, "settings", ownerId));
+        return docSnap.exists() ? docSnap.data() : null;
+      }
+    } catch(e) {
+      console.warn("Failed to get settings in server (needs Admin SDK for protected data)", e);
+      return null;
     }
   }
 
   async function getChatbotSettings(ownerId: string) {
-    if (admin.apps.length) {
-      const doc = await admin.firestore().collection("chatbotSettings").doc(ownerId).get();
-      return doc.exists ? doc.data() : null;
-    } else {
-      const docSnap = await getDocClient(doc(clientDb, "chatbotSettings", ownerId));
-      return docSnap.exists() ? docSnap.data() : null;
+    try {
+      if (admin.apps.length) {
+        const doc = await admin.firestore().collection("chatbotSettings").doc(ownerId).get();
+        return doc.exists ? doc.data() : null;
+      } else {
+        const docSnap = await getDocClient(doc(clientDb, "chatbotSettings", ownerId));
+        return docSnap.exists() ? docSnap.data() : null;
+      }
+    } catch(e) {
+      console.warn("Failed to get chatbotSettings in server", e);
+      return null;
     }
   }
 
