@@ -78,7 +78,7 @@ class WhatsAppService {
          });
       }
 
-      const response = await fetch('/api/whatsapp/send', {
+      const response = await fetch('/api/wa/send', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -117,7 +117,7 @@ export const sendWhatsAppNotification = async (
         });
       }
       
-      const res = await fetch('/api/whatsapp-web/send', {
+      const res = await fetch('/api/wweb/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

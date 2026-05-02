@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1024' vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --external:express --external:firebase-admin --external:firebase --external:cors --external:helmet --external:compression --external:node-cron --external:vite",
+    "build": "NODE_OPTIONS='--max-old-space-size=1024' vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --packages=external",
     "start": "NODE_ENV=production node dist/server.js",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -33,6 +33,7 @@
     "motion": "^12.23.24",
     "node-cron": "^4.2.1",
     "papaparse": "^5.5.3",
+    "pdf-lib": "^1.17.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -725,7 +725,7 @@ async function startServer() {
   });
 
   // Send Individual Message API (Proxied for CORS safety)
-  app.post("/api/whatsapp/send", async (req, res) => {
+  app.post("/api/wa/send", async (req, res) => {
     try {
       const { ownerId, to, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method, mediaBase64, mediaName } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
@@ -752,7 +752,7 @@ async function startServer() {
   });
 
   // Bulk Broadcast API
-  app.post("/api/whatsapp/broadcast", async (req, res) => {
+  app.post("/api/wa/broadcast", async (req, res) => {
     try {
       const { ownerId, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, recipients, mediaBase64, mediaName } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
@@ -817,7 +817,7 @@ async function startServer() {
   });
 
   // Test WhatsApp API Configuration
-  app.post("/api/whatsapp/test", async (req, res) => {
+  app.post("/api/wa/test", async (req, res) => {
     try {
       const { ownerId, testMobile, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method } = req.body;
       let settings: any = { 
@@ -1227,6 +1227,15 @@ async function startServer() {
 
   // WhatsApp Web JS Integration
   let whatsappWebStatus = { status: 'disabled', qr: null, error: null, solution: null };
+  // Compatibility endpoint for frontend checks
+  app.get("/api/wweb/status", (req, res) => {
+    res.json({ status: 'disabled' });
+  });
+
+  app.post("/api/wweb/send", (req, res) => {
+    res.status(400).json({ error: 'WhatsApp Web is disabled on this server. Please use Meta Official API or Cunnekt API.' });
+  });
+
   // Vite middleware for development (Serves the App)
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");

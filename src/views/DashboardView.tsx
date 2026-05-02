@@ -24,17 +24,14 @@ export function DashboardView() {
     // Fetch WhatsApp Web Status
     const fetchWaStatus = async () => {
       try {
-        const res = await fetch('/api/whatsapp-web/status');
+        const res = await fetch('/api/wweb/status');
         const contentType = res.headers.get("content-type");
         if (res.ok && contentType && contentType.includes("application/json")) {
            const data = await res.json();
            setWhatsappWebStatus(data);
-        } else {
-           // If we get HTML or 404, it might be the server splash page during boot
-           console.log("WhatsApp status not available yet");
         }
       } catch (err) {
-        console.error("Failed to fetch WA status", err);
+        console.warn("wweb status not available");
       }
     };
     fetchWaStatus();

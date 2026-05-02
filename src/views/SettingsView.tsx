@@ -101,7 +101,7 @@ export function SettingsView() {
     }
     setIsTestLoading(true);
     try {
-      const resp = await fetch('/api/whatsapp/test', {
+      const resp = await fetch('/api/wa/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -359,7 +359,7 @@ export function SettingsView() {
             });
           }
 
-          const resp = await fetch('/api/whatsapp/broadcast', {
+          const resp = await fetch('/api/wa/broadcast', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
