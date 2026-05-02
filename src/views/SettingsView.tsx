@@ -73,11 +73,9 @@ export function SettingsView() {
     const unsubSettings = subscribeToSettings((s) => {
       if (s) {
         setSettings(s);
-        if (s.metaWhatsAppApiKey && s.metaWhatsAppPhoneNumberId) {
-          import("../services/whatsappService").then(({ whatsappService }) => {
-            whatsappService.updateConfig(s.metaWhatsAppApiKey, s.metaWhatsAppPhoneNumberId);
-          });
-        }
+        import("../services/whatsappService").then(({ whatsappService }) => {
+          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.cunnektApiKey || null);
+        });
       }
     });
 

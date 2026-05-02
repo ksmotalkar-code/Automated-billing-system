@@ -12,8 +12,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Set Puppeteer environment variables to use the system Chrome we just installed
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome-stable
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 WORKDIR /app
 

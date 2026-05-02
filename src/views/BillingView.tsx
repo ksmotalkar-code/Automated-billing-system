@@ -185,6 +185,10 @@ export function BillingView() {
   };
 
   const handleSendWhatsApp = async (customer: Customer) => {
+    if (customer.status === 'Suspended') {
+      showAlert("Cannot Send", "This customer is suspended. Please make them active first to send messages.");
+      return;
+    }
     const status = getMockStatus(customer);
     let message = "";
     if (status === "Pending" || status === "Overdue") {
@@ -238,6 +242,11 @@ export function BillingView() {
   const handleSendIndividualNotify = async () => {
     if (!individualNotifyCustomer || !notifyMessage.trim() || !settings) return;
     
+    if (individualNotifyCustomer.status === 'Suspended') {
+      showAlert("Cannot Send", "This customer is suspended. Please make them active first to send messages.");
+      return;
+    }
+
     setIsSendingNotify(true);
     try {
       // Message is already pre-filled with the customer name

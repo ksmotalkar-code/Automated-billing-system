@@ -1,1 +1,7 @@
-import * as admin from "firebase-admin"; console.log("apps:", admin.apps, "default.apps:", (admin as any).default?.apps);
+import fs from 'fs';
+fetch('https://openrouter.ai/api/v1/models')
+  .then(r=>r.json())
+  .then(d=> {
+     let m = d.data.filter(x => x.id.includes('google'));
+     console.log("Google models: ", m.map(x=>x.id));
+  })

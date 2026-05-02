@@ -113,6 +113,28 @@ interface AppSettings {
     }
   }
 
+  async function getCustomerByMobile(ownerId: string, mobileSearch: string) {
+    if (admin.apps.length) {
+      const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
+      // Since mobile numbers might contain country codes, dashes, etc., we fetch all and find, OR better: if possible we query. 
+      // Firestore doesn't do "endsWith" queries natively well without a specific field. 
+      // For efficiency, we will fetch and filter, but we could improve this later. For now, it's ok.
+      const customers = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      return customers.find(c => {
+         const dataMobile = (c.mobileNumber || '').replace(/\D/g, '');
+         return mobileSearch.endsWith(dataMobile) || dataMobile.endsWith(mobileSearch);
+      });
+    } else {
+      const q = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
+      const snap = await getDocsClient(q);
+      const customers = snap.docs.map(d => ({ id: d.id, ...d.data() as any }));
+      return customers.find(c => {
+         const dataMobile = (c.mobileNumber || '').replace(/\D/g, '');
+         return mobileSearch.endsWith(dataMobile) || dataMobile.endsWith(mobileSearch);
+      });
+    }
+  }
+
   async function getCustomers(ownerId: string) {
     if (admin.apps.length) {
       const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
@@ -212,7 +234,7 @@ async function startServer() {
               });
 
               // Automate WhatsApp Receipt
-              if (newBalance === 0 && ownerId) {
+              if (newBalance === 0 && ownerId && customer?.status !== 'Suspended') {
                  const settingsDoc = await db.collection("settings").doc(ownerId).get();
                  const settings = settingsDoc.data() as any;
                  if (settings?.automation?.smartNotifications && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
@@ -473,6 +495,10 @@ async function startServer() {
             
             for (const cDoc of customersSnap.docs) {
                const customer = cDoc.data();
+               const cleanMobile = customer.mobileNumber ? customer.mobileNumber.replace(/\D/g, '') : '';
+               if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
+                 continue; // treated as virtually suspended
+               }
                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
                
                batch.update(cDoc.ref, {
@@ -495,6 +521,10 @@ async function startServer() {
             if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications) {
               for (const cDoc of customersSnap.docs) {
                 const customer = cDoc.data();
+                const cleanMobile = customer.mobileNumber ? customer.mobileNumber.replace(/\D/g, '') : '';
+                if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
+                  continue; // treated as virtually suspended
+                }
                 const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
@@ -628,6 +658,12 @@ async function startServer() {
            .get();
          customers = customersSnap.docs.map(d => d.data());
       }
+      
+      // Filter out invalid mobiles
+      customers = customers.filter((c: any) => {
+         const cleanMobile = c.mobileNumber ? c.mobileNumber.replace(/\D/g, '') : '';
+         return cleanMobile && cleanMobile.length >= 10 && cleanMobile !== '0000000000';
+      });
 
       console.log(`Broadcasting to ${customers.length} customers...`);
       
@@ -683,54 +719,188 @@ async function startServer() {
   // 3. WhatsApp Chatbot Webhooks
 
   // Meta Webhook Verification
-  app.post("/api/portal-chat/:ownerId", async (req, res) => {
+  app.get("/api/portal-chat/init/:portalId", async (req, res) => {
     try {
-      const { ownerId } = req.params;
-      const { message, history } = req.body;
-
-      if (!message) return res.status(400).json({ error: "Missing message" });
+      const { portalId } = req.params;
+      const portalSnap = await getDocClient(doc(clientDb, "public_portals", portalId));
+      if (!portalSnap.exists()) {
+        return res.status(404).json({ error: "Portal not found" });
+      }
+      const portalData = portalSnap.data();
+      const ownerId = portalData.ownerId;
+      const customerId = portalData.customerId;
 
       const chatbotSettings = await getChatbotSettings(ownerId);
-      if (!chatbotSettings || !chatbotSettings.isActive || !chatbotSettings.apiKey) {
-        return res.status(400).json({ error: "Chatbot is not enabled or not configured." });
+      const commands = (chatbotSettings && chatbotSettings.isActive) ? (chatbotSettings.commands || []) : [];
+
+      let history: any[] = [];
+      const dbInstance = admin.apps.length ? admin.firestore() : null;
+      if (dbInstance) {
+         const chatHistoryRef = dbInstance.collection("customers").doc(customerId).collection("chat_history").orderBy("timestamp", "asc").limit(20);
+         const chatSnap = await chatHistoryRef.get();
+         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content }));
+      } else {
+         const chatHistoryRef = queryClient(collectionClient(clientDb, "customers", customerId, "chat_history")); // Simplified without sorting due to index needs
+         const chatSnap = await getDocsClient(chatHistoryRef);
+         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content, timestamp: d.data().timestamp || '' }));
+         history.sort((a, b) => {
+            if (!a.timestamp) return -1;
+            if (!b.timestamp) return 1;
+            if (a.timestamp.seconds) return a.timestamp.seconds - b.timestamp.seconds;
+            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+         });
+         history = history.map(h => ({ role: h.role, content: h.content }));
       }
 
-      const systemPrompt = `You are a helpful AI assistant for a Panchayat Waterworks department public portal.
-You must ONLY answer questions based on the knowledge database provided below.
-If the answer is not in the database, say: "I don't have that information in our current database. Please contact the office."
-Be helpful, polite, and concise. Use bullet points for lists.
-
-=== PANCHAYAT KNOWLEDGE DATABASE ===
-${chatbotSettings.knowledgeBase}
-=== END OF DATABASE ===`;
-
-      const messages = [
-        { role: "system", content: systemPrompt },
-        ...(history || []).map((h: any) => ({ role: h.role, content: h.content })),
-        { role: "user", content: message }
+      const systemCommands = [
+        { buttonLabel: "📄 See My Bill", triggerWord: "system_bill", isActive: true },
+        { buttonLabel: "💰 View Balance & Pay", triggerWord: "system_balance", isActive: true },
+        { buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", isActive: true },
+        { buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", isActive: true }
       ];
 
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${chatbotSettings.apiKey}`
-        },
-        body: JSON.stringify({
-          model: "google/gemini-2.5-flash-lite-preview-02-05:free",
-          messages: messages
-        })
-      });
-      
-      const data = await response.json() as any;
-      if (data.choices && data.choices.length > 0) {
-        return res.json({ reply: data.choices[0].message.content });
-      } else {
-        return res.status(500).json({ error: "No response from AI." });
-      }
-    } catch (err) {
-      console.error("[Webhook] Portal AI error:", err);
+      res.json({ commands: [...systemCommands, ...commands.filter((c: any) => c.isActive)], history });
+    } catch(err: any) {
+      console.error(err);
       res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
+
+  app.post("/api/portal-chat/:portalId", async (req, res) => {
+    try {
+      const { portalId } = req.params;
+      const { message, customerId, ownerId } = req.body;
+
+      if (!message || !customerId || !ownerId) return res.status(400).json({ error: "Missing parameters" });
+
+      const chatbotSettings = await getChatbotSettings(ownerId);
+      if (!chatbotSettings || !chatbotSettings.isActive) {
+        return res.status(400).json({ error: "Chatbot is not enabled." });
+      }
+
+      const dbInstance = admin.apps.length ? admin.firestore() : null;
+
+      // Save user message
+      if (dbInstance) {
+         await dbInstance.collection("customers").doc(customerId).collection("chat_history").add({
+           role: 'user',
+           content: message,
+           timestamp: admin.firestore.FieldValue.serverTimestamp()
+         });
+      }
+
+      // Check rules
+      let replyText = "I'm sorry, I don't understand that command. Please select from the available options or contact the office.";
+      const msgLower = message.toLowerCase().trim();
+      let matched = false;
+
+      // Also fetch customer for variables
+      let custData: any = {};
+      if (dbInstance) {
+         try {
+           const cDoc = await dbInstance.collection("customers").doc(customerId).get();
+           custData = cDoc.data() || {};
+         } catch (e) {}
+      }
+      
+      // Fallback: get portalData because it contains the snapshot of balance
+      if (!custData.name) {
+          const portalSnap = await getDocClient(doc(clientDb, "public_portals", portalId));
+          if (portalSnap.exists()) {
+             custData = portalSnap.data() || {};
+             custData.name = custData.customerName; // map customerName to name for variables
+          }
+      }
+
+      // Check system commands first
+      if (msgLower === "system_bill" || msgLower.includes("see my bill")) {
+         const amt = custData.balance || 0;
+         replyText = `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}. You can download your PDF bill by visiting the dashboard and clicking on the bill details.`;
+         matched = true;
+      } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("money remain")) {
+         replyText = `You have a total remaining balance of Rs. ${custData.balance || 0}. If you wish to pay, you can use the UPI QR code available on the main page.`;
+         matched = true;
+      } else if (msgLower === "system_complaint" || msgLower.includes("register complaint")) {
+         replyText = `Please enter your complaint directly here starting with the word "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
+         matched = true;
+      } else if (msgLower === "system_report" || msgLower.includes("deep detail report")) {
+         // Check if any report is available
+         let hasReport = false;
+         let reportName = "";
+         if (dbInstance) {
+           const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
+           if (!reportsSnap.empty) {
+             hasReport = true;
+             reportName = reportsSnap.docs[0].data().title;
+           }
+         } else {
+           const reportsSnap = await getDocsClient(queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId)));
+           if (!reportsSnap.empty) {
+             hasReport = true;
+             reportName = reportsSnap.docs[0].data().title;
+           }
+         }
+         if (hasReport) {
+           replyText = `A deep detail report "${reportName}" is available for you! You can view and download it securely from the reports section of this portal.`;
+         } else {
+           replyText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
+         }
+         matched = true;
+      } else if (msgLower.startsWith("complaint:")) {
+         const complaintText = message.substring(10).trim();
+         if (complaintText.length > 5) {
+            const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+            await saveComplaintData(complaintId, {
+                 id: complaintId,
+                 customerId: customerId,
+                 ownerId: ownerId,
+                 customerName: custData.name,
+                 mobileNumber: custData.mobileNumber || '',
+                 category: "General",
+                 description: complaintText,
+                 status: "Pending",
+                 priority: "Medium",
+                 createdAt: new Date().toISOString(),
+                 expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString() // 6 months
+            });
+            replyText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
+         } else {
+            replyText = `Please provide more details for your complaint.`;
+         }
+         matched = true;
+      }
+
+      if (!matched) {
+        for (const cmd of chatbotSettings.commands || []) {
+           if (!cmd.isActive) continue;
+           const trigger = (cmd.triggerWord || '').toLowerCase().trim();
+           const btnBase = (cmd.buttonLabel || '').toLowerCase().trim();
+           if ((trigger && msgLower.includes(trigger)) || (btnBase && msgLower === btnBase)) {
+              replyText = cmd.response;
+              matched = true;
+              break;
+           }
+        }
+      }
+
+      // Replace variables
+      replyText = replyText.replace(/{{name}}/gi, custData.name || 'Customer');
+      replyText = replyText.replace(/{{balance}}/gi, custData.balance || '0');
+
+      // Save bot reply
+      if (dbInstance) {
+         await dbInstance.collection("customers").doc(customerId).collection("chat_history").add({
+           role: 'assistant',
+           content: replyText,
+           timestamp: admin.firestore.FieldValue.serverTimestamp()
+         });
+      }
+
+      return res.json({ reply: replyText });
+
+    } catch (err: any) {
+      console.error("[Webhook] Portal AI error:", err);
+      res.status(500).json({ error: "Internal Server Error: " + err.message });
     }
   });
 
@@ -793,34 +963,123 @@ ${chatbotSettings.knowledgeBase}
 
             if (msgBody) {
               try {
-                const customers = await getCustomers(ownerId);
-                let matchedCustomer = null;
                 const cleanMobile = fromMobile.replace(/\D/g, '');
-                
-                for (const customer of (customers as any[])) {
-                   const dataMobile = (customer.mobileNumber || '').replace(/\D/g, '');
-                   if (cleanMobile.endsWith(dataMobile)) {
-                      matchedCustomer = customer;
-                      break;
-                   }
-                }
+                let matchedCustomer = await getCustomerByMobile(ownerId, cleanMobile);
 
-                if (matchedCustomer) {
+                if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
                      const settings = await getSettings(ownerId);
                      
+                     const dbInstance = admin.apps.length ? admin.firestore() : null;
+                     if (dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                             role: 'user',
+                             content: msgBody,
+                             source: 'whatsapp',
+                             timestamp: admin.firestore.FieldValue.serverTimestamp()
+                           });
+                        } catch (e) {}
+                     }
+
                      let handled = false;
-                     if (settings?.chatbotCommands && Array.isArray(settings.chatbotCommands)) {
-                       for (const cmd of settings.chatbotCommands) {
+                     const msgLower = msgBody.toLowerCase().trim();
+
+                     // System commands mapped directly
+                     if (msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
+                        const amt = matchedCustomer.balance || 0;
+                        const responseText = `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}. You can download your PDF bill by visiting your portal dashboard.`;
+                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                        handled = true;
+                     } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("money remain") || msgLower === "balance") {
+                        const responseText = `You have a total remaining balance of Rs. ${matchedCustomer.balance || 0}. If you wish to pay, you can use the UPI QR code available on the main page of your portal.`;
+                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                        handled = true;
+                     } else if (msgLower === "system_complaint" || msgLower.includes("register complaint") || msgLower === "complaint") {
+                        const responseText = `Please reply with your complaint directly by starting with "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
+                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                        handled = true;
+                     } else if (msgLower === "system_report" || msgLower.includes("deep detail report") || msgLower === "report") {
+                        let hasReport = false;
+                        let reportName = "";
+                        if (dbInstance) {
+                          const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
+                          if (!reportsSnap.empty) {
+                            hasReport = true;
+                            reportName = reportsSnap.docs[0].data().title;
+                          }
+                        } else {
+                          const reportsSnap = await getDocsClient(queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId)));
+                          if (!reportsSnap.empty) {
+                            hasReport = true;
+                            reportName = reportsSnap.docs[0].data().title;
+                          }
+                        }
+                        let responseText = "";
+                        if (hasReport) {
+                          responseText = `A deep detail report "${reportName}" is available for you! You can view and download it securely from the reports section of your portal.`;
+                        } else {
+                          responseText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
+                        }
+                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                        handled = true;
+                     } else if (msgLower.startsWith("complaint:")) {
+                        const complaintText = msgBody.substring(10).trim();
+                        let responseText = "";
+                        if (complaintText.length > 5) {
+                           const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+                           await saveComplaintData(complaintId, {
+                               id: complaintId,
+                               customerId: matchedCustomer.id,
+                               ownerId: ownerId,
+                               customerName: matchedCustomer.name,
+                               mobileNumber: matchedCustomer.mobileNumber || '',
+                               category: "General",
+                               description: complaintText,
+                               status: "Pending",
+                               priority: "Medium",
+                               createdAt: new Date().toISOString(),
+                               expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString() // 6 months
+                           });
+                           responseText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
+                        } else {
+                           responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
+                        }
+                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                        handled = true;
+                     }
+
+                     const chatbotSettings = await getChatbotSettings(ownerId);
+                     
+                     if (!handled && chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
+                       for (const cmd of chatbotSettings.commands) {
                          const trigger = (cmd.triggerWord || '').toLowerCase().trim();
-                         if (cmd.isActive && trigger && msgBody.toLowerCase().includes(trigger)) {
+                         if (cmd.isActive && trigger && msgLower.includes(trigger)) {
                            console.log(`[Webhook] Matched chatbot command: ${trigger} for ${matchedCustomer.name}`);
                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
                              try {
                                 let responseText = cmd.response || '';
-                                responseText = responseText.replace(/{{name}}/g, matchedCustomer.name);
-                                responseText = responseText.replace(/{{balance}}/g, (matchedCustomer.balance || 0).toString());
+                                responseText = responseText.replace(/{{name}}/gi, matchedCustomer.name);
+                                responseText = responseText.replace(/{{balance}}/gi, (matchedCustomer.balance || 0).toString());
                                 
                                 await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                                
+                                const dbInstance = admin.apps.length ? admin.firestore() : null;
+                                if (dbInstance) {
+                                   try {
+                                      await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                                        role: 'assistant',
+                                        content: responseText,
+                                        source: 'whatsapp',
+                                        timestamp: admin.firestore.FieldValue.serverTimestamp()
+                                      });
+                                   } catch (e) {}
+                                }
+                                
                                 handled = true;
                                 break;
                              } catch (e) {
@@ -857,49 +1116,9 @@ ${chatbotSettings.knowledgeBase}
                      }
 
                      if (!handled) {
-                       const chatbotSettings = await getChatbotSettings(ownerId);
-                       if (chatbotSettings && chatbotSettings.isActive && chatbotSettings.apiKey) {
-                         try {
-                           console.log(`[Webhook] Passing to AI Chatbot for ${matchedCustomer.name}`);
-                           const systemPrompt = `You are a helpful AI assistant for a Panchayat Waterworks department.
-You must ONLY answer questions based on the knowledge database provided below.
-If the answer is not in the database, say: "I don't have that information in our current database. Please visit the Panchayat office or call for assistance."
-Be helpful, polite, and concise. Answer in the same language the user writes in.
-Do NOT make up information. Do NOT answer questions unrelated to Panchayat waterworks services.
-
-=== PANCHAYAT KNOWLEDGE DATABASE ===
-${chatbotSettings.knowledgeBase}
-=== END OF DATABASE ===
-
-User context: Customer Name is ${matchedCustomer.name}, Balance is Rs. ${matchedCustomer.balance || 0}.`;
-
-                           const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                             method: "POST",
-                             headers: {
-                               "Content-Type": "application/json",
-                               "Authorization": `Bearer ${chatbotSettings.apiKey}`
-                             },
-                             body: JSON.stringify({
-                               model: "google/gemini-2.5-flash-lite-preview-02-05:free",
-                               messages: [
-                                 { role: "system", content: systemPrompt },
-                                 { role: "user", content: msgBody }
-                               ]
-                             })
-                           });
-                           
-                           const data = await response.json() as any;
-                           if (data.choices && data.choices.length > 0) {
-                             const replyText = data.choices[0].message.content;
-                             await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, replyText);
-                             handled = true;
-                           } else {
-                             console.error("[Webhook] OpenRouter returned no choices or error", data);
-                           }
-                         } catch (aiErr) {
-                           console.error("[Webhook] OpenRouter AI failed:", aiErr);
-                         }
-                       }
+                        // All messages were handled either by exact keyword matches or complaints.
+                        // For messages unmatched by previous logic, we could potentially have a fallback message
+                        // but user hasn't requested it. OpenRouter AI logic removed.
                      }
                 } else {
                    console.log("[Webhook] Message received from unknown number. Ignored.");

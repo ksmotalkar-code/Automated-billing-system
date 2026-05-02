@@ -15,6 +15,7 @@ export interface WhatsAppMessage {
 class WhatsAppService {
   private apiKey: string | null = null;
   private phoneNumberId: string | null = null;
+  private cunnektApiKey: string | null = null;
   private baseUrl: string = 'https://graph.facebook.com/v17.0'; // Example for Meta WhatsApp Business API
 
   constructor() {
@@ -23,8 +24,11 @@ class WhatsAppService {
     this.phoneNumberId = import.meta.env.VITE_WHATSAPP_PHONE_NUMBER_ID || null;
   }
 
-  public updateConfig(apiKey: string | null, phoneNumberId: string | null) {
-    if (apiKey) this.apiKey = apiKey.trim();
+  public updateConfig(apiKey: string | null, phoneNumberId: string | null, cunnektApiKey?: string | null) {
+    this.apiKey = apiKey ? apiKey.trim() : null;
+    if (cunnektApiKey !== undefined) {
+       this.cunnektApiKey = cunnektApiKey ? cunnektApiKey.trim() : null;
+    }
     if (phoneNumberId) {
       let cleaned = phoneNumberId.trim();
       // If user accidentally pasted the URL, extract the ID
@@ -33,6 +37,8 @@ class WhatsAppService {
         cleaned = match[1];
       }
       this.phoneNumberId = cleaned;
+    } else {
+      this.phoneNumberId = null;
     }
   }
 
@@ -40,7 +46,9 @@ class WhatsAppService {
    * Checks if the API is configured and ready to use
    */
   public isConfigured(): boolean {
-    return !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
+    const hasMeta = !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
+    const hasCunnekt = !!(this.cunnektApiKey && this.cunnektApiKey.trim());
+    return hasMeta || hasCunnekt;
   }
 
   /**

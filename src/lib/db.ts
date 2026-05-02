@@ -605,7 +605,17 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
   if (!auth.currentUser) return () => {};
   const q = query(collection(db, 'customers'), where('ownerId', '==', auth.currentUser.uid));
   return onSnapshot(q, (snapshot) => {
-    const customers = snapshot.docs.map(doc => doc.data() as Customer);
+    const customers = snapshot.docs.map(doc => {
+      const data = doc.data() as Customer;
+      // Virtually suspend invalid mobiles so they are hidden from automated workflows in UI
+      if (data.status !== 'Suspended') {
+        const cleanMobile = data.mobileNumber ? data.mobileNumber.replace(/\D/g, '') : '';
+        if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
+          data.status = 'Suspended';
+        }
+      }
+      return data;
+    });
     callback(customers);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'customers');
@@ -834,10 +844,17 @@ export const archiveComplaint = async (complaintId: string) => {
   }
 };
 
+export interface ChatbotCommand {
+  id: string;
+  buttonLabel: string;
+  triggerWord: string;
+  response: string;
+  isActive: boolean;
+}
+
 export interface ChatbotSettings {
   isActive: boolean;
-  apiKey: string;
-  knowledgeBase: string;
+  commands: ChatbotCommand[];
 }
 
 export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {

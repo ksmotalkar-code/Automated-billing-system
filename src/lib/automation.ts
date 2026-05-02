@@ -77,9 +77,7 @@ export const sendWhatsAppNotification = async (
     return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
   }
 
-  if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
-    whatsappService.updateConfig(settings.metaWhatsAppApiKey, settings.metaWhatsAppPhoneNumberId);
-  }
+  whatsappService.updateConfig(settings.metaWhatsAppApiKey || null, settings.metaWhatsAppPhoneNumberId || null, settings.cunnektApiKey || null);
   
   let finalMessage = message;
   let usePortalLink = false;
@@ -337,9 +335,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
 };
 
 export const shareReportToCustomers = async (report: Report, customers: Customer[], settings: AppSettings) => {
-  if (settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
-    whatsappService.updateConfig(settings.metaWhatsAppApiKey, settings.metaWhatsAppPhoneNumberId);
-  }
+  whatsappService.updateConfig(settings.metaWhatsAppApiKey || null, settings.metaWhatsAppPhoneNumberId || null, settings.cunnektApiKey || null);
 
   let blob: Blob | undefined = undefined;
   let attachmentName: string | undefined = undefined;

@@ -176,9 +176,9 @@ export function CustomersView() {
     const unsub = subscribeToCustomers(setCustomers);
     const unsubSettings = subscribeToSettings((s) => {
       setSettings(s);
-      if (s?.metaWhatsAppApiKey && s?.metaWhatsAppPhoneNumberId) {
+      if (s) {
         import("../services/whatsappService").then(({ whatsappService }) => {
-          whatsappService.updateConfig(s.metaWhatsAppApiKey!, s.metaWhatsAppPhoneNumberId!);
+          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.cunnektApiKey || null);
         });
       }
     });
@@ -205,7 +205,8 @@ export function CustomersView() {
     e.preventDefault();
     
     let finalStatus = newCustomer.status;
-    if (!newCustomer.mobileNumber || !/^\d{10}$/.test(newCustomer.mobileNumber.replace(/\D/g, ''))) {
+    const cleanMobileNew = newCustomer.mobileNumber ? newCustomer.mobileNumber.replace(/\D/g, '') : '';
+    if (!cleanMobileNew || cleanMobileNew.length < 10 || cleanMobileNew === '0000000000') {
       if (newCustomer.mobileNumber && newCustomer.mobileNumber.length > 0 && !/^\d{10}$/.test(newCustomer.mobileNumber)) {
         showAlert("Validation Error", "Mobile number must be exactly 10 digits if provided.");
         return;
@@ -232,7 +233,8 @@ export function CustomersView() {
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCustomer) {
-      const isMobileInvalid = !editingCustomer.mobileNumber || editingCustomer.mobileNumber.replace(/\D/g, '').length < 10;
+      const cleanMobileUpdate = editingCustomer.mobileNumber ? editingCustomer.mobileNumber.replace(/\D/g, '') : '';
+      const isMobileInvalid = !cleanMobileUpdate || cleanMobileUpdate.length < 10 || cleanMobileUpdate === '0000000000';
       const isNameInvalid = !editingCustomer.name || typeof editingCustomer.name !== 'string' || editingCustomer.name.trim() === '';
 
       let finalStatus = editingCustomer.status;
@@ -290,6 +292,10 @@ export function CustomersView() {
 
   const handleRenotify = async (customer: Customer) => {
     if (!settings) return;
+    if (customer.status === 'Suspended') {
+      showAlert("Cannot Send", "This customer is suspended.");
+      return;
+    }
     const message = `Your payment details for your water bill have been confirmed. Thank you for your payment.`;
     await sendWhatsAppNotification(customer, message, settings);
     showAlert("Success", "Notification resent successfully.");
@@ -389,6 +395,11 @@ export function CustomersView() {
   const handleSendIndividualNotify = async () => {
     if (!individualNotifyCustomer || !notifyMessage.trim() || !settings) return;
     
+    if (individualNotifyCustomer.status === 'Suspended') {
+      showAlert("Cannot Send", "This customer is suspended. Please make them active first to send messages.");
+      return;
+    }
+
     setIsSendingNotify(true);
     try {
       const message = notifyMessage;

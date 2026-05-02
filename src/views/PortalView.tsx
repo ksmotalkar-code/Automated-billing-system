@@ -12,6 +12,7 @@ export function PortalView() {
   const [chatHistory, setChatHistory] = useState<{ role: string, content: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [commands, setCommands] = useState<any[]>([]);
   const chatBodyRef = useRef<HTMLDivElement>(null);
   
   const { t } = useTranslation();
@@ -31,7 +32,21 @@ export function PortalView() {
           setError("Portal Link not found or expired.");
         } else {
           setPortalData(data);
-          addBotMessage(`नमस्ते! 🙏 I'm your Panchayat Waterworks AI assistant for ${data.customerName}.\n\nWhat can I help you with today?`, true);
+          
+          const res = await fetch(`/api/portal-chat/init/${portalId}`);
+          if (res.ok) {
+            const initData = await res.json();
+            if (initData.commands) {
+               setCommands(initData.commands);
+            }
+            if (initData.history && initData.history.length > 0) {
+               setChatHistory(initData.history);
+            } else {
+               addBotMessage(`नमस्ते! 🙏 I'm your Panchayat Waterworks AI assistant for ${data.customerName}.\n\nWhat can I help you with today?`, true);
+            }
+          } else {
+            addBotMessage(`नमस्ते! 🙏 I'm your Panchayat Waterworks AI assistant for ${data.customerName}.\n\nWhat can I help you with today?`, true);
+          }
         }
       } catch (err: any) {
         setError(err.message || "Failed to load portal.");
@@ -68,12 +83,13 @@ export function PortalView() {
     setChatLoading(true);
 
     try {
-      const response = await fetch(`/api/portal-chat/${portalData.ownerId}`, {
+      const response = await fetch(`/api/portal-chat/${portalId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: text,
-          history: newHistory.filter(m => m.role !== 'system').slice(-10) // Send recent context
+          customerId: portalData.customerId,
+          ownerId: portalData.ownerId
         })
       });
       const data = await response.json();
@@ -141,18 +157,14 @@ export function PortalView() {
           <hr className="border-black/5" />
           <div>
             <h3 className="text-[11px] font-semibold uppercase tracking-[1px] text-[#64748b] mb-2.5">Quick Actions</h3>
-            <button onClick={() => handleSendMessage('How do I check my water bill?')} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
-               <span>📄</span> Check My Bill
-            </button>
-            <button onClick={() => handleSendMessage('How do I pay my water bill?')} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
-               <span>💳</span> Pay My Bill
-            </button>
-            <button onClick={() => handleSendMessage('How to apply for new water connection?')} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
-               <span>🔌</span> New Connection
-            </button>
-            <button onClick={() => handleSendMessage('I want to report a pipe leakage complaint')} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
-               <span>🛠️</span> File a Complaint
-            </button>
+            {commands.map((cmd, idx) => (
+              <button key={idx} onClick={() => handleSendMessage(cmd.buttonLabel)} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
+                 <span>🔘</span> {cmd.buttonLabel}
+              </button>
+            ))}
+            {commands.length === 0 && (
+              <p className="text-xs text-neutral-400">No quick buttons defined.</p>
+            )}
           </div>
         </div>
 
@@ -185,7 +197,7 @@ export function PortalView() {
                   </div>
                   {msg.role === 'assistant' && i === chatHistory.length - 1 && !chatLoading && (
                     <div className="mt-1.5 inline-flex items-center gap-1 bg-[#0d9488]/10 border border-[#0d9488]/20 px-2.5 py-0.5 rounded-full text-[10.5px] text-[#0d9488] font-medium">
-                      ✓ Generated from database
+                      ✓ Automated Reply
                     </div>
                   )}
                 </div>
@@ -227,7 +239,7 @@ export function PortalView() {
               </button>
             </div>
             <p className="text-center text-[10.5px] text-[#64748b] mt-3 hidden md:block">
-              🔒 Powered by OpenRouter AI. Answers are generated securely based on your Panchayat's configured database.
+              🔒 Answers are generated automatically based on your Panchayat's configured rules.
             </p>
           </div>
 
