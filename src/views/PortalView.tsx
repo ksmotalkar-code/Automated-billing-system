@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { getPortalData, PublicPortalData } from '../lib/portal';
 import { motion } from 'motion/react';
-import { Droplet, Send, Loader2 } from 'lucide-react';
+import { Droplet, Send, Loader2, Upload } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 export function PortalView() {
@@ -9,13 +9,52 @@ export function PortalView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
-  const [chatHistory, setChatHistory] = useState<{ role: string, content: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: string, content: string, attachments?: any[] }[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [commands, setCommands] = useState<any[]>([]);
   const chatBodyRef = useRef<HTMLDivElement>(null);
-  
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation();
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    if (!file.type.startsWith('image/')) {
+       addBotMessage("Please upload a valid image screenshot of your online payment.");
+       return;
+    }
+    
+    if (file.size > 5 * 1024 * 1024) {
+       addBotMessage("Image too large. Maximum size is 5MB.");
+       return;
+    }
+    
+    setChatLoading(true);
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      try {
+        const base64Image = reader.result as string;
+        
+        // Show user they uploaded an image
+        setChatHistory(prev => [...prev, { role: 'user', content: '[Payment Screenshot Uploaded]', attachments: [{ type: 'image', data: base64Image }] }]);
+        
+        // Submit receipt API via portal.ts doesn't exist yet? Wait, we have submitPaymentReceipt in /src/lib/portal.ts?
+        // Let's import submitPaymentReceipt from '../lib/portal' just to be sure.
+        const { submitPaymentReceipt } = await import('../lib/portal');
+        await submitPaymentReceipt(portalData!, base64Image);
+        
+        addBotMessage("Thank you! Your payment screenshot has been uploaded and sent to the waterworks department for verification.");
+      } catch (err) {
+        addBotMessage("Failed to upload screenshot. Please try again.");
+      } finally {
+        setChatLoading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const portalId = new URLSearchParams(window.location.search).get('portal');
 
@@ -56,8 +95,8 @@ export function PortalView() {
     fetchPortal();
   }, [portalId]);
 
-  const addBotMessage = (text: string, isInitial = false) => {
-    setChatHistory(prev => [...prev, { role: 'assistant', content: text }]);
+  const addBotMessage = (text: string, isInitial = false, attachments?: any[]) => {
+    setChatHistory(prev => [...prev, { role: 'assistant', content: text, attachments }]);
     setTimeout(() => {
       if (chatBodyRef.current) {
         chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
@@ -96,7 +135,7 @@ export function PortalView() {
       if (data.error) {
         addBotMessage(`❌ Output Error: ${data.error}`);
       } else {
-        addBotMessage(data.reply);
+        addBotMessage(data.reply, false, data.attachments);
       }
     } catch (err: any) {
       addBotMessage(`❌ Connection failed. Please try again.`);
@@ -194,6 +233,20 @@ export function PortalView() {
                       : 'bg-[#f0f7ff] text-[#1a1a2e] border-blue-100 rounded-bl-[4px]'
                   }`}>
                     {msg.content}
+                    
+                    {/* Render Attachments */}
+                    {msg.attachments?.map((att, attIdx) => (
+                      <div key={attIdx} className="mt-2">
+                        {att.type === 'image' && (
+                          <img src={att.data} alt="Attachment" className="max-w-full rounded-lg border border-white/20" />
+                        )}
+                        {att.type === 'file' && (
+                          <a href={att.data} download={att.name || "download"} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded text-sm underline">
+                            📄 Download {att.name || "File"}
+                          </a>
+                        )}
+                      </div>
+                    ))}
                   </div>
                   {msg.role === 'assistant' && i === chatHistory.length - 1 && !chatLoading && (
                     <div className="mt-1.5 inline-flex items-center gap-1 bg-[#0d9488]/10 border border-[#0d9488]/20 px-2.5 py-0.5 rounded-full text-[10.5px] text-[#0d9488] font-medium">
@@ -216,7 +269,7 @@ export function PortalView() {
           </div>
 
           <div className="flex-shrink-0 p-4 md:p-5 bg-white border-t border-black/5">
-            <div className="flex items-end gap-2 bg-[#f8f6f0] border-2 border-black/[0.06] focus-within:border-blue-400 p-1.5 rounded-2xl transition-all">
+            <div className="flex items-end gap-2 bg-[#f8f6f0] border-2 border-black/[0.06] focus-within:border-blue-400 p-1.5 rounded-2xl transition-all relative">
               <textarea
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
@@ -227,9 +280,23 @@ export function PortalView() {
                   }
                 }}
                 className="flex-1 bg-transparent border-none outline-none resize-none p-2.5 text-[14px] min-h-[44px] max-h-[120px] rounded-xl"
-                placeholder="Ask anything about water bills, connections, complaints..."
+                placeholder="Ask anything about water bills... or tap icon for screenshot"
                 rows={1}
               />
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="w-[44px] h-[44px] shrink-0 bg-[#e2e8f0] text-[#64748b] rounded-xl flex items-center justify-center hover:bg-[#cbd5e1] hover:text-[#0f172a] transition mb-0.5"
+                title="Upload Payment Screenshot"
+              >
+                <Upload className="w-5 h-5" />
+              </button>
               <button 
                 onClick={() => handleSendMessage()}
                 disabled={!chatInput.trim() || chatLoading}

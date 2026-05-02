@@ -17,12 +17,39 @@ export function ChatbotView() {
   useEffect(() => {
     const fetchSettings = async () => {
       const data = await getChatbotSettings();
-      if (data) {
-        setSettings({
-          isActive: data.isActive || false,
-          commands: data.commands || []
-        });
+      const defaultSystemCommands: ChatbotCommand[] = [
+        { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
+        { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
+        { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
+        { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
+        { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
+        { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
+        { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
+        { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
+        { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "You can contact the Panchayat office at 1800-123-4567.", isActive: true },
+        { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in the portal dashboard.", isActive: true },
+        { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Your usage history is currently being computed.", isActive: true },
+        { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
+      ];
+
+      let mergedCommands = [];
+      if (data && data.commands) {
+        mergedCommands = [...data.commands];
       }
+      
+      // Inject missing system commands so the user sees all ~12 default UI actions
+      for (const sys of defaultSystemCommands) {
+         if (!mergedCommands.find(c => c.triggerWord === sys.triggerWord)) {
+            mergedCommands.push(sys);
+         }
+      }
+
+      const isActive = data ? (data.isActive || false) : false;
+
+      setSettings({
+        isActive,
+        commands: mergedCommands
+      });
       setLoading(false);
     };
     fetchSettings();
@@ -123,8 +150,9 @@ export function ChatbotView() {
                             value={cmd.triggerWord} 
                             onChange={(e) => handleUpdateCommand(cmd.id, { triggerWord: e.target.value })}
                             className="w-full p-2.5 neu-pressed rounded-lg outline-none text-sm font-medium"
-                            placeholder="e.g., pay"
+                            placeholder="e.g., pay, bill, /regex/i"
                           />
+                          <p className="text-[10px] text-neutral-400 mt-1">Split multiple with commas. Use /regex/ for regex.</p>
                         </div>
                       </div>
                       
@@ -154,7 +182,7 @@ export function ChatbotView() {
                         className="w-full h-24 p-2.5 neu-pressed rounded-lg outline-none text-sm resize-none"
                         placeholder="The exact reply you want the bot to send..."
                       />
-                      <p className="text-[10px] text-neutral-400 mt-1">Variables supported: {'{{name}}'}, {'{{balance}}'}</p>
+                      <p className="text-[10px] text-neutral-400 mt-1">Variables supported: {'{{name}}'}, {'{{balance}}'}, {'{{mobileNumber}}'}, {'{{status}}'}, {'{{dueDate}}'}</p>
                     </div>
                   </div>
                 ))

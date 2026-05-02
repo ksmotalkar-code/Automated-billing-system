@@ -1,3 +1,4 @@
+import { PDFDocument, rgb } from 'pdf-lib';
 import express from "express";
 import path from "path";
 import cors from "cors";
@@ -93,6 +94,136 @@ interface AppSettings {
   }
 
   // Database helpers to support both Admin SDK and Client SDK fallback
+  function testChatbotCommand(msgBody: string, triggerWord: string, btnBase?: string): boolean {
+     const msgLower = msgBody.toLowerCase().trim();
+     if (!triggerWord && !btnBase) return false;
+     
+     if (btnBase && msgLower === btnBase.toLowerCase().trim()) return true;
+     if (!triggerWord) return false;
+
+     if (triggerWord.startsWith('/') && triggerWord.endsWith('/')) {
+         try {
+             const regex = new RegExp(triggerWord.slice(1, -1), 'i');
+             return regex.test(msgBody);
+         } catch (e) {
+             console.warn("Invalid regex in chatbot trigger:", triggerWord);
+         }
+     }
+
+     const triggers = triggerWord.split(',').map(t => t.trim().toLowerCase()).filter(t => t);
+     for (const t of triggers) {
+         if (msgLower.includes(t)) return true;
+     }
+
+     return false;
+  }
+
+  function processDynamicResponse(response: string, userCustData: any): string {
+     let r = response || '';
+     r = r.replace(/{{name}}/gi, userCustData.name || 'Customer');
+     r = r.replace(/{{balance}}/gi, (userCustData.balance || 0).toString());
+     r = r.replace(/{{mobileNumber}}/gi, userCustData.mobileNumber || 'N/A');
+     r = r.replace(/{{status}}/gi, userCustData.status || 'Active');
+     r = r.replace(/{{dueDate}}/gi, userCustData.dueDate || 'N/A');
+     return r;
+  }
+
+  async function generateInvoicePdf(name: string, balance: number): Promise<string> {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([600, 400]);
+    page.drawText(`INVOICE / BILL DETAILS`, { x: 50, y: 350, size: 20 });
+    page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
+    page.drawText(`Outstanding Balance: Rs. ${balance}`, { x: 50, y: 270, size: 14, color: rgb(0.8, 0.1, 0.1) });
+    page.drawText(`Date: ${new Date().toLocaleDateString()}`, { x: 50, y: 240, size: 12 });
+    page.drawText(`Thank you for using Panchayat Waterworks.`, { x: 50, y: 150, size: 12 });
+    return await pdfDoc.saveAsBase64({ dataUri: true });
+  }
+
+  async function routeSystemIntent(msgLower: string, custData: any, ownerId: string, adminSettings: any, baseText: string = "") {
+    let replyText = baseText;
+    let matched = false;
+    let attachments: any[] = [];
+    
+    if (msgLower === "system_dl_bill" || msgLower.includes("download bill")) {
+       const amt = custData.balance || 0;
+       replyText = replyText || `Here is your invoice. Your outstanding balance is Rs. ${amt}.`;
+       try {
+          const b64Pdf = await generateInvoicePdf(custData.name || 'Customer', amt);
+          attachments.push({ type: 'file', name: 'Invoice.pdf', data: b64Pdf });
+       } catch(e) {}
+       matched = true;
+    } else if (msgLower === "system_qr_pay" || msgLower.includes("qr for pay")) {
+       replyText = replyText || "Scan the attached UPI QR code to pay your bill.";
+       if (adminSettings?.upiQrCodeImage) {
+           attachments.push({ type: 'image', data: adminSettings.upiQrCodeImage });
+       } else {
+           replyText = "Sorry, no UPI QR code has been set by the administration yet.";
+       }
+       matched = true;
+    } else if (msgLower === "system_bill" || msgLower.includes("see my bill")) {
+       const amt = custData.balance || 0;
+       replyText = replyText || `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}.`;
+       matched = true;
+    } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("balance")) {
+       replyText = replyText || `You have a total remaining balance of Rs. ${custData.balance || 0}.`;
+       matched = true;
+    } else if (msgLower === "system_complaint" || msgLower.includes("register complaint")) {
+       replyText = replyText || `Please enter your complaint directly here starting with the word "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
+       matched = true;
+    } else if (msgLower === "system_report" || msgLower.includes("deep detail report") || msgLower === "report") {
+       let hasReport = false;
+       let reportName = "";
+       let reportFiles: any[] = [];
+       const dbInstance = admin.apps.length ? admin.firestore() : null;
+       if (dbInstance) {
+         const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
+         if (!reportsSnap.empty) {
+           hasReport = true;
+           reportName = reportsSnap.docs[0].data().title;
+           reportFiles = reportsSnap.docs[0].data().files || [];
+         }
+       } else {
+         const reportsSnap = await getDocsClient(queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId)));
+         if (!reportsSnap.empty) {
+           hasReport = true;
+           reportName = reportsSnap.docs[0].data().title;
+           reportFiles = reportsSnap.docs[0].data().files || [];
+         }
+       }
+       if (hasReport) {
+         replyText = replyText || `A deep detail report "${reportName}" is available for you!`;
+         if (reportFiles.length > 0) {
+           replyText += ` I have attached the report files for you to download below.`;
+           attachments = reportFiles.map(f => ({ type: 'file', name: f.name, data: f.data }));
+         } else {
+           replyText += ` You can view it securely from the reports section of this portal.`;
+         }
+       } else {
+         replyText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
+       }
+       matched = true;
+    } else if (msgLower === "system_water_quality" || msgLower.includes("water quality")) {
+       replyText = replyText || "Our water quality currently meets all regulatory standards. Safe for drinking!";
+       matched = true;
+    } else if (msgLower === "system_supply_time" || msgLower.includes("supply timing")) {
+       replyText = replyText || "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.";
+       matched = true;
+    } else if (msgLower === "system_contact" || msgLower.includes("contact us")) {
+       replyText = replyText || "You can contact the Panchayat office at 1800-123-4567.";
+       matched = true;
+    } else if (msgLower === "system_notify" || msgLower.includes("notify history") || msgLower.includes("notification")) {
+       replyText = replyText || "Your recent notifications are available in the portal dashboard.";
+       matched = true;
+    } else if (msgLower === "system_usage" || msgLower.includes("usage history")) {
+       replyText = replyText || "Check the portal dashboard for your usage history.";
+       matched = true;
+    } else if (msgLower === "system_maintenance" || msgLower.includes("maintenance alert")) {
+       replyText = replyText || "There are no scheduled maintenance activities affecting your connection at the moment.";
+       matched = true;
+    }
+    return { matched, replyText, attachments };
+  }
+
   async function getSettings(ownerId: string) {
     if (admin.apps.length) {
       const doc = await admin.firestore().collection("settings").doc(ownerId).get();
@@ -738,28 +869,44 @@ async function startServer() {
       if (dbInstance) {
          const chatHistoryRef = dbInstance.collection("customers").doc(customerId).collection("chat_history").orderBy("timestamp", "asc").limit(20);
          const chatSnap = await chatHistoryRef.get();
-         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content }));
+         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content, attachments: d.data().attachments }));
       } else {
          const chatHistoryRef = queryClient(collectionClient(clientDb, "customers", customerId, "chat_history")); // Simplified without sorting due to index needs
          const chatSnap = await getDocsClient(chatHistoryRef);
-         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content, timestamp: d.data().timestamp || '' }));
+         history = chatSnap.docs.map(d => ({ role: d.data().role, content: d.data().content, timestamp: d.data().timestamp || '', attachments: d.data().attachments }));
          history.sort((a, b) => {
             if (!a.timestamp) return -1;
             if (!b.timestamp) return 1;
             if (a.timestamp.seconds) return a.timestamp.seconds - b.timestamp.seconds;
             return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
          });
-         history = history.map(h => ({ role: h.role, content: h.content }));
+         history = history.map(h => ({ role: h.role, content: h.content, attachments: h.attachments }));
       }
 
       const systemCommands = [
-        { buttonLabel: "📄 See My Bill", triggerWord: "system_bill", isActive: true },
-        { buttonLabel: "💰 View Balance & Pay", triggerWord: "system_balance", isActive: true },
-        { buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", isActive: true },
-        { buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", isActive: true }
+        { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
+        { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
+        { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
+        { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
+        { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
+        { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
+        { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
+        { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
+        { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "Contact the Panchayat office at 1800-123-4567.", isActive: true },
+        { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in your portal dashboard.", isActive: true },
+        { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Check the portal dashboard for your usage history.", isActive: true },
+        { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
       ];
 
-      res.json({ commands: [...systemCommands, ...commands.filter((c: any) => c.isActive)], history });
+      // Merge systemCommands into user commands if not present
+      const activeCommands = [...commands];
+      for (const sys of systemCommands) {
+        if (!activeCommands.find((c: any) => c.triggerWord === sys.triggerWord)) {
+          if (sys.isActive) activeCommands.push(sys);
+        }
+      }
+
+      res.json({ commands: activeCommands.filter((c: any) => c.isActive), history });
     } catch(err: any) {
       console.error(err);
       res.status(500).json({ error: "Internal Server Error" });
@@ -793,6 +940,7 @@ async function startServer() {
       let replyText = "I'm sorry, I don't understand that command. Please select from the available options or contact the office.";
       const msgLower = message.toLowerCase().trim();
       let matched = false;
+      let attachments: any[] = [];
 
       // Also fetch customer for variables
       let custData: any = {};
@@ -812,39 +960,11 @@ async function startServer() {
           }
       }
 
-      // Check system commands first
-      if (msgLower === "system_bill" || msgLower.includes("see my bill")) {
-         const amt = custData.balance || 0;
-         replyText = `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}. You can download your PDF bill by visiting the dashboard and clicking on the bill details.`;
-         matched = true;
-      } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("money remain")) {
-         replyText = `You have a total remaining balance of Rs. ${custData.balance || 0}. If you wish to pay, you can use the UPI QR code available on the main page.`;
-         matched = true;
-      } else if (msgLower === "system_complaint" || msgLower.includes("register complaint")) {
-         replyText = `Please enter your complaint directly here starting with the word "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
-         matched = true;
-      } else if (msgLower === "system_report" || msgLower.includes("deep detail report")) {
-         // Check if any report is available
-         let hasReport = false;
-         let reportName = "";
-         if (dbInstance) {
-           const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
-           if (!reportsSnap.empty) {
-             hasReport = true;
-             reportName = reportsSnap.docs[0].data().title;
-           }
-         } else {
-           const reportsSnap = await getDocsClient(queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId)));
-           if (!reportsSnap.empty) {
-             hasReport = true;
-             reportName = reportsSnap.docs[0].data().title;
-           }
-         }
-         if (hasReport) {
-           replyText = `A deep detail report "${reportName}" is available for you! You can view and download it securely from the reports section of this portal.`;
-         } else {
-           replyText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
-         }
+      const adminSettings = await getSettings(ownerId);
+      const intentRes = await routeSystemIntent(msgLower, custData, ownerId, adminSettings);
+      if (intentRes.matched) {
+         replyText = intentRes.replyText;
+         attachments = intentRes.attachments;
          matched = true;
       } else if (msgLower.startsWith("complaint:")) {
          const complaintText = message.substring(10).trim();
@@ -873,10 +993,14 @@ async function startServer() {
       if (!matched) {
         for (const cmd of chatbotSettings.commands || []) {
            if (!cmd.isActive) continue;
-           const trigger = (cmd.triggerWord || '').toLowerCase().trim();
-           const btnBase = (cmd.buttonLabel || '').toLowerCase().trim();
-           if ((trigger && msgLower.includes(trigger)) || (btnBase && msgLower === btnBase)) {
-              replyText = cmd.response;
+           if (testChatbotCommand(message, cmd.triggerWord, cmd.buttonLabel)) {
+              replyText = cmd.response || '';
+              // Also process it for generic attachments via intent helper
+              const sysIntentRes = await routeSystemIntent(cmd.triggerWord, custData, ownerId, adminSettings, replyText);
+              if (sysIntentRes.matched && sysIntentRes.attachments.length > 0) {
+                 replyText = sysIntentRes.replyText;
+                 attachments = sysIntentRes.attachments;
+              }
               matched = true;
               break;
            }
@@ -884,19 +1008,19 @@ async function startServer() {
       }
 
       // Replace variables
-      replyText = replyText.replace(/{{name}}/gi, custData.name || 'Customer');
-      replyText = replyText.replace(/{{balance}}/gi, custData.balance || '0');
+      replyText = processDynamicResponse(replyText, custData);
 
       // Save bot reply
       if (dbInstance) {
          await dbInstance.collection("customers").doc(customerId).collection("chat_history").add({
            role: 'assistant',
            content: replyText,
+           attachments: attachments.length > 0 ? attachments : null,
            timestamp: admin.firestore.FieldValue.serverTimestamp()
          });
       }
 
-      return res.json({ reply: replyText });
+      return res.json({ reply: replyText, attachments: attachments.length > 0 ? attachments : undefined });
 
     } catch (err: any) {
       console.error("[Webhook] Portal AI error:", err);
@@ -985,47 +1109,12 @@ async function startServer() {
                      const msgLower = msgBody.toLowerCase().trim();
 
                      // System commands mapped directly
-                     if (msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
-                        const amt = matchedCustomer.balance || 0;
-                        const responseText = `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}. You can download your PDF bill by visiting your portal dashboard.`;
-                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
-                        handled = true;
-                     } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("money remain") || msgLower === "balance") {
-                        const responseText = `You have a total remaining balance of Rs. ${matchedCustomer.balance || 0}. If you wish to pay, you can use the UPI QR code available on the main page of your portal.`;
-                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
-                        handled = true;
-                     } else if (msgLower === "system_complaint" || msgLower.includes("register complaint") || msgLower === "complaint") {
-                        const responseText = `Please reply with your complaint directly by starting with "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
-                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
-                        handled = true;
-                     } else if (msgLower === "system_report" || msgLower.includes("deep detail report") || msgLower === "report") {
-                        let hasReport = false;
-                        let reportName = "";
-                        if (dbInstance) {
-                          const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
-                          if (!reportsSnap.empty) {
-                            hasReport = true;
-                            reportName = reportsSnap.docs[0].data().title;
-                          }
-                        } else {
-                          const reportsSnap = await getDocsClient(queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId)));
-                          if (!reportsSnap.empty) {
-                            hasReport = true;
-                            reportName = reportsSnap.docs[0].data().title;
-                          }
-                        }
-                        let responseText = "";
-                        if (hasReport) {
-                          responseText = `A deep detail report "${reportName}" is available for you! You can view and download it securely from the reports section of your portal.`;
-                        } else {
-                          responseText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
-                        }
-                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
-                        handled = true;
+                     const intentRes = await routeSystemIntent(msgLower, matchedCustomer, ownerId, settings);
+                     if (intentRes.matched) {
+                          const responseText = intentRes.replyText;
+                          await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                          if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
+                          handled = true;
                      } else if (msgLower.startsWith("complaint:")) {
                         const complaintText = msgBody.substring(10).trim();
                         let responseText = "";
@@ -1057,16 +1146,17 @@ async function startServer() {
                      
                      if (!handled && chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
                        for (const cmd of chatbotSettings.commands) {
-                         const trigger = (cmd.triggerWord || '').toLowerCase().trim();
-                         if (cmd.isActive && trigger && msgLower.includes(trigger)) {
-                           console.log(`[Webhook] Matched chatbot command: ${trigger} for ${matchedCustomer.name}`);
-                           if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
-                             try {
-                                let responseText = cmd.response || '';
-                                responseText = responseText.replace(/{{name}}/gi, matchedCustomer.name);
-                                responseText = responseText.replace(/{{balance}}/gi, (matchedCustomer.balance || 0).toString());
-                                
-                                await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                          if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
+                            console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
+                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+                              try {
+                                 let responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
+                                 const sysIntentRes = await routeSystemIntent(cmd.triggerWord, matchedCustomer, ownerId, settings, responseText);
+                                 if (sysIntentRes.matched && sysIntentRes.attachments.length > 0) {
+                                     responseText = sysIntentRes.replyText;
+                                 }
+                                 
+                                 await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
                                 
                                 const dbInstance = admin.apps.length ? admin.firestore() : null;
                                 if (dbInstance) {

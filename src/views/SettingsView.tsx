@@ -777,7 +777,7 @@ export function SettingsView() {
                     ))}
                     <button
                       onClick={() => {
-                         const newCmd = { id: uuidv4(), triggerWord: '', response: '', isActive: true };
+                         const newCmd = { id: uuidv4(), buttonLabel: '', triggerWord: '', response: '', isActive: true };
                          setSettings({ ...settings, chatbotCommands: [...(settings.chatbotCommands || []), newCmd] });
                       }}
                       className="w-full py-3 border-2 border-dashed border-[var(--shadow-dark)] text-[var(--text-muted)] hover:text-emerald-500 hover:border-emerald-500 rounded-xl flex items-center justify-center gap-2 font-bold transition-all text-sm"
