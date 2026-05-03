@@ -631,19 +631,31 @@ async function startServer() {
        if (settings.automation.scheduledBilling && (shouldTriggerBilling || (specificOwnerId && !settings.lastBillingDate?.includes(todayStr)))) {
           console.log(`[Automation] Billing cycle triggered for ${ownerId}`);
           
-          const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
+          // Optimization: Only fetch and update customers who haven't been billed in this specific cycle yet
+          const custRef = db.collection('customers')
+            .where('ownerId', '==', ownerId)
+            .where('status', '==', 'Active');
+          
           const customersSnap = await custRef.get();
           
           if (!customersSnap.empty) {
             let batch = db.batch();
             let count = 0;
+            let updatedCustomerIds: string[] = [];
             
             for (const cDoc of customersSnap.docs) {
                const customer = cDoc.data();
+               
+               // SKIP if already billed in the last 24 hours to save quota
+               if (customer.lastBilledDate && customer.lastBilledDate.includes(todayStr)) {
+                 continue;
+               }
+
                const cleanMobile = customer.mobileNumber ? customer.mobileNumber.replace(/\D/g, '') : '';
                if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
-                 continue; // treated as virtually suspended
+                 continue;
                }
+               
                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
                
                batch.update(cDoc.ref, {
@@ -652,6 +664,8 @@ async function startServer() {
                   paymentNotified: false,
                   lastBilledDate: istTime.toISOString()
                });
+               
+               updatedCustomerIds.push(cDoc.id);
                count++;
                if (count === 400) {
                  await batch.commit();
@@ -663,15 +677,12 @@ async function startServer() {
               await batch.commit();
             }
 
-            // Send Automated WhatsApp Bill (after DB updates)
-            if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications) {
+            console.log(`[Automation] Billed ${updatedCustomerIds.length} customers for ${ownerId}`);
+
+            // Send Automated WhatsApp Bill (only for the ones we actually updated in this run)
+            if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications && updatedCustomerIds.length > 0) {
               for (const cDoc of customersSnap.docs) {
-                const customer = cDoc.data();
-                const cleanMobile = customer.mobileNumber ? customer.mobileNumber.replace(/\D/g, '') : '';
-                if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
-                  continue;
-                }
-                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+                if (!updatedCustomerIds.includes(cDoc.id)) continue;
 
                 let mediaBase64: string | undefined = undefined;
                 let mediaName = 'Invoice.pdf';
