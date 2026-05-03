@@ -225,6 +225,12 @@ export function CustomersView() {
       setIsAddModalOpen(false);
       setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
       setCurrentPage(1);
+    } catch (err: any) {
+      if (err.message && err.message.includes('Quota')) {
+        showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
+      } else {
+        showAlert("Error", err.message || "Failed to add customer. Check database quota.");
+      }
     } finally {
       setIsSavingUser(false);
     }
@@ -262,6 +268,12 @@ export function CustomersView() {
 
         setIsEditModalOpen(false);
         setEditingCustomer(null);
+      } catch (err: any) {
+        if (err.message && err.message.includes('Quota')) {
+          showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
+        } else {
+          showAlert("Error", err.message || "Failed to update customer. Check database quota.");
+        }
       } finally {
         setIsSavingUser(false);
       }
@@ -278,14 +290,18 @@ export function CustomersView() {
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        await updateCustomer({...customer, status: newStatus});
-        if (settings && settings.automation) {
-           let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
-           if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
-           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify isolate error:", err));
+        try {
+          await updateCustomer({...customer, status: newStatus});
+          if (settings && settings.automation) {
+             let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
+             if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
+             sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify isolate error:", err));
+          }
+          setIsEditModalOpen(false);
+          setEditingCustomer(null);
+        } catch (err: any) {
+          showAlert("Error", "Failed to change status. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
         }
-        setIsEditModalOpen(false);
-        setEditingCustomer(null);
       }
     });
   };
@@ -332,8 +348,12 @@ export function CustomersView() {
       isDestructive: true,
       showCancel: true,
       onConfirm: async () => {
-        await deleteCustomersBatch(selectedIds);
-        setSelectedIds([]);
+        try {
+          await deleteCustomersBatch(selectedIds);
+          setSelectedIds([]);
+        } catch (err: any) {
+          showAlert("Error", "Failed to delete customers. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+        }
       }
     });
   };
@@ -346,10 +366,14 @@ export function CustomersView() {
       isDestructive: true,
       showCancel: true,
       onConfirm: async () => {
-        await deleteCustomer(id);
-        setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
-        setIsEditModalOpen(false);
-        setEditingCustomer(null);
+        try {
+          await deleteCustomer(id);
+          setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+          setIsEditModalOpen(false);
+          setEditingCustomer(null);
+        } catch (err: any) {
+          showAlert("Error", "Failed to delete customer. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+        }
       }
     });
   };
@@ -807,11 +831,18 @@ export function CustomersView() {
                     <td className="px-4 py-4">{customer.name}</td>
                     <td className="px-4 py-4">{customer.mobileNumber}</td>
                     <td className="px-4 py-4">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
                         customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
                       }`}>
                         {customer.status}
+                        {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
                       </span>
+                      {customer.status === 'Faulty' && (
+                        <div className="text-[10px] text-red-500 font-bold mt-1 max-w-[120px] leading-tight flex items-start gap-1">
+                          <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                          <span>Data conflict. Click row to edit & fix.</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
                     <td className="px-4 py-4 text-right">
@@ -895,12 +926,19 @@ export function CustomersView() {
                         <p className="text-[10px] neu-text-muted font-mono mt-0.5 opacity-70">{customer.id}</p>
                       </div>
                    </div>
-                   <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex-shrink-0 ${
+                   <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex items-center gap-1 flex-shrink-0 ${
                      customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
                    }`}>
                      {customer.status}
+                     {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
                    </span>
                 </div>
+                {customer.status === 'Faulty' && (
+                  <div className="text-[11px] text-red-500 font-bold mt-1 bg-red-50 px-3 py-1.5 rounded-lg flex items-start gap-1">
+                    <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                    <span>Data conflict detected during import or duplicate check. Please click to edit and correct data.</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-end mt-1 pl-8">
                   <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
                   <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>

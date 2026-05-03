@@ -9,7 +9,7 @@ import { createPortalLink } from './portal';
 // ...
 
 export const generateInvoicePDF = (customer: Customer, settings: AppSettings) => {
-  const doc = new jsPDF();
+  const doc = new jsPDF({ compress: true });
   
   // Header
   doc.setFontSize(22);
@@ -102,43 +102,7 @@ export const sendWhatsAppNotification = async (
     } catch (e) {
       console.warn("Failed to generate portal link", e);
     }
-  }
-
-  // 1. Try WhatsApp Web Method
-  if (settings.preferredNotificationMethod === 'whatsapp_web') {
-    try {
-      let mediaBase64: string | undefined = undefined;
-      if (attachment) {
-        mediaBase64 = await new Promise((resolve, reject) => {
-           const reader = new FileReader();
-           reader.onloadend = () => resolve(reader.result as string);
-           reader.onerror = reject;
-           reader.readAsDataURL(attachment);
-        });
-      }
-      
-      const res = await fetch('/api/wweb/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: customer.mobileNumber,
-          message: finalMessage,
-          mediaBase64,
-          mediaName: attachmentName
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        return { success: true };
-      } else {
-        console.error("WhatsApp Web sending error, attempting fallback...", data.error);
-        // Do NOT return here, let it flow to other methods
-      }
-    } catch (e: any) {
-      console.error("WhatsApp Web connection failed, attempting fallback...", e);
-      // Do NOT return here, let it flow to other methods
-    }
-  }
+   }
   
   // 2. Try automated API if configured
   if (whatsappService.isConfigured()) {
@@ -380,7 +344,7 @@ export const shareReportToCustomers = async (report: Report, customers: Customer
 };
 
 export const generateEscalationPDF = (customer: Customer, settings: AppSettings) => {
-  const doc = new jsPDF();
+  const doc = new jsPDF({ compress: true });
   
   // Header
   doc.setFontSize(26);

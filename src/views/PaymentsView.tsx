@@ -161,7 +161,8 @@ export function PaymentsView() {
       });
 
       setIsPaymentModalOpen(false);
-      showAlert("Payment Confirmed", `Payment of ${formatCurrency(amount)} confirmed successfully!`);
+      const paymentStatusText = updatedCustomer.balance === 0 ? "fully paid, account in good standing" : `active with remaining balance of ${formatCurrency(updatedCustomer.balance)}`;
+      showAlert("Payment Confirmed", `Payment of ${formatCurrency(amount)} confirmed successfully! The customer's balance has been updated and their status is potentially adjusted to reflect their ${paymentStatusText}.`);
 
       // Automatically send invoice or receipt if enabled
       if (settings.automation?.smartNotifications) {

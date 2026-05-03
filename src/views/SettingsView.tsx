@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy } from "lucide-react";
 import { motion } from "motion/react";
 import { subscribeToSettings, saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand } from "../lib/db";
 import { useTranslation } from "react-i18next";
-import { Trash2, LogOut, MessageCircle, Loader2 } from "lucide-react";
+import { Trash2, LogOut, MessageCircle, Loader2, X } from "lucide-react";
 import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
+import { getLogs, clearLogs, LogEntry } from '../lib/logger';
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -35,6 +36,9 @@ export function SettingsView() {
   });
 
   const [isTestLoading, setIsTestLoading] = useState(false);
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [logsList, setLogsList] = useState<LogEntry[]>([]);
+  const [logsPage, setLogsPage] = useState(1);
   const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
   const isAdmin = auth.currentUser?.email === 'ksmotalkar@gmail.com';
   const [newProvider, setNewProvider] = useState<Partial<WhatsAppProvider>>({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
@@ -1088,6 +1092,15 @@ export function SettingsView() {
                 {isResetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                 {isResetting ? "Resetting..." : "Reset All Workspace Data"}
               </motion.button>
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => { setLogsList(getLogs()); setLogsPage(1); setShowLogsModal(true); }}
+                className="px-6 py-3 bg-slate-200 text-slate-700 rounded-xl text-sm font-bold hover:bg-slate-300 flex items-center justify-center gap-2 w-full sm:w-auto transition-colors"
+              >
+                <FileCode className="w-4 h-4" />
+                Show App Logs
+              </motion.button>
               <p className="text-xs neu-text-muted flex-1 min-w-[200px] mt-2 sm:mt-0">
                 Warning: Resetting will permanently delete ALL customers, settings, and transactions across the system. Ensure you have backups.
               </p>
@@ -1299,6 +1312,87 @@ export function SettingsView() {
                 Cancel Broadcast
               </button>
             </div>
+          </motion.div>
+        </div>
+      )}
+      
+      {/* Logs Modal */}
+      {showLogsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="neu-panel bg-[#f8f9fa] w-full max-w-4xl max-h-[90vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl relative"
+          >
+            <div className="flex justify-between items-center p-6 border-b border-[#e1e3eb] bg-white text-[#1e1e2d]">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-indigo-500" /> Application Logs
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                     const logsText = logsList.map(l => `[${new Date(l.timestamp).toISOString()}] ${l.level.toUpperCase()}: ${l.message}`).join('\n');
+                     navigator.clipboard.writeText(logsText);
+                     showAlert('Copied', 'Logs copied to clipboard.');
+                  }}
+                  className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-full transition-colors"
+                  title="Copy Logs"
+                >
+                  <Copy className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => { clearLogs(); setLogsList([]); }}
+                  className="p-2 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-full transition-colors"
+                  title="Clear Logs"
+                >
+                  <Trash2 className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={() => setShowLogsModal(false)}
+                  className="p-2 hover:bg-slate-100 text-slate-500 rounded-full transition-colors"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-900 text-slate-300 font-mono text-xs">
+              {logsList.length === 0 ? (
+                 <div className="text-center p-8 opacity-50">No logs captured yet.</div>
+              ) : (
+                 <div className="flex flex-col gap-1">
+                   {logsList.slice((logsPage - 1) * 50, logsPage * 50).map((log, i) => (
+                     <div key={i} className={`py-1 border-b border-slate-800 ${log.level === 'error' ? 'text-rose-400' : log.level === 'warn' ? 'text-amber-400' : 'text-slate-300'}`}>
+                       <span className="opacity-50 select-none">[{new Date(log.timestamp).toLocaleTimeString()}]</span> 
+                       <span className="font-bold ml-2 w-12 inline-block select-none">{log.level.toUpperCase()}</span>
+                       <span className="ml-2 break-all">{log.message}</span>
+                     </div>
+                   ))}
+                 </div>
+              )}
+            </div>
+            
+            {logsList.length > 50 && (
+              <div className="flex justify-between items-center p-4 border-t border-[#e1e3eb] bg-slate-100/50">
+                <button
+                  onClick={() => setLogsPage(p => Math.max(1, p - 1))}
+                  disabled={logsPage === 1}
+                  className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-bold shadow-sm disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-slate-500 font-medium tracking-tight">
+                  Page {logsPage} of {Math.ceil(logsList.length / 50)}
+                </span>
+                <button
+                  onClick={() => setLogsPage(p => Math.min(Math.ceil(logsList.length / 50), p + 1))}
+                  disabled={logsPage === Math.ceil(logsList.length / 50)}
+                  className="px-4 py-2 bg-white border border-slate-300 rounded-lg text-sm font-bold shadow-sm disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </motion.div>
         </div>
       )}

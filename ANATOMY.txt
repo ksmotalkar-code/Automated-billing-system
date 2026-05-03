@@ -1,0 +1,39 @@
+# Project Anatomy
+
+This document explains the basic structure of the application.
+
+## 1. Root Files
+- `package.json`: Main dependencies and scripts. Run `npm run dev` to start locally.
+- `server.ts`: The Express backend entry file. Handles API routes and serves the React frontend via Vite in dev / static files in production.
+- `vite.config.ts`: Configuration for Vite (frontend bundler).
+- `Dockerfile` & `render.yaml`: Configuration files to easily host on cloud providers like Render, Vercel, or Heroku via Docker.
+
+## 2. Source Code (`/src`)
+- `main.tsx`: The React entry point.
+- `App.tsx`: Main layout which includes routing (sidebar + main content area).
+- `index.css`: Global styles including TailwindCSS.
+
+### 2.1 `/src/views`
+This folder contains the different web pages (UI tabs):
+- `DashboardView.tsx`: Overview, summary metrics, and latest receipts.
+- `CustomersView.tsx`: Adding, editing, and listing customers.
+- `PaymentsView.tsx`: Taking payments and managing receipts.
+- `BillingView.tsx`: Generating water bills / meter readings.
+- `AlertsView.tsx` & `ReportsView.tsx`: Notification history, exports, escalations.
+- `SettingsView.tsx`: Application configurations, backup/reset area.
+
+### 2.2 `/src/lib`
+This folder contains business logic and utilities:
+- `db.ts`: All Firebase logic, database schemas, API helpers.
+- `automation.ts`: Logic for batch tasks like generating invoices, auto-alerts.
+- `logger.ts`: The local logger system that caches application logs.
+- `portal.ts`: Helpers for reading customer portals/receipts externally.
+
+### 2.3 `/src/services`
+- `whatsappService.ts` / `geminiService.ts`: Third-party integration APIs.
+
+---
+### To modify something without breaking the app:
+1. Always test changes locally using `npm run dev`.
+2. Don't remove imports from `App.tsx` unless you've removed the functionality from the views.
+3. Be careful adding huge dependencies to `package.json` to keep frontend size small.

@@ -29,7 +29,11 @@ export function ComplaintsView() {
       message: c.status === 'Resolved' ? "Are you sure you want to permanently delete this resolved complaint?" : "Are you sure you want to delete this pending complaint?",
       isDestructive: true,
       onConfirm: async () => {
-        await deleteComplaint(c.id);
+        try {
+          await deleteComplaint(c.id);
+        } catch(e) {
+          // ignore or handle
+        }
       }
     });
   };
@@ -43,8 +47,12 @@ export function ComplaintsView() {
       message: `Are you sure you want to permanently delete all ${resolved.length} resolved complaints?`,
       isDestructive: true,
       onConfirm: async () => {
-        for (const c of resolved) {
-          await deleteComplaint(c.id);
+        try {
+          for (const c of resolved) {
+            await deleteComplaint(c.id);
+          }
+        } catch(e) {
+          // ignore or handle
         }
       }
     });
@@ -146,7 +154,13 @@ export function ComplaintsView() {
                   {c.status === 'Pending' ? (
                     <div className="flex justify-end pt-1">
                       <button 
-                        onClick={() => resolveComplaint(c.id)}
+                        onClick={async () => {
+                          try {
+                            await resolveComplaint(c.id);
+                          } catch (e: any) {
+                            alert("Failed to resolve. " + (e.message?.includes('Quota') ? "Quota exceeded." : ""));
+                          }
+                        }}
                         className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5"
                       >
                          <CheckCircle className="w-4 h-4" /> Mark as Resolved

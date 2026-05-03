@@ -603,18 +603,21 @@ async function startServer() {
        const istTime = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
        const istHour = istTime.getHours();
        
+       // Optimization: Use a shared standard font set if we process many customers
+       const StandardFonts = require('pdf-lib').StandardFonts;
+
        if (settings.automation.enforceIstTimeWindow && !specificOwnerId) {
-          if (istHour < 9 || istHour >= 10) {
+          if (istHour < 9 || istHour >= 18) { // Expanded window for general automation check
              console.log(`[Automation] Skipping user ${ownerId} due to IST time window constraint (Current IST Hour: ${istHour})`);
              continue;
           }
        }
        
        let shouldTriggerBilling = false;
+       const todayStr = istTime.toISOString().split('T')[0]; // YYYY-MM-DD in IST
+
        if (settings.nextBillingDate) {
-           const nextStr = settings.nextBillingDate; // YYYY-MM-DD
-           const todayStr = istTime.toISOString().split('T')[0]; // YYYY-MM-DD in IST
-           if (todayStr >= nextStr) {
+           if (todayStr >= settings.nextBillingDate) {
                shouldTriggerBilling = true;
            }
        } else {
@@ -625,7 +628,7 @@ async function startServer() {
        }
        
        // Handle Billing Cycle
-       if (settings.automation.scheduledBilling && (shouldTriggerBilling || specificOwnerId)) {
+       if (settings.automation.scheduledBilling && (shouldTriggerBilling || (specificOwnerId && !settings.lastBillingDate?.includes(todayStr)))) {
           console.log(`[Automation] Billing cycle triggered for ${ownerId}`);
           
           const custRef = db.collection('customers').where('ownerId', '==', ownerId).where('status', '==', 'Active');
@@ -646,7 +649,8 @@ async function startServer() {
                batch.update(cDoc.ref, {
                   balance: newBalance,
                   invoiceSent: false,
-                  paymentNotified: false
+                  paymentNotified: false,
+                  lastBilledDate: istTime.toISOString()
                });
                count++;
                if (count === 400) {
@@ -665,12 +669,71 @@ async function startServer() {
                 const customer = cDoc.data();
                 const cleanMobile = customer.mobileNumber ? customer.mobileNumber.replace(/\D/g, '') : '';
                 if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
-                  continue; // treated as virtually suspended
+                  continue;
                 }
                 const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
+
+                let mediaBase64: string | undefined = undefined;
+                let mediaName = 'Invoice.pdf';
+                if (newBalance > 0) {
+                  try {
+                    const pdfDoc = await PDFDocument.create();
+                    const page = pdfDoc.addPage([595.28, 841.89]); // A4
+                    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+                    const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+                    
+                    page.drawText('SMART BILLING INVOICE', { x: 200, y: 800, size: 18, font: boldFont, color: rgb(0.1, 0.4, 0.8) });
+                    page.drawText(`Invoice Date: ${new Date().toLocaleDateString()}`, { x: 220, y: 780, size: 10, font });
+                    
+                    page.drawText('BILL TO:', { x: 50, y: 730, size: 12, font: boldFont });
+                    page.drawText(customer.name, { x: 50, y: 715, size: 12, font });
+                    page.drawText(`ID: ${customer.id || 'N/A'}`, { x: 50, y: 700, size: 12, font });
+                    page.drawText(`Mobile: ${customer.mobileNumber || 'N/A'}`, { x: 50, y: 685, size: 12, font });
+                    
+                    page.drawText(`Billing Cycle: ${settings.billingCycleMonths || 1} Months`, { x: 50, y: 640, size: 12, font });
+                    page.drawText(`Current Bill: Rs. ${(settings.billingAmount || 0).toFixed(2)}`, { x: 50, y: 620, size: 12, font });
+                    page.drawText(`Previous Outstanding: Rs. ${(customer.balance || 0).toFixed(2)}`, { x: 50, y: 600, size: 12, font });
+                    
+                    page.drawText('TOTAL PAYABLE:', { x: 50, y: 560, size: 14, font: boldFont });
+                    page.drawText(`Rs. ${newBalance.toFixed(2)}`, { x: 200, y: 560, size: 14, font: boldFont, color: rgb(0.8, 0.1, 0.1) });
+                    
+                    // Embed QR Code if available
+                    if (settings.upiQrCodeImage) {
+                      try {
+                        const qrData = settings.upiQrCodeImage.split(',')[1] || settings.upiQrCodeImage;
+                        const qrBytes = Buffer.from(qrData, 'base64');
+                        let qrImage;
+                        if (settings.upiQrCodeImage.includes('image/png')) {
+                          qrImage = await pdfDoc.embedPng(qrBytes);
+                        } else {
+                          qrImage = await pdfDoc.embedJpg(qrBytes);
+                        }
+                        
+                        page.drawText('SCAN TO PAY VIA UPI:', { x: 220, y: 350, size: 12, font: boldFont });
+                        page.drawImage(qrImage, {
+                          x: 220,
+                          y: 180,
+                          width: 150,
+                          height: 150,
+                        });
+                        page.drawText('Secure Payment Guarantee', { x: 240, y: 160, size: 8, font, color: rgb(0.5, 0.5, 0.5) });
+                      } catch (qrErr) {
+                        console.error("[Automation] QR Embedding failed:", qrErr);
+                      }
+                    } else {
+                        page.drawText('Payment Method: Please use UPI or Cash at Panchayat Office.', { x: 50, y: 400, size: 10, font });
+                    }
+                    
+                    const pdfBytes = await pdfDoc.save();
+                    mediaBase64 = Buffer.from(pdfBytes).toString('base64');
+                  } catch (e: any) {
+                    console.error(`[Automation] Failed to generate PDF for ${customer.name}: ${e.message}`);
+                  }
+                }
+
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
-                  await sendWhatsAppMessage(settings, customer.mobileNumber, message);
+                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName);
                 } catch (e: any) {
                   console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
                 }
@@ -678,13 +741,53 @@ async function startServer() {
             }
           }
           
-          let updatePayload: any = { lastBillingDate: new Date().toISOString() };
+          let updatePayload: any = { lastBillingDate: istTime.toISOString() };
           if (settings.nextBillingDate) {
               const nd = new Date(settings.nextBillingDate);
-              nd.setMonth(nd.getMonth() + 1);
+              nd.setMonth(nd.getMonth() + (settings.billingCycleMonths || 1));
               updatePayload.nextBillingDate = nd.toISOString().split('T')[0];
           }
           await doc.ref.update(updatePayload);
+       }
+
+       // Handle Automated Penalty
+       if (settings.automation.lateFee && settings.lastBillingDate) {
+          const lastBilling = new Date(settings.lastBillingDate);
+          const daysSinceBilling = Math.floor((istTime.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24));
+          
+          const lastPenaltyDate = settings.lastPenaltyDate ? new Date(settings.lastPenaltyDate) : null;
+          const isSameMonthPenalty = lastPenaltyDate && lastPenaltyDate.getMonth() === istTime.getMonth() && lastPenaltyDate.getFullYear() === istTime.getFullYear();
+
+          if (daysSinceBilling >= (settings.penaltyDays || 10) && !isSameMonthPenalty) {
+             console.log(`[Automation] Applying late fee penalties for ${ownerId}`);
+             
+             const overdueRef = db.collection('customers')
+                .where('ownerId', '==', ownerId)
+                .where('status', '==', 'Active')
+                .where('balance', '>', 0);
+             
+             const overdueSnap = await overdueRef.get();
+             if (!overdueSnap.empty) {
+                let batch = db.batch();
+                let count = 0;
+                for (const cDoc of overdueSnap.docs) {
+                   const customer = cDoc.data();
+                   batch.update(cDoc.ref, {
+                      balance: (customer.balance || 0) + (settings.penaltyAmount || 0)
+                   });
+                   count++;
+                   if (count === 400) {
+                      await batch.commit();
+                      batch = db.batch();
+                      count = 0;
+                   }
+                }
+                if (count > 0) await batch.commit();
+                
+                await doc.ref.update({ lastPenaltyDate: istTime.toISOString() });
+                console.log(`[Automation] Late fee applied to ${overdueSnap.size} customers for ${ownerId}`);
+             }
+          }
        }
      }
   }
@@ -787,7 +890,7 @@ async function startServer() {
            settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
          }
       }
-      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey && settings?.preferredNotificationMethod !== 'whatsapp_web') {
+      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey) {
         return res.status(400).json({ error: "WhatsApp API not configured" });
       }
 
