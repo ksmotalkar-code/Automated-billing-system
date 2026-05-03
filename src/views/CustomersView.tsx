@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Customer, subscribeToCustomers, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, deleteAllCustomers, subscribeToSettings, AppSettings } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -11,6 +11,182 @@ import * as XLSX from 'xlsx';
 import { v4 as uuidv4 } from "uuid";
 import { db, auth } from "../firebase";
 import { writeBatch, doc } from "firebase/firestore";
+
+const CustomerTableRow = React.memo(({ 
+  customer, 
+  index, 
+  isSelected, 
+  onToggleSelect, 
+  onRowClick, 
+  onShareLink, 
+  onMessage, 
+  formatCurrency 
+}: { 
+  customer: Customer; 
+  index: number; 
+  isSelected: boolean; 
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onRowClick: (c: Customer) => void;
+  onShareLink: (e: React.MouseEvent, c: Customer) => void;
+  onMessage: (e: React.MouseEvent, c: Customer) => void;
+  formatCurrency: (amount: number) => string;
+}) => {
+  return (
+    <motion.tr 
+      key={customer.id}
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index * 0.01, 0.5) }}
+      whileHover={{ x: 5, backgroundColor: "rgba(255, 255, 255, 0.05)" }}
+      onClick={() => onRowClick(customer)}
+      className="border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors cursor-pointer"
+    >
+      <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
+          <input 
+            type="checkbox"
+            checked={isSelected}
+            onChange={(e) => onToggleSelect(customer.id, e.target.checked)}
+            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+          />
+        </td>
+        <td className="px-4 py-4 font-medium">{customer.id}</td>
+      <td className="px-4 py-4">{customer.name}</td>
+      <td className="px-4 py-4">{customer.mobileNumber}</td>
+      <td className="px-4 py-4">
+        <span className={`px-2 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
+          customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+        }`}>
+          {customer.status}
+          {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
+        </span>
+        {customer.status === 'Faulty' && (
+          <div className="text-[10px] text-red-500 font-bold mt-1 max-w-[120px] leading-tight flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+            <span>Data conflict. Click row to edit & fix.</span>
+          </div>
+        )}
+      </td>
+      <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
+      <td className="px-4 py-4 text-right">
+        <div className="flex justify-end items-center gap-1">
+          <button 
+            className="p-1 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors"
+            onClick={(e) => onShareLink(e, customer)}
+            title="Generate & Share Link"
+          >
+            <LinkIcon className="w-4 h-4" />
+          </button>
+          <button 
+            className="p-1 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+            onClick={(e) => onMessage(e, customer)}
+            title="Message Customer"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+          <button 
+            className="p-1 hover:bg-black/10 rounded-lg transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRowClick(customer);
+            }}
+          >
+            <MoreVertical className="w-4 h-4 neu-text-muted" />
+          </button>
+        </div>
+      </td>
+    </motion.tr>
+  );
+});
+
+const CustomerMobileCard = React.memo(({ 
+  customer, 
+  index, 
+  isSelected, 
+  onToggleSelect, 
+  onRowClick, 
+  onShareLink, 
+  onMessage, 
+  formatCurrency,
+  t 
+}: { 
+  customer: Customer; 
+  index: number; 
+  isSelected: boolean; 
+  onToggleSelect: (id: string, checked: boolean) => void;
+  onRowClick: (c: Customer) => void;
+  onShareLink: (e: React.MouseEvent, c: Customer) => void;
+  onMessage: (e: React.MouseEvent, c: Customer) => void;
+  formatCurrency: (amount: number) => string;
+  t: any;
+}) => {
+  return (
+    <motion.div
+      key={customer.id}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: Math.min(index * 0.05, 0.5) }}
+      onClick={() => onRowClick(customer)}
+      className="neu-flat p-4 flex flex-col gap-3 relative cursor-pointer border border-[var(--shadow-dark)]"
+    >
+      <div className="flex justify-between items-start">
+         <div className="flex gap-4">
+            <div className="pt-0.5">
+              <input 
+                type="checkbox"
+                checked={isSelected}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => onToggleSelect(customer.id, e.target.checked)}
+                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <h4 className="font-bold text-base leading-tight tracking-tight">{customer.name}</h4>
+              <p className="text-[10px] neu-text-muted font-mono mt-0.5 opacity-70">{customer.id}</p>
+            </div>
+         </div>
+         <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex items-center gap-1 flex-shrink-0 ${
+           customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+         }`}>
+           {customer.status}
+           {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
+         </span>
+      </div>
+      {customer.status === 'Faulty' && (
+        <div className="text-[11px] text-red-500 font-bold mt-1 bg-red-50 px-3 py-1.5 rounded-lg flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          <span>Data conflict detected. Click to edit and correct.</span>
+        </div>
+      )}
+      <div className="flex justify-between items-end mt-1 pl-8">
+        <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
+        <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
+      </div>
+      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)] overflow-x-auto pb-1">
+         <motion.button
+           whileTap={{ scale: 0.95 }}
+           onClick={(e) => onShareLink(e, customer)}
+           className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+         >
+           <LinkIcon className="w-3.5 h-3.5" /> Link
+         </motion.button>
+         <motion.button
+           whileTap={{ scale: 0.95 }}
+           onClick={(e) => onMessage(e, customer)}
+           className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+         >
+           <Send className="w-3.5 h-3.5" /> Message
+         </motion.button>
+         <motion.button
+           whileTap={{ scale: 0.95 }}
+           onClick={() => onRowClick(customer)}
+           className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold flex items-center gap-2"
+         >
+           <MoreVertical className="w-3.5 h-3.5" /> Details
+         </motion.button>
+      </div>
+    </motion.div>
+  );
+});
 
 export function CustomersView() {
   const { t } = useTranslation();
@@ -24,6 +200,7 @@ export function CustomersView() {
   const [notifyMessage, setNotifyMessage] = useState("");
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
+  const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -35,6 +212,39 @@ export function CustomersView() {
   const [customAttachment, setCustomAttachment] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const broadcastFileInputRef = useRef<HTMLInputElement>(null);
+
+  const filteredCustomers = useMemo(() => {
+    const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
+    return customers.filter(c => {
+      const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
+      const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
+      
+      if (showFaultyOnly) {
+        return matchesSearch && c.status === 'Faulty';
+      } else {
+        return matchesSearch && c.status !== 'Faulty';
+      }
+    });
+  }, [customers, searchQuery, showFaultyOnly]);
+
+  const sortedCustomers = useMemo(() => {
+    return [...filteredCustomers].sort((a, b) => {
+      // Always prioritize Faulty status
+      if (a.status === 'Faulty' && b.status !== 'Faulty') return -1;
+      if (a.status !== 'Faulty' && b.status === 'Faulty') return 1;
+
+      if (!sortConfig) {
+        if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
+        if (a.createdAt) return -1;
+        if (b.createdAt) return 1;
+        return 0;
+      }
+      const { key, direction } = sortConfig;
+      if (a[key]! < b[key]!) return direction === 'asc' ? -1 : 1;
+      if (a[key]! > b[key]!) return direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredCustomers, sortConfig]);
 
   const handleExport = () => {
     const worksheet = XLSX.utils.json_to_sheet(customers.map(c => ({
@@ -389,14 +599,22 @@ export function CustomersView() {
       alert("Settings not loaded yet.");
       return;
     }
+    
+    // Open modal immediately to provide instant feedback
+    setIndividualNotifyCustomer(customer);
+    setNotifyMessage(`Hi ${customer.name},\nGenerating your secure portal link...`);
+    setIsIndividualNotifyOpen(true);
+    setIsGeneratingLink(true);
+
     try {
       const link = await createPortalLink(customer, settings);
       const text = `Hi ${customer.name},\nHere is your secure portal link to view your invoice, generate QR and pay online:\n\n${link}\n\nThank you!`;
-      setIndividualNotifyCustomer(customer);
       setNotifyMessage(text);
-      setIsIndividualNotifyOpen(true);
     } catch(err: any) {
-      alert("Error generating link: " + String(err));
+      console.error("Error generating link:", err);
+      setNotifyMessage(`Hi ${customer.name},\n(Error generating link: ${err.message})`);
+    } finally {
+      setIsGeneratingLink(false);
     }
   };
 
@@ -600,40 +818,11 @@ export function CustomersView() {
     =============================== */
   };
 
-  const filteredCustomers = customers.filter(c => {
-    const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
-    const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
-    const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
-    
-    if (showFaultyOnly) {
-      return matchesSearch && c.status === 'Faulty';
-    } else {
-      return matchesSearch && c.status !== 'Faulty';
-    }
-  });
-
-  const sortedCustomers = [...filteredCustomers].sort((a, b) => {
-    // Always prioritize Faulty status
-    if (a.status === 'Faulty' && b.status !== 'Faulty') return -1;
-    if (a.status !== 'Faulty' && b.status === 'Faulty') return 1;
-
-    if (!sortConfig) {
-      if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
-      if (a.createdAt) return -1;
-      if (b.createdAt) return 1;
-      return 0;
-    }
-    const { key, direction } = sortConfig;
-    if (a[key]! < b[key]!) return direction === 'asc' ? -1 : 1;
-    if (a[key]! > b[key]!) return direction === 'asc' ? 1 : -1;
-    return 0;
-  });
-
   const totalPages = Math.ceil(sortedCustomers.length / itemsPerPage);
-  const paginatedCustomers = sortedCustomers.slice(
+  const paginatedCustomers = useMemo(() => sortedCustomers.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
-  );
+  ), [sortedCustomers, currentPage, itemsPerPage]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -804,75 +993,20 @@ export function CustomersView() {
               </thead>
               <tbody>
                 {paginatedCustomers.map((customer, i) => (
-                  <motion.tr 
+                  <CustomerTableRow 
                     key={customer.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.01 }}
-                    whileHover={{ x: 5, backgroundColor: "rgba(255, 255, 255, 0.05)" }}
-                    onClick={() => handleRowClick(customer)}
-                    className="border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors cursor-pointer"
-                  >
-                    <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
-                        <input 
-                          type="checkbox"
-                          checked={selectedIds.includes(customer.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedIds([...selectedIds, customer.id]);
-                            } else {
-                              setSelectedIds(selectedIds.filter(id => id !== customer.id));
-                            }
-                          }}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-4 py-4 font-medium">{customer.id}</td>
-                    <td className="px-4 py-4">{customer.name}</td>
-                    <td className="px-4 py-4">{customer.mobileNumber}</td>
-                    <td className="px-4 py-4">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-                        customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {customer.status}
-                        {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
-                      </span>
-                      {customer.status === 'Faulty' && (
-                        <div className="text-[10px] text-red-500 font-bold mt-1 max-w-[120px] leading-tight flex items-start gap-1">
-                          <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-                          <span>Data conflict. Click row to edit & fix.</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
-                    <td className="px-4 py-4 text-right">
-                      <div className="flex justify-end items-center gap-1">
-                        <button 
-                          className="p-1 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors"
-                          onClick={(e) => handleShareLink(e, customer)}
-                          title="Generate & Share Link"
-                        >
-                          <LinkIcon className="w-4 h-4" />
-                        </button>
-                        <button 
-                          className="p-1 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
-                          onClick={(e) => handleOpenIndividualNotify(e, customer)}
-                          title="Message Customer"
-                        >
-                          <Send className="w-4 h-4" />
-                        </button>
-                        <button 
-                          className="p-1 hover:bg-black/10 rounded-lg transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRowClick(customer);
-                          }}
-                        >
-                          <MoreVertical className="w-4 h-4 neu-text-muted" />
-                        </button>
-                      </div>
-                    </td>
-                  </motion.tr>
+                    customer={customer}
+                    index={i}
+                    isSelected={selectedIds.includes(customer.id)}
+                    onToggleSelect={(id, checked) => {
+                      if (checked) setSelectedIds(prev => [...prev, id]);
+                      else setSelectedIds(prev => prev.filter(sid => sid !== id));
+                    }}
+                    onRowClick={handleRowClick}
+                    onShareLink={handleShareLink}
+                    onMessage={handleOpenIndividualNotify}
+                    formatCurrency={formatCurrency}
+                  />
                 ))}
                 {filteredCustomers.length === 0 && (
                   <tr>
@@ -899,74 +1033,21 @@ export function CustomersView() {
                <span className="text-xs font-bold uppercase neu-text-muted tracking-widest leading-none mt-0.5">Select All Visible</span>
             </div>
             {paginatedCustomers.map((customer, i) => (
-              <motion.div
+              <CustomerMobileCard
                 key={customer.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05 }}
-                onClick={() => handleRowClick(customer)}
-                className="neu-flat p-4 flex flex-col gap-3 relative cursor-pointer border border-[var(--shadow-dark)]"
-              >
-                <div className="flex justify-between items-start">
-                   <div className="flex gap-4">
-                      <div className="pt-0.5">
-                        <input 
-                          type="checkbox"
-                          checked={selectedIds.includes(customer.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            if (e.target.checked) setSelectedIds([...selectedIds, customer.id]);
-                            else setSelectedIds(selectedIds.filter(id => id !== customer.id));
-                          }}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-base leading-tight tracking-tight">{customer.name}</h4>
-                        <p className="text-[10px] neu-text-muted font-mono mt-0.5 opacity-70">{customer.id}</p>
-                      </div>
-                   </div>
-                   <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex items-center gap-1 flex-shrink-0 ${
-                     customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                   }`}>
-                     {customer.status}
-                     {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
-                   </span>
-                </div>
-                {customer.status === 'Faulty' && (
-                  <div className="text-[11px] text-red-500 font-bold mt-1 bg-red-50 px-3 py-1.5 rounded-lg flex items-start gap-1">
-                    <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                    <span>Data conflict detected during import or duplicate check. Please click to edit and correct data.</span>
-                  </div>
-                )}
-                <div className="flex justify-between items-end mt-1 pl-8">
-                  <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
-                  <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
-                </div>
-                <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)] overflow-x-auto pb-1">
-                   <motion.button
-                     whileTap={{ scale: 0.95 }}
-                     onClick={(e) => handleShareLink(e, customer)}
-                     className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
-                   >
-                     <LinkIcon className="w-3.5 h-3.5" /> Link
-                   </motion.button>
-                   <motion.button
-                     whileTap={{ scale: 0.95 }}
-                     onClick={(e) => handleOpenIndividualNotify(e, customer)}
-                     className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
-                   >
-                     <Send className="w-3.5 h-3.5" /> Message
-                   </motion.button>
-                   <motion.button
-                     whileTap={{ scale: 0.95 }}
-                     onClick={() => handleRowClick(customer)}
-                     className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold flex items-center gap-2"
-                   >
-                     <MoreVertical className="w-3.5 h-3.5" /> Details
-                   </motion.button>
-                </div>
-              </motion.div>
+                customer={customer}
+                index={i}
+                isSelected={selectedIds.includes(customer.id)}
+                onToggleSelect={(id, checked) => {
+                  if (checked) setSelectedIds(prev => [...prev, id]);
+                  else setSelectedIds(prev => prev.filter(sid => sid !== id));
+                }}
+                onRowClick={handleRowClick}
+                onShareLink={handleShareLink}
+                onMessage={handleOpenIndividualNotify}
+                formatCurrency={formatCurrency}
+                t={t}
+              />
             ))}
             {filteredCustomers.length === 0 && (
               <div className="py-8 text-center text-sm font-medium neu-text-muted">No customers found.</div>
@@ -1232,6 +1313,7 @@ export function CustomersView() {
                   <h3 className="text-xl font-bold">Message Customer</h3>
                   <p className="text-xs neu-text-muted">Sending to {individualNotifyCustomer.name}</p>
                 </div>
+                {isGeneratingLink && <Loader2 className="w-5 h-5 animate-spin text-blue-600" />}
                 <button 
                   onClick={() => setIsIndividualNotifyOpen(false)}
                   className="p-2 hover:bg-black/10 rounded-full transition-colors"
@@ -1265,8 +1347,9 @@ export function CustomersView() {
                   <textarea
                     value={notifyMessage}
                     onChange={e => setNotifyMessage(e.target.value)}
+                    disabled={isGeneratingLink}
                     placeholder="Type your message here..."
-                    className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2"
+                    className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2 disabled:opacity-50"
                   />
                   <div className="flex items-center gap-2">
                     <label className="flex items-center gap-2 px-3 py-2 cursor-pointer bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-bold">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
@@ -46,12 +46,25 @@ export function DashboardView() {
     };
   }, []);
 
-  const totalRevenue = transactions.reduce((sum, t) => sum + t.amount, 0);
-  const activeCustomers = customers.filter(c => c.status === 'Active').length;
-  const pendingInvoices = customers.filter(c => c.balance > 0 && c.balance <= 2000).length;
-  const pendingAmount = customers.filter(c => c.balance > 0 && c.balance <= 2000).reduce((sum, c) => sum + c.balance, 0);
-  const overdueAccounts = customers.filter(c => c.balance > 2000).length;
-  const pendingComplaints = complaints.filter(c => c.status === 'Pending');
+  const {
+    totalRevenue,
+    activeCustomersCount,
+    suspendedCustomersCount,
+    pendingInvoices,
+    pendingAmount,
+    overdueAccounts,
+    pendingComplaints
+  } = useMemo(() => {
+    return {
+      totalRevenue: transactions.reduce((sum, t) => sum + t.amount, 0),
+      activeCustomersCount: customers.filter(c => c.status === 'Active').length,
+      suspendedCustomersCount: customers.filter(c => c.status === 'Suspended').length,
+      pendingInvoices: customers.filter(c => c.status === 'Active' && c.balance > 0 && c.balance <= 2000).length,
+      pendingAmount: customers.filter(c => c.status === 'Active' && c.balance > 0 && c.balance <= 2000).reduce((sum, c) => sum + c.balance, 0),
+      overdueAccounts: customers.filter(c => c.status === 'Active' && c.balance > 2000).length,
+      pendingComplaints: complaints.filter(c => c.status === 'Pending')
+    };
+  }, [customers, transactions, complaints]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -61,27 +74,31 @@ export function DashboardView() {
     }).format(amount);
   };
 
-  // Generate chart data from transactions
-  const chartData = transactions.reduce((acc: any[], txn) => {
-    const date = new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const existing = acc.find(d => d.month === date);
-    if (existing) {
-      existing.revenue += txn.amount;
-      existing.expected += txn.amount; // Just for visual
-    } else {
-      acc.push({ month: date, revenue: txn.amount, expected: txn.amount + 500 });
-    }
-    return acc;
-  }, []).slice(-7);
+  const chartData = useMemo(() => {
+    return transactions.reduce((acc: any[], txn) => {
+      const date = new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const existing = acc.find(d => d.month === date);
+      if (existing) {
+        existing.revenue += txn.amount;
+        existing.expected += txn.amount; // Just for visual
+      } else {
+        acc.push({ month: date, revenue: txn.amount, expected: txn.amount + 500 });
+      }
+      return acc;
+    }, []).slice(-7);
+  }, [transactions]);
 
-  const displayData = chartData.length > 0 ? chartData : [];
+  const displayData = chartData;
 
-  const pieData = [
-    { name: 'Paid/Zero Balance', value: activeCustomers - pendingInvoices - overdueAccounts },
-    { name: 'Pending', value: pendingInvoices },
-    { name: 'Overdue', value: overdueAccounts }
-  ].filter(d => d.value > 0);
-  const pieColors = ['#10b981', '#f59e0b', '#ef4444'];
+  const pieData = useMemo(() => {
+    return [
+      { name: 'Paid (Active)', value: activeCustomersCount - pendingInvoices - overdueAccounts },
+      { name: 'Pending (Active)', value: pendingInvoices },
+      { name: 'Overdue (Active)', value: overdueAccounts },
+      { name: 'Suspended', value: suspendedCustomersCount }
+    ].filter(d => d.value > 0);
+  }, [activeCustomersCount, pendingInvoices, overdueAccounts, suspendedCustomersCount]);
+  const pieColors = ['#10b981', '#f59e0b', '#ef4444', '#94a3b8'];
 
   return (
     <motion.div 
@@ -155,8 +172,10 @@ export function DashboardView() {
               <Users className="h-4 w-4 text-blue-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter">{activeCustomers.toLocaleString('en-IN')}</div>
-              <p className="text-xs neu-text-muted font-medium mt-1">Out of {customers.length.toLocaleString('en-IN')} total</p>
+              <div className="text-3xl font-black tracking-tighter">{activeCustomersCount.toLocaleString('en-IN')}</div>
+              <p className="text-xs neu-text-muted font-medium mt-1">
+                {suspendedCustomersCount} {t('Suspended')} ({customers.length} total)
+              </p>
             </CardContent>
           </Card>
         </motion.div>

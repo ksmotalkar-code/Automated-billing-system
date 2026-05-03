@@ -72,6 +72,9 @@ export const sendWhatsAppNotification = async (
   isBulkMode?: boolean,
   includePortalLink: boolean = true
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
+  if (customer.status === 'Suspended') {
+    return { success: false, error: "Customer is suspended. Notifications are disabled for suspended accounts." };
+  }
   if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
     console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
     return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };

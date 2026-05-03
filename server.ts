@@ -1,4 +1,4 @@
-import { PDFDocument, rgb } from 'pdf-lib';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import express from "express";
 import path from "path";
 import cors from "cors";
@@ -658,12 +658,13 @@ async function startServer() {
                
                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
                
-               batch.update(cDoc.ref, {
-                  balance: newBalance,
-                  invoiceSent: false,
-                  paymentNotified: false,
-                  lastBilledDate: istTime.toISOString()
-               });
+                batch.update(cDoc.ref, {
+                   balance: newBalance,
+                   invoiceSent: false,
+                   paymentNotified: false,
+                   lastBilledDate: istTime.toISOString(),
+                   lastBillingNote: `Auto-${todayStr}`
+                });
                
                updatedCustomerIds.push(cDoc.id);
                count++;
@@ -683,6 +684,9 @@ async function startServer() {
             if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications && updatedCustomerIds.length > 0) {
               for (const cDoc of customersSnap.docs) {
                 if (!updatedCustomerIds.includes(cDoc.id)) continue;
+
+                const customer = cDoc.data();
+                const newBalance = (customer.balance || 0) + (settings.billingAmount || 0);
 
                 let mediaBase64: string | undefined = undefined;
                 let mediaName = 'Invoice.pdf';
