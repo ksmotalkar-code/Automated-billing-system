@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint, deleteComplaint } from "../lib/db";
+import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint, deleteComplaint, updateComplaint } from "../lib/db";
 import { motion } from "motion/react";
-import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search, Tag, Flag } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
@@ -60,7 +60,7 @@ export function ComplaintsView() {
 
   const filteredComplaints = complaints.filter(c => {
     const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
-    const searchStr = `${c.customerName || ''} ${c.customerId || ''} ${c.message || ''} ${c.id || ''}`.toLowerCase();
+    const searchStr = `${c.customerName || ''} ${c.customerId || ''} ${c.message || ''} ${c.id || ''} ${c.category || ''} ${c.priority || ''}`.toLowerCase();
     const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
     
     return (filter === 'All' || c.status === filter) && matchesSearch;
@@ -135,6 +135,32 @@ export function ComplaintsView() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 self-start sm:self-auto pl-12 sm:pl-0">
+                    <div className="flex flex-col items-end gap-1.5 mr-2">
+                      <select 
+                        value={c.category || ''} 
+                        onChange={(e) => updateComplaint(c.id, { category: e.target.value })}
+                        className="text-[10px] bg-slate-100 border-none rounded-md px-2 py-1 font-bold text-slate-600 focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer"
+                      >
+                        <option value="">No Category</option>
+                        <option value="Billing Issue">Billing Issue</option>
+                        <option value="Service Request">Service Request</option>
+                        <option value="Technical Problem">Technical Problem</option>
+                      </select>
+                      <select 
+                        value={c.priority || ''} 
+                        onChange={(e) => updateComplaint(c.id, { priority: e.target.value as any })}
+                        className={`text-[10px] border-none rounded-md px-2 py-1 font-bold focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer ${
+                          c.priority === 'High' ? 'bg-rose-100 text-rose-700' :
+                          c.priority === 'Medium' ? 'bg-amber-100 text-amber-700' :
+                          c.priority === 'Low' ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                        }`}
+                      >
+                        <option value="">Priority</option>
+                        <option value="Low">Low</option>
+                        <option value="Medium">Medium</option>
+                        <option value="High">High</option>
+                      </select>
+                    </div>
                     <span className={`px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${c.status === 'Resolved' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700 shadow-sm border border-amber-200/50'}`}>
                       {c.status === 'Resolved' ? <CheckCircle className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />}
                       {c.status}

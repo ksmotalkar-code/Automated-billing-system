@@ -92,6 +92,8 @@ export interface Complaint {
   customerName: string;
   message: string;
   status: 'Pending' | 'Resolved';
+  category?: 'Billing Issue' | 'Service Request' | 'Technical Problem' | string;
+  priority?: 'Low' | 'Medium' | 'High';
   createdAt: string;
   ownerId?: string;
   expiresAt?: string;
@@ -800,6 +802,15 @@ export const resolveComplaint = async (id: string) => {
       status: 'Resolved',
       expiresAt: expiresAt.toISOString()
     });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `complaints/${id}`);
+  }
+};
+
+export const updateComplaint = async (id: string, updates: Partial<Complaint>) => {
+  if (!auth.currentUser) return;
+  try {
+    await updateDoc(doc(db, 'complaints', id), updates);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `complaints/${id}`);
   }

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { getPortalData, PublicPortalData } from '../lib/portal';
 import { motion } from 'motion/react';
-import { Droplet, Send, Loader2, Upload } from 'lucide-react';
+import { Droplet, Send, Loader2, Upload, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
+import { Report } from '../lib/db';
 
 export function PortalView() {
   const [portalData, setPortalData] = useState<PublicPortalData | null>(null);
+  const [latestReport, setLatestReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -40,8 +44,7 @@ export function PortalView() {
         // Show user they uploaded an image
         setChatHistory(prev => [...prev, { role: 'user', content: '[Payment Screenshot Uploaded]', attachments: [{ type: 'image', data: base64Image }] }]);
         
-        // Submit receipt API via portal.ts doesn't exist yet? Wait, we have submitPaymentReceipt in /src/lib/portal.ts?
-        // Let's import submitPaymentReceipt from '../lib/portal' just to be sure.
+        // Submit receipt
         const { submitPaymentReceipt } = await import('../lib/portal');
         await submitPaymentReceipt(portalData!, base64Image);
         
@@ -72,6 +75,22 @@ export function PortalView() {
         } else {
           setPortalData(data);
           
+          // Fetch latest report for this owner
+          try {
+            const q = query(
+              collection(db, 'reports'),
+              where('ownerId', '==', data.ownerId),
+              orderBy('createdAt', 'desc'),
+              limit(1)
+            );
+            const reportSnap = await getDocs(q);
+            if (!reportSnap.empty) {
+              setLatestReport(reportSnap.docs[0].data() as Report);
+            }
+          } catch (reportErr) {
+            console.error("Failed to fetch reports:", reportErr);
+          }
+
           const res = await fetch(`/api/portal-chat/init/${portalId}`);
           if (res.ok) {
             const initData = await res.json();
@@ -102,6 +121,22 @@ export function PortalView() {
         chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
       }
     }, 60);
+  };
+
+  const handleDeepDetailReport = () => {
+    if (latestReport && latestReport.files && latestReport.files.length > 0) {
+      const file = latestReport.files[0];
+      // Open file in new tab
+      const win = window.open();
+      if (win) {
+        win.document.write(`<iframe src="${file.data}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+        win.document.title = file.name;
+      }
+    } else {
+      // Humble personalized message
+      const humbleMsg = `नमस्ते ${portalData?.customerName}, I understand you're looking for your Deep Detail Report. 🙏\n\nCurrently, our team is still refining the latest specific insights for your connection to ensure complete accuracy. We really value your patience while we get this ready for you! \n\nWe'll make sure it's available here as soon as it's finalized. Is there anything else I can help you with in the meantime?`;
+      addBotMessage(humbleMsg);
+    }
   };
 
   const handleSendMessage = async (customText?: string) => {
@@ -196,6 +231,12 @@ export function PortalView() {
           <hr className="border-black/5" />
           <div>
             <h3 className="text-[11px] font-semibold uppercase tracking-[1px] text-[#64748b] mb-2.5">Quick Actions</h3>
+            <button 
+              onClick={handleDeepDetailReport}
+              className="w-full mb-3 flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-[13px] bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-500/20 transition-all font-bold text-left"
+            >
+               <FileText className="w-4 h-4" /> Deep Detail Report
+            </button>
             {commands.map((cmd, idx) => (
               <button key={idx} onClick={() => handleSendMessage(cmd.buttonLabel)} className="w-full mb-1.5 flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] bg-transparent border border-black/5 hover:bg-[#f0f7ff] hover:text-[#1a56db] hover:border-blue-300 transition-colors text-left">
                  <span>🔘</span> {cmd.buttonLabel}
