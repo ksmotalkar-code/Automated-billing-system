@@ -309,8 +309,24 @@ export function PortalView() {
             )}
           </div>
 
-          <div className="flex-shrink-0 p-4 md:p-5 bg-white border-t border-black/5">
-            <div className="flex items-end gap-2 bg-[#f8f6f0] border-2 border-black/[0.06] focus-within:border-blue-400 p-1.5 rounded-2xl transition-all relative">
+          <div className="flex-shrink-0 bg-white border-t border-black/5 flex flex-col">
+            {/* Mobile Quick Actions */}
+            <div className="md:hidden w-full overflow-x-auto flex gap-2 px-3 py-2.5 border-b border-black/5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+               <button 
+                onClick={handleDeepDetailReport}
+                className="inline-flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12px] bg-blue-600 text-white shadow-sm font-medium active:scale-95 transition-transform"
+              >
+                 <FileText className="w-3.5 h-3.5" /> Deep Detail Report
+              </button>
+              {commands.map((cmd, idx) => (
+                <button key={idx} onClick={() => handleSendMessage(cmd.buttonLabel)} className="inline-flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12px] bg-[#f0f7ff] border border-blue-100 text-[#1a56db] font-medium transition-transform active:scale-95 active:bg-blue-100">
+                   {cmd.buttonLabel}
+                </button>
+              ))}
+            </div>
+
+            <div className="p-3 md:p-5">
+              <div className="flex items-end gap-2 bg-[#f8f6f0] border-2 border-black/[0.06] focus-within:border-blue-400 p-1.5 rounded-2xl transition-all relative">
               <textarea
                 value={chatInput}
                 onChange={e => setChatInput(e.target.value)}
@@ -349,6 +365,7 @@ export function PortalView() {
             <p className="text-center text-[10.5px] text-[#64748b] mt-3 hidden md:block">
               🔒 Answers are generated automatically based on your Panchayat's configured rules.
             </p>
+            </div>
           </div>
 
         </div>
