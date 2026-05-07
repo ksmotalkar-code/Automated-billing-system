@@ -561,6 +561,14 @@ export function SettingsView() {
               <div>
                 <CardTitle className="text-lg">Automated WhatsApp Messaging</CardTitle>
                 <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal or Cunnekt to seamlessly send automated bills to customers.</p>
+                <div className="bg-amber-50 border-l-4 border-amber-500 p-3 mb-4 mt-2">
+                  <h4 className="text-amber-800 font-bold text-sm">⚠️ Meta 24-Hour Window & Templates Rule</h4>
+                  <p className="text-amber-700 text-xs mt-1">
+                    When customers message your number, your Chatbot can reply freely with texts and PDFs for 24 hours. 
+                    However, for <strong>Automated Cron Bills</strong> or Broadcasts sent outside this window, Meta strictly requires you to use 
+                    <strong>Pre-approved Message Templates</strong>. Free-form text will be blocked by Meta unless using an approved Template.
+                  </p>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="pt-6">

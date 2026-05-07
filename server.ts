@@ -383,7 +383,7 @@ async function startServer() {
                    const mobile = customer?.mobileNumber?.replace(/\D/g, '');
                    if (mobile && mobile.length >= 10) {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
-                     await sendWhatsAppMessage(settings, mobile, message).catch(e => console.error("Webhook Auto-Receipt failed", e));
+                     await sendWhatsAppMessage(settings, mobile, message, undefined, undefined, false, 'receipt', [customer?.name || "Customer", amountPaid]).catch(e => console.error("Webhook Auto-Receipt failed", e));
                      await custRef.update({ paymentNotified: true });
                    }
                  }
@@ -403,7 +403,7 @@ async function startServer() {
   });
 
   // Helper for Meta WhatsApp API
-  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false) {
+  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast', templateParams?: any[]) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
     }
@@ -428,50 +428,92 @@ async function startServer() {
       to: formattedTo
     };
 
+    let mediaId: string | undefined = undefined;
+
+    // Upload media to Meta first if provided
+    if (mediaBase64) {
+      try {
+        const base64Data = mediaBase64.split(',')[1] || mediaBase64;
+        const mimeType = mediaBase64.split(';')[0].split(':')[1] || 'application/pdf';
+        const isImage = mimeType.startsWith('image/');
+        
+        const buffer = Buffer.from(base64Data, 'base64');
+        const formData = new FormData();
+        const blob = new Blob([buffer], { type: mimeType });
+        formData.append('file', blob, mediaName || (isImage ? 'image.png' : 'document.pdf'));
+        formData.append('messaging_product', 'whatsapp');
+
+        const uploadRes = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`
+          },
+          body: formData as any
+        });
+        
+        const uploadData = await uploadRes.json();
+        if (!uploadRes.ok) {
+          console.error(`[WhatsApp] Media Upload Error:`, uploadData);
+          throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
+        }
+        mediaId = uploadData.id;
+        console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
+      } catch (err) {
+        console.error(`[WhatsApp] Error handling media:`, err);
+        // Continue and send as text message if media upload fails?
+        // Let's just append an error log but send text anyway
+      }
+    }
+
+
     if (isTestMessage) {
        bodyPayload.type = 'template';
        bodyPayload.template = {
          name: "hello_world",
          language: { code: "en_US" }
        };
+    } else if (templateCategory) {
+       bodyPayload.type = 'template';
+       let templateName = 'general_announcement';
+       let components: any[] = [];
+       
+       if (templateCategory === 'billing') {
+         templateName = 'monthly_bill_notification';
+       } else if (templateCategory === 'receipt') {
+         templateName = 'payment_reminder'; // or a separate receipt template if defined
+       } else if (templateCategory === 'broadcast') {
+         templateName = 'general_announcement';
+       }
+
+       if (mediaId && templateCategory === 'billing') {
+         // Add document header for billing template
+         components.push({
+            type: "header",
+            parameters: [
+               {
+                  type: "document",
+                  document: {
+                     id: mediaId,
+                     filename: mediaName || "Invoice.pdf"
+                  }
+               }
+            ]
+         });
+       }
+
+       if (templateParams && templateParams.length > 0) {
+         components.push({
+           type: "body",
+           parameters: templateParams.map(p => ({ type: "text", text: String(p) }))
+         });
+       }
+
+       bodyPayload.template = {
+         name: templateName,
+         language: { code: "en_US" }, // Usually Meta prefers en_US or en_GB, we'll try en_US
+         components: components
+       };
     } else {
-      let mediaId: string | undefined = undefined;
-
-      // Upload media to Meta first if provided
-      if (mediaBase64) {
-        try {
-          const base64Data = mediaBase64.split(',')[1] || mediaBase64;
-          const mimeType = mediaBase64.split(';')[0].split(':')[1] || 'application/pdf';
-          const isImage = mimeType.startsWith('image/');
-          
-          const buffer = Buffer.from(base64Data, 'base64');
-          const formData = new FormData();
-          const blob = new Blob([buffer], { type: mimeType });
-          formData.append('file', blob, mediaName || (isImage ? 'image.png' : 'document.pdf'));
-          formData.append('messaging_product', 'whatsapp');
-
-          const uploadRes = await fetch(`https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`, {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${settings.metaWhatsAppApiKey}`
-            },
-            body: formData as any
-          });
-          
-          const uploadData = await uploadRes.json();
-          if (!uploadRes.ok) {
-            console.error(`[WhatsApp] Media Upload Error:`, uploadData);
-            throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
-          }
-          mediaId = uploadData.id;
-          console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
-        } catch (err) {
-          console.error(`[WhatsApp] Error handling media:`, err);
-          // Continue and send as text message if media upload fails?
-          // Let's just append an error log but send text anyway
-        }
-      }
-
       if (mediaId) {
         // Determine if it's an image or generic document
         const mimeType = mediaBase64?.split(';')[0].split(':')[1] || '';
@@ -511,7 +553,7 @@ async function startServer() {
       console.error(`[WhatsApp] Meta API Error:`, data.error);
       let errMsg = data.error?.message || "Meta API Error";
       if (data.error?.type === 'OAuthException') {
-        errMsg = "OAuthException: Your Meta API Token is invalid or expired. Please generate a new permanent token as per the App Manual.";
+        errMsg = `OAuthException: ${data.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
       }
       throw new Error(errMsg);
     }
@@ -567,14 +609,14 @@ async function startServer() {
   }
 
   // Generic Send WhatsApp API
-  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false) {
+  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast', templateParams?: any[]) {
     if (settings.preferredNotificationMethod && 
         settings.preferredNotificationMethod !== 'api' && 
         settings.preferredNotificationMethod !== 'manual_link') {
       return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
     } else {
       // Default to Meta or explicit 'api'
-      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage);
+      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage, templateCategory, templateParams);
     }
   }
 
@@ -748,7 +790,7 @@ async function startServer() {
 
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
-                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName);
+                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'billing', [customer.name, settings.billingAmount, newBalance]);
                 } catch (e: any) {
                   console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
                 }
@@ -931,7 +973,7 @@ async function startServer() {
       
       for (const customer of customers) {
         try {
-          await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName);
+          await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'broadcast', [message]);
           results.success++;
         } catch (e) {
           results.failed++;

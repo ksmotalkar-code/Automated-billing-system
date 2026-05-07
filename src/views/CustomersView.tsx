@@ -677,7 +677,7 @@ export function CustomersView() {
       return;
     }
 
-    deliveryModeRef.current = "api";
+    deliveryModeRef.current = "broadcast";
 
     setIsNotifyModalOpen(false);
 
@@ -693,14 +693,23 @@ export function CustomersView() {
           <select 
             className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
             onChange={(e) => deliveryModeRef.current = e.target.value}
-            defaultValue="api"
+            defaultValue="broadcast"
           >
-            <option value="api">WhatsApp Cloud API (Automated)</option>
-            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
+            <option value="broadcast">WhatsApp App (Forward Generic message to Broadcast List)</option>
+            <option value="web">WhatsApp Web (Manual Prompts - 1 by 1)</option>
           </select>
         </div>
       ),
       onConfirm: async () => {
+        if (deliveryModeRef.current === "broadcast") {
+           const genericMessage = notifyMessage;
+           const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+           window.open(url, '_blank');
+           setIsSendingNotify(false);
+           setNotifyMessage("");
+           return;
+        }
+
         setIsSendingNotify(true);
         setNotifyProgress(0);
         
