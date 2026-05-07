@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy } from "lucide-react";
 import { motion } from "motion/react";
-import { subscribeToSettings, saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand } from "../lib/db";
+import { subscribeToSettings, saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { Trash2, LogOut, MessageCircle, Loader2, X } from "lucide-react";
 import { auth, logout } from "../firebase";
@@ -40,6 +40,7 @@ export function SettingsView() {
   const [logsList, setLogsList] = useState<LogEntry[]>([]);
   const [logsPage, setLogsPage] = useState(1);
   const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
+  const [botSettings, setBotSettings] = useState<ChatbotSettings | null>(null);
   const isAdmin = auth.currentUser?.email === 'ksmotalkar@gmail.com';
   const [newProvider, setNewProvider] = useState<Partial<WhatsAppProvider>>({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
 
@@ -87,8 +88,11 @@ export function SettingsView() {
       try {
         const provs = await getProviders();
         setProviders(provs);
+        
+        const botData = await getChatbotSettings();
+        setBotSettings(botData);
       } catch(e) {
-        console.error("Failed to load providers", e);
+        console.error("Failed to load providers or bot settings", e);
       }
     };
     loadProviders();
@@ -741,61 +745,33 @@ export function SettingsView() {
                 
                 <div className="space-y-4 md:col-span-2 pt-4 mt-2 border-t border-[var(--shadow-dark)]">
                   <h4 className="font-bold text-md text-emerald-600">WhatsApp Chatbot Commands</h4>
-                  <p className="text-sm neu-text-muted">Set up custom auto-replies when customers text specific commands to your WhatsApp number.</p>
-                  
+                  <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <p className="text-sm font-medium text-emerald-800">
+                      Your chatbot commands are fully integrated. The same commands you configured in the <span className="font-bold">Chatbot Setup</span> view are automatically active here for your WhatsApp interactions!
+                    </p>
+                  </div>
                   <div className="space-y-3">
-                    {(settings.chatbotCommands || []).map((cmd, index) => (
-                      <div key={cmd.id} className="p-4 bg-white/50 border border-[var(--shadow-dark)] rounded-xl flex items-start gap-4">
-                        <div className="flex-1 space-y-2">
-                           <input
-                             type="text"
-                             value={cmd.triggerWord}
-                             onChange={(e) => {
-                               const newCmds = [...(settings.chatbotCommands || [])];
-                               newCmds[index].triggerWord = e.target.value.toLowerCase();
-                               setSettings({ ...settings, chatbotCommands: newCmds });
-                             }}
-                             placeholder="Trigger word (e.g., 'help', 'balance')"
-                             className="w-full px-3 py-2 neu-pressed rounded-lg bg-transparent outline-none text-sm font-bold"
-                           />
-                           <textarea
-                             value={cmd.response}
-                             onChange={(e) => {
-                               const newCmds = [...(settings.chatbotCommands || [])];
-                               newCmds[index].response = e.target.value;
-                               setSettings({ ...settings, chatbotCommands: newCmds });
-                             }}
-                             placeholder="Bot response message..."
-                             className="w-full px-3 py-2 neu-pressed rounded-lg bg-transparent outline-none text-sm min-h-[60px]"
-                           />
+                    {botSettings?.commands?.filter(c => c.isActive).map((cmd) => (
+                      <div key={cmd.id} className="p-4 bg-white/50 border border-[var(--shadow-dark)] rounded-xl flex flex-col gap-2">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <span className="font-bold text-sm bg-emerald-100 text-emerald-800 px-2 py-1 rounded">
+                              {cmd.triggerWord}
+                            </span>
+                            {cmd.buttonLabel && <span className="ml-2 text-xs neu-text-muted">Button: {cmd.buttonLabel}</span>}
+                          </div>
+                          <span className="text-xs font-bold text-emerald-600">Active</span>
                         </div>
-                        <div className="flex flex-col gap-2 items-center mt-1">
-                          <label className="relative inline-block w-10 h-5 rounded-full transition-colors duration-300 cursor-pointer" style={{ backgroundColor: cmd.isActive ? 'var(--accent)' : 'var(--shadow-dark)' }}>
-                             <input type="checkbox" className="sr-only" checked={cmd.isActive} onChange={(e) => {
-                               const newCmds = [...(settings.chatbotCommands || [])];
-                               newCmds[index].isActive = e.target.checked;
-                               setSettings({ ...settings, chatbotCommands: newCmds });
-                             }} />
-                             <motion.div animate={{ x: cmd.isActive ? 20 : 2 }} className="absolute left-0 top-1 w-3 h-3 bg-white rounded-full shadow-sm" />
-                          </label>
-                          <button onClick={() => {
-                             const newCmds = (settings.chatbotCommands || []).filter(c => c.id !== cmd.id);
-                             setSettings({ ...settings, chatbotCommands: newCmds });
-                          }} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                        <p className="text-sm mt-2 text-gray-700 bg-gray-50 p-2 rounded border border-gray-200">
+                          {cmd.response}
+                        </p>
                       </div>
                     ))}
-                    <button
-                      onClick={() => {
-                         const newCmd = { id: uuidv4(), buttonLabel: '', triggerWord: '', response: '', isActive: true };
-                         setSettings({ ...settings, chatbotCommands: [...(settings.chatbotCommands || []), newCmd] });
-                      }}
-                      className="w-full py-3 border-2 border-dashed border-[var(--shadow-dark)] text-[var(--text-muted)] hover:text-emerald-500 hover:border-emerald-500 rounded-xl flex items-center justify-center gap-2 font-bold transition-all text-sm"
-                    >
-                      <Plus className="w-4 h-4" /> Add Chatbot Command
-                    </button>
+                    {(!botSettings || !botSettings.commands || botSettings.commands.filter(c => c.isActive).length === 0) && (
+                      <div className="text-center p-6 text-neutral-400 border-2 border-dashed border-[var(--shadow-dark)] rounded-xl">
+                        <p className="text-sm">No active commands. Configure them in the Chatbot Setup menu.</p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
