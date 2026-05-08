@@ -108,7 +108,7 @@ export const sendWhatsAppNotification = async (
    }
   
   // 2. Try automated API if configured
-  if (whatsappService.isConfigured()) {
+  if (whatsappService.isConfigured() && settings.preferredNotificationMethod !== 'manual_link') {
     const result = await whatsappService.sendMessage({
       to: customer.mobileNumber,
       message: finalMessage,

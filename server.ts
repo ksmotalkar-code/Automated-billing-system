@@ -610,9 +610,13 @@ async function startServer() {
 
   // Generic Send WhatsApp API
   async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast', templateParams?: any[]) {
-    if (settings.preferredNotificationMethod && 
-        settings.preferredNotificationMethod !== 'api' && 
-        settings.preferredNotificationMethod !== 'manual_link') {
+    if (settings.preferredNotificationMethod === 'manual_link') {
+       throw new Error("Manual link selected, API disabled.");
+    }
+    
+    if (settings.preferredNotificationMethod && settings.preferredNotificationMethod !== 'api') {
+      return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
+    } else if (!settings.preferredNotificationMethod && settings.cunnektApiKey && !settings.metaWhatsAppApiKey) {
       return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
     } else {
       // Default to Meta or explicit 'api'
