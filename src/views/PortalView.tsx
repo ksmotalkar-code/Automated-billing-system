@@ -17,6 +17,8 @@ export function PortalView() {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [commands, setCommands] = useState<any[]>([]);
+  const [isComplaintMode, setIsComplaintMode] = useState(false);
+  const [complaintData, setComplaintData] = useState({ title: '', details: '' });
   const chatBodyRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation();
@@ -143,6 +145,13 @@ export function PortalView() {
     const text = (customText || chatInput).trim();
     if (!text || !portalData) return;
 
+    if (text.toLowerCase() === 'complaint' || text.toLowerCase() === 'शिकायत') {
+       setIsComplaintMode(true);
+       setChatInput("");
+       addBotMessage("Please provide your complaint details. You can type the complaint title and a detailed description below.");
+       return;
+    }
+
     if (!customText) setChatInput("");
     
     const newHistory = [...chatHistory, { role: 'user', content: text }];
@@ -176,6 +185,26 @@ export function PortalView() {
       addBotMessage(`❌ Connection failed. Please try again.`);
     }
     setChatLoading(false);
+  };
+
+  const handleSubmitComplaint = async () => {
+    if (!complaintData.title || !complaintData.details || !portalData) return;
+    
+    setChatLoading(true);
+    try {
+      const { submitPublicComplaint } = await import('../lib/portal');
+      await submitPublicComplaint(portalData, complaintData.title, complaintData.details);
+      
+      setChatHistory(prev => [...prev, { role: 'user', content: `[Complaint Submitted]\nTitle: ${complaintData.title}\nDescription: ${complaintData.details}` }]);
+      addBotMessage(`Thank you ${portalData.customerName}. Your complaint has been registered. We will look into it soon!`);
+      
+      setIsComplaintMode(false);
+      setComplaintData({ title: '', details: '' });
+    } catch (err) {
+      addBotMessage("Failed to register complaint. Please try again.");
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   if (loading) {
@@ -325,47 +354,80 @@ export function PortalView() {
               ))}
             </div>
 
-            <div className="p-3 md:p-5">
+          <div className="p-3 md:p-5">
+            {isComplaintMode ? (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white border-2 border-blue-100 p-4 rounded-2xl shadow-lg mb-2 space-y-3"
+              >
+                <div className="flex justify-between items-center mb-1">
+                  <h4 className="text-sm font-bold text-blue-600">Register New Complaint</h4>
+                  <button onClick={() => setIsComplaintMode(false)} className="text-xs text-neutral-400 hover:text-rose-500">Cancel</button>
+                </div>
+                <input 
+                  type="text"
+                  placeholder="Complaint Title (e.g., Billing Error)"
+                  value={complaintData.title}
+                  onChange={e => setComplaintData({...complaintData, title: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400"
+                />
+                <textarea 
+                  placeholder="Describe your complaint in detail..."
+                  value={complaintData.details}
+                  onChange={e => setComplaintData({...complaintData, details: e.target.value})}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm outline-none focus:border-blue-400 min-h-[80px]"
+                />
+                <button 
+                  onClick={handleSubmitComplaint}
+                  disabled={!complaintData.title || !complaintData.details || chatLoading}
+                  className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:bg-blue-300 transition-colors"
+                >
+                  {chatLoading ? "Registering..." : "Submit Complaint"}
+                </button>
+              </motion.div>
+            ) : (
               <div className="flex items-end gap-2 bg-[#f8f6f0] border-2 border-black/[0.06] focus-within:border-blue-400 p-1.5 rounded-2xl transition-all relative">
-              <textarea
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendMessage();
-                  }
-                }}
-                className="flex-1 bg-transparent border-none outline-none resize-none p-2.5 text-[14px] min-h-[44px] max-h-[120px] rounded-xl"
-                placeholder="Ask anything about water bills... or tap icon for screenshot"
-                rows={1}
-              />
-              <input
-                type="file"
-                accept="image/*"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="w-[44px] h-[44px] shrink-0 bg-[#e2e8f0] text-[#64748b] rounded-xl flex items-center justify-center hover:bg-[#cbd5e1] hover:text-[#0f172a] transition mb-0.5"
-                title="Upload Payment Screenshot"
-              >
-                <Upload className="w-5 h-5" />
-              </button>
-              <button 
-                onClick={() => handleSendMessage()}
-                disabled={!chatInput.trim() || chatLoading}
-                className="w-[44px] h-[44px] shrink-0 bg-[#1a56db] disabled:bg-blue-300 text-white rounded-xl flex items-center justify-center hover:bg-blue-700 transition transform hover:scale-105 disabled:hover:scale-100 disabled:cursor-not-allowed mb-0.5 mr-0.5"
-              >
-                <Send className="w-5 h-5 -ml-0.5" />
-              </button>
-            </div>
+                <textarea
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  className="flex-1 bg-transparent border-none outline-none resize-none p-2.5 text-[14px] min-h-[44px] max-h-[120px] rounded-xl"
+                  placeholder="Ask anything about water bills... or type 'complaint'"
+                  rows={1}
+                />
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-[44px] h-[44px] shrink-0 bg-[#e2e8f0] text-[#64748b] rounded-xl flex items-center justify-center hover:bg-[#cbd5e1] hover:text-[#0f172a] transition mb-0.5"
+                  title="Upload Payment Screenshot"
+                >
+                  <Upload className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={() => handleSendMessage()}
+                  disabled={!chatInput.trim() || chatLoading}
+                  className="w-[44px] h-[44px] shrink-0 bg-[#1a56db] disabled:bg-blue-300 text-white rounded-xl flex items-center justify-center hover:bg-blue-700 transition transform hover:scale-105 disabled:hover:scale-100 disabled:cursor-not-allowed mb-0.5 mr-0.5"
+                >
+                  <Send className="w-5 h-5 -ml-0.5" />
+                </button>
+              </div>
+            )}
             <p className="text-center text-[10.5px] text-[#64748b] mt-3 hidden md:block">
               🔒 Answers are generated automatically based on your Panchayat's configured rules.
             </p>
-            </div>
+          </div>
           </div>
 
         </div>

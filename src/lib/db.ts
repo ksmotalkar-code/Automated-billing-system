@@ -97,6 +97,8 @@ export interface Complaint {
   createdAt: string;
   ownerId?: string;
   expiresAt?: string;
+  billStatus?: string;
+  description?: string;
 }
 
 export interface ReportFile {
@@ -793,7 +795,7 @@ export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Reje
   }
 };
 
-export const resolveComplaint = async (id: string) => {
+export const resolveComplaint = async (id: string, notify: boolean = false) => {
   if (!auth.currentUser) return;
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + 6);
@@ -802,6 +804,23 @@ export const resolveComplaint = async (id: string) => {
       status: 'Resolved',
       expiresAt: expiresAt.toISOString()
     });
+
+    if (notify) {
+      const complaintSnap = await getDoc(doc(db, 'complaints', id));
+      if (complaintSnap.exists()) {
+        const data = complaintSnap.data() as Complaint;
+        // Call server to send notification
+        await fetch('/api/complaints/notify-resolution', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            complaintId: id,
+            ownerId: auth.currentUser.uid,
+            customerId: data.customerId
+          })
+        });
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `complaints/${id}`);
   }

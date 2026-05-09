@@ -1153,6 +1153,7 @@ async function startServer() {
                  mobileNumber: custData.mobileNumber || '',
                  category: "General",
                  description: complaintText,
+                 billStatus: custData.balance > 0 ? `Unpaid (₹${custData.balance})` : "Paid",
                  status: "Pending",
                  priority: "Medium",
                  createdAt: new Date().toISOString(),
@@ -1200,6 +1201,37 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Webhook] Portal AI error:", err);
       res.status(500).json({ error: "Internal Server Error: " + err.message });
+    }
+  });
+
+  app.post("/api/complaints/notify-resolution", async (req, res) => {
+    try {
+      const { complaintId, ownerId, customerId } = req.body;
+      if (!complaintId || !ownerId || !customerId) return res.status(400).json({ error: "Missing params" });
+
+      const db = admin.firestore();
+      const settingsSnap = await db.collection("settings").doc(ownerId).get();
+      const settings = settingsSnap.exists ? settingsSnap.data() : null;
+      
+      const customerDoc = await db.collection("customers").doc(customerId).get();
+      const customer = customerDoc.exists ? customerDoc.data() : null;
+      
+      if (customer && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+        const msg = `Dear ${customer.name}, your complaint (${complaintId}) has been resolved. ✅ Thank you for your patience!`;
+        await sendWhatsAppMessage(settings as any, customer.mobileNumber, msg);
+        
+        await db.collection("customers").doc(customerId).collection("chat_history").add({
+          role: 'assistant',
+          content: msg,
+          timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        return res.json({ success: true });
+      }
+      res.status(400).json({ error: "Could not send notification. Check WhatsApp setup." });
+    } catch (err) {
+      console.error("[Complaint] Resolution notify failed:", err);
+      res.status(500).json({ error: "Automation failed" });
     }
   });
 
@@ -1302,7 +1334,9 @@ async function startServer() {
                                customerName: matchedCustomer.name,
                                mobileNumber: matchedCustomer.mobileNumber || '',
                                category: "Service Request",
-                               message: complaintText,
+                               message: "WhatsApp Complaint",
+                               description: complaintText,
+                               billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
                                status: "Pending",
                                priority: "Medium",
                                createdAt: new Date().toISOString(),
@@ -1362,7 +1396,9 @@ async function startServer() {
                            id: complaintId,
                            customerId: matchedCustomer.id,
                            customerName: matchedCustomer.name,
-                           message: msgBody,
+                           message: "Automated Log",
+                           description: msgBody,
+                           billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
                            status: 'Pending',
                            createdAt: new Date().toISOString(),
                            ownerId: ownerId

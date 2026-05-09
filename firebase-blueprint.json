@@ -73,6 +73,25 @@
         "read": { "type": "boolean", "description": "Read status" }
       },
       "required": ["id", "ownerId", "from", "to", "body", "timestamp", "direction", "type"]
+    },
+    "Complaint": {
+      "title": "Complaint",
+      "description": "A customer complaint",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Complaint ID" },
+        "customerId": { "type": "string", "description": "Customer ID" },
+        "customerName": { "type": "string", "description": "Customer Name" },
+        "message": { "type": "string", "description": "User's complaint message" },
+        "status": { "type": "string", "enum": ["Pending", "Resolved"], "description": "Status" },
+        "category": { "type": "string", "description": "Category" },
+        "priority": { "type": "string", "description": "Priority" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record" },
+        "billStatus": { "type": "string", "description": "Bill status at time of complaint" },
+        "description": { "type": "string", "description": "Detailed description" }
+      },
+      "required": ["id", "customerId", "customerName", "message", "status", "createdAt", "ownerId"]
     }
   },
   "firestore": {
@@ -95,6 +114,10 @@
     "/whatsapp_messages/{messageId}": {
       "schema": { "$ref": "#/entities/WhatsappMessage" },
       "description": "WhatsApp Messages collection"
+    },
+    "/complaints/{complaintId}": {
+      "schema": { "$ref": "#/entities/Complaint" },
+      "description": "Complaints collection"
     }
   }
 }

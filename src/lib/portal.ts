@@ -80,13 +80,15 @@ export const submitPaymentReceipt = async (portalData: PublicPortalData, base64I
   });
 };
 
-export const submitPublicComplaint = async (portalData: PublicPortalData, message: string) => {
+export const submitPublicComplaint = async (portalData: PublicPortalData, message: string, description: string = "") => {
   const id = `COMP-${uuidv4().substring(0, 8).toUpperCase()}`;
   await setDoc(doc(db, 'complaints', id), {
     id,
     customerId: portalData.customerId,
     customerName: portalData.customerName,
     message,
+    description,
+    billStatus: portalData.balance > 0 ? `Unpaid (₹${portalData.balance})` : "Paid",
     status: 'Pending',
     createdAt: new Date().toISOString(),
     ownerId: portalData.ownerId
