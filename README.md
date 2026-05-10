@@ -17,6 +17,11 @@ An enterprise-grade, automated CRM andBilling management system designed for man
 
 ## Development & Deployment
 - Built with React, Vite, Tailwind CSS, Firestore.
-- Deployed via Cloud Run. Standard Node.js environment.
-- Use `npm run build` for production deployment.
-- Environment Variables required: `VITE_WHATSAPP_API_KEY`, etc. (Check `.env.example`).
+- Complete Full-Stack standard Node.js Express server to handle webhooks and fallback integrations.
+
+### How to Deploy on Render
+1. Push this repository to GitHub.
+2. Sign in to Render (https://render.com) and create a new **Blueprint**.
+3. Connect your GitHub repository.
+4. Render will automatically detect the `render.yaml` configuration and deploy a Docker web service on the **Free** tier.
+5. In your Render Dashboard, navigate to the newly created Web Service, go to **Environment**, and add any necessary Environment Variables (e.g., `FIREBASE_SERVICE_ACCOUNT` for admin SDK privileges in webhooks).

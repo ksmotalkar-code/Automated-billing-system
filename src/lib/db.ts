@@ -146,8 +146,8 @@ export interface AutomationSettings {
 }
 
 export interface WhatsAppProvider {
-  id: string; // The ID of the provider, e.g., 'meta', 'cunnekt', etc.
-  name: string; // The name of the provider, e.g., 'Meta Official API', 'Cunnekt API'
+  id: string; // The ID of the provider, e.g., 'meta', 'wati', etc.
+  name: string; // The name of the provider, e.g., 'Meta Official API', 'WATI API'
   baseUrl: string; // The base URL for the API
   requiresApiKey: boolean; // Does the provider require an API key?
   requiresPhoneId: boolean; // Does the provider require a Phone ID?
@@ -206,8 +206,8 @@ export interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
-  cunnektApiKey?: string;
-  cunnektBaseUrl?: string;
+  watiAccessToken?: string;
+  watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
   paymentGatewayKey?: string;
@@ -657,8 +657,8 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
         defaultBillingDate: '1',
         metaWhatsAppApiKey: '',
         metaWhatsAppPhoneNumberId: '',
-        cunnektApiKey: '',
-        cunnektBaseUrl: 'https://app2.cunnekt.com/v1',
+        watiAccessToken: '',
+        watiApiEndpoint: '',
         automation: {
           billingLifecycle: true,
           ruleBased: true,

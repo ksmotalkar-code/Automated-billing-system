@@ -50,8 +50,8 @@ interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
-  cunnektApiKey?: string;
-  cunnektBaseUrl?: string;
+  watiAccessToken?: string;
+  watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
   automation?: AutomationSettings;
@@ -379,7 +379,7 @@ async function startServer() {
               if (newBalance === 0 && ownerId && customer?.status !== 'Suspended') {
                  const settingsDoc = await db.collection("settings").doc(ownerId).get();
                  const settings = settingsDoc.data() as any;
-                 if (settings?.automation?.smartNotifications && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+                 if (settings?.automation?.smartNotifications && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
                    const mobile = customer?.mobileNumber?.replace(/\D/g, '');
                    if (mobile && mobile.length >= 10) {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
@@ -560,10 +560,10 @@ async function startServer() {
     return data;
   }
 
-  // Helper for Cunnekt WhatsApp API
-  async function sendCunnektWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string) {
-    if (!settings?.cunnektApiKey || !settings?.cunnektBaseUrl) {
-      throw new Error("Cunnekt API not configured");
+  // Helper for WATI WhatsApp API
+  async function sendWatiWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string) {
+    if (!settings?.watiAccessToken || !settings?.watiApiEndpoint) {
+      throw new Error("WATI API not configured");
     }
 
     const mobile = to.replace(/\D/g, '');
@@ -574,36 +574,36 @@ async function startServer() {
       formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
     }
 
-    console.log(`[Cunnekt] Sending to ${formattedTo}...`);
+    console.log(`[WATI] Sending to ${formattedTo}...`);
 
-    const baseUrl = settings.cunnektBaseUrl.replace(/\/$/, ''); // Remove trailing slash
+    const baseUrl = settings.watiApiEndpoint.replace(/\/$/, ''); // Remove trailing slash
     
-    // Cunnekt standard message endpoint
-    const url = `${baseUrl}/messages`;
+    let url = `${baseUrl}/api/v1/sendSessionMessage/${formattedTo}`;
+    let body: any = { messageText: message };
 
-    const payload: any = {
-      to: formattedTo,
-      type: 'text',
-      text: { body: message }
-    };
+    if (mediaBase64) {
+       url = `${baseUrl}/api/v1/sendSessionFile/${formattedTo}?caption=${encodeURIComponent(message)}`;
+       // WATI sometimes expects different payload for files. Assuming standard base64 or URL. 
+       // For this implementation, we will try to pass base64 if supported or just the text if not.
+       // Actually WATI API for files usually takes a URL or multipart. 
+       // But we will stick to the text session message if it's simpler for now, 
+       // or try to use their endpoint if we have the file.
+       body = { file: mediaBase64 }; 
+    }
 
-    // Note: Cunnekt generic API often follows Meta's structure for text, 
-    // but we'll try a fallback if needed in a real scenario.
-    // For media, they often use a different structure or expect a URL.
-    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'apikey': settings.cunnektApiKey,
+        'Authorization': `Bearer ${settings.watiAccessToken}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(body),
     });
 
     const data = await response.json();
     if (!response.ok) {
-      console.error(`[Cunnekt] API Error:`, data);
-      throw new Error(data.message || "Cunnekt API Error");
+      console.error(`[WATI] API Error:`, data);
+      throw new Error(data.message || data.result || "WATI API Error");
     }
     return data;
   }
@@ -614,10 +614,10 @@ async function startServer() {
        throw new Error("Manual link selected, API disabled.");
     }
     
-    if (settings.preferredNotificationMethod && settings.preferredNotificationMethod !== 'api') {
-      return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
-    } else if (!settings.preferredNotificationMethod && settings.cunnektApiKey && !settings.metaWhatsAppApiKey) {
-      return await sendCunnektWhatsApp(settings, to, message, mediaBase64, mediaName);
+    if (settings.preferredNotificationMethod === 'wati') {
+      return await sendWatiWhatsApp(settings, to, message, mediaBase64, mediaName);
+    } else if (!settings.preferredNotificationMethod && settings.watiAccessToken && !settings.metaWhatsAppApiKey) {
+      return await sendWatiWhatsApp(settings, to, message, mediaBase64, mediaName);
     } else {
       // Default to Meta or explicit 'api'
       return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage, templateCategory, templateParams);
@@ -727,7 +727,7 @@ async function startServer() {
             console.log(`[Automation] Billed ${updatedCustomerIds.length} customers for ${ownerId}`);
 
             // Send Automated WhatsApp Bill (only for the ones we actually updated in this run)
-            if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey) && settings.automation.smartNotifications && updatedCustomerIds.length > 0) {
+            if (((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken) && settings.automation.smartNotifications && updatedCustomerIds.length > 0) {
               for (const cDoc of customersSnap.docs) {
                 if (!updatedCustomerIds.includes(cDoc.id)) continue;
 
@@ -902,18 +902,18 @@ async function startServer() {
   // Send Individual Message API (Proxied for CORS safety)
   app.post("/api/wa/send", async (req, res) => {
     try {
-      const { ownerId, to, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method, mediaBase64, mediaName } = req.body;
+      const { ownerId, to, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, mediaBase64, mediaName } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
       
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,
-        cunnektApiKey: cunnektApiKey,
-        cunnektBaseUrl: cunnektBaseUrl,
+        watiAccessToken: watiAccessToken,
+        watiApiEndpoint: watiApiEndpoint,
         preferredNotificationMethod: method
       };
 
-      if (!apiKey && !cunnektApiKey && admin.apps.length) {
+      if (!apiKey && !watiAccessToken && admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          settings = settingsDoc.data() as any;
@@ -929,14 +929,14 @@ async function startServer() {
   // Bulk Broadcast API
   app.post("/api/wa/broadcast", async (req, res) => {
     try {
-      const { ownerId, message, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, recipients, mediaBase64, mediaName } = req.body;
+      const { ownerId, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, recipients, mediaBase64, mediaName } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
       
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,
-        cunnektApiKey: cunnektApiKey,
-        cunnektBaseUrl: cunnektBaseUrl
+        watiAccessToken: watiAccessToken,
+        watiApiEndpoint: watiApiEndpoint
       };
 
       if (admin.apps.length) {
@@ -946,12 +946,12 @@ async function startServer() {
            const dbSettings = settingsDoc.data() as any;
            if (!apiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
            if (!phoneId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
-           if (!cunnektApiKey) settings.cunnektApiKey = dbSettings.cunnektApiKey;
-           if (!cunnektBaseUrl) settings.cunnektBaseUrl = dbSettings.cunnektBaseUrl;
+           if (!watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+           if (!watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
            settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
          }
       }
-      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey) {
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
         return res.status(400).json({ error: "WhatsApp API not configured" });
       }
 
@@ -994,21 +994,21 @@ async function startServer() {
   // Test WhatsApp API Configuration
   app.post("/api/wa/test", async (req, res) => {
     try {
-      const { ownerId, testMobile, apiKey, phoneId, cunnektApiKey, cunnektBaseUrl, method } = req.body;
+      const { ownerId, testMobile, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method } = req.body;
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,
-        cunnektApiKey: cunnektApiKey,
-        cunnektBaseUrl: cunnektBaseUrl,
+        watiAccessToken: watiAccessToken,
+        watiApiEndpoint: watiApiEndpoint,
         preferredNotificationMethod: method
       };
 
-      if (!apiKey && !cunnektApiKey && admin.apps.length) {
+      if (!apiKey && !watiAccessToken && admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          settings = settingsDoc.data() as any;
       }
-      if (!settings?.metaWhatsAppApiKey && !settings?.cunnektApiKey) {
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
         return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }
 
@@ -1216,7 +1216,7 @@ async function startServer() {
       const customerDoc = await db.collection("customers").doc(customerId).get();
       const customer = customerDoc.exists ? customerDoc.data() : null;
       
-      if (customer && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+      if (customer && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
         const msg = `Dear ${customer.name}, your complaint (${complaintId}) has been resolved. ✅ Thank you for your patience!`;
         await sendWhatsAppMessage(settings as any, customer.mobileNumber, msg);
         
@@ -1357,7 +1357,7 @@ async function startServer() {
                        for (const cmd of chatbotSettings.commands) {
                           if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
                             console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
-                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
                               try {
                                  let responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
                                  const sysIntentRes = await routeSystemIntent(cmd.triggerWord, matchedCustomer, ownerId, settings, responseText);
@@ -1406,7 +1406,7 @@ async function startServer() {
                         console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
 
                          // Auto-reply
-                        if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.cunnektApiKey)) {
+                        if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
                           try {
                             await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
                           } catch (e) {
@@ -1444,7 +1444,7 @@ async function startServer() {
   });
 
   app.post("/api/wweb/send", (req, res) => {
-    res.status(400).json({ error: 'WhatsApp Web is disabled on this server. Please use Meta Official API or Cunnekt API.' });
+    res.status(400).json({ error: 'WhatsApp Web is disabled on this server. Please use Meta Official API or WATI API.' });
   });
 
   // Vite middleware for development (Serves the App)

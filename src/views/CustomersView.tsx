@@ -388,7 +388,12 @@ export function CustomersView() {
       setSettings(s);
       if (s) {
         import("../services/whatsappService").then(({ whatsappService }) => {
-          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.cunnektApiKey || null);
+          whatsappService.updateConfig(
+            s.metaWhatsAppApiKey || null, 
+            s.metaWhatsAppPhoneNumberId || null, 
+            s.watiAccessToken || null,
+            s.watiApiEndpoint || null
+          );
         });
       }
     });
@@ -642,24 +647,67 @@ export function CustomersView() {
       return;
     }
 
-    setIsSendingNotify(true);
-    try {
-      const message = notifyMessage;
-      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, individualAttachment || undefined, individualAttachment?.name, false, false);
-      
-      if (result.success) {
-        showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
-        setIsIndividualNotifyOpen(false);
-        setIndividualNotifyCustomer(null);
-        setNotifyMessage("");
-        setIndividualAttachment(null);
-      } else {
-        showAlert("Failed", result.error || "Could not send notification.");
+    const hasMeta = !!(settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId);
+    const hasWati = !!settings.watiAccessToken;
+    
+    const sendFn = async (preferredMethod: string) => {
+      setIsSendingNotify(true);
+      try {
+        const tempSettings = { ...settings, preferredNotificationMethod: preferredMethod };
+        const message = notifyMessage;
+        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, false);
+        
+        if (result.success) {
+          showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
+          setIsIndividualNotifyOpen(false);
+          setIndividualNotifyCustomer(null);
+          setNotifyMessage("");
+          setIndividualAttachment(null);
+        } else {
+          showAlert("Failed", result.error || "Could not send notification.");
+        }
+      } catch (err) {
+        showAlert("Error", "An unexpected error occurred.");
+      } finally {
+        setIsSendingNotify(false);
       }
-    } catch (err) {
-      showAlert("Error", "An unexpected error occurred.");
-    } finally {
-      setIsSendingNotify(false);
+    };
+
+    if (hasMeta && hasWati) {
+       const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
+       const deliveryRef = { current: 'api' };
+       
+       setConfirmConfig({
+          isOpen: true,
+          title: "Select Sending Method",
+          message: "Both Meta and WATI APIs are configured. Select how to send this message:",
+          isDestructive: false,
+          showCancel: true,
+          children: (
+            <div className="flex flex-col gap-4 mt-2">
+              <div className="space-y-2">
+                 <label className="text-sm font-semibold">WhatsApp Provider</label>
+                 <select onChange={(e) => providerRef.current = e.target.value} defaultValue={providerRef.current} className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm">
+                   <option value="api">Meta Official API</option>
+                   <option value="wati">WATI API</option>
+                 </select>
+              </div>
+              <div className="space-y-2">
+                 <label className="text-sm font-semibold">Delivery Method</label>
+                 <select onChange={(e) => deliveryRef.current = e.target.value} defaultValue="api" className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm">
+                   <option value="api">Automated (Background via API)</option>
+                   <option value="manual_link">Manual: WhatsApp App/Web</option>
+                 </select>
+              </div>
+            </div>
+          ),
+          onConfirm: () => {
+             setConfirmConfig(prev => ({...prev, isOpen: false}));
+             sendFn(deliveryRef.current === 'manual_link' ? 'manual_link' : providerRef.current);
+          }
+       });
+    } else {
+       sendFn(settings.preferredNotificationMethod || 'api');
     }
   };
 
@@ -677,9 +725,16 @@ export function CustomersView() {
       return;
     }
 
-    deliveryModeRef.current = "broadcast";
+    if (!settings) return;
+
+    const hasMeta = !!(settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId);
+    const hasWati = !!settings.watiAccessToken;
+    const hasAnyApi = hasMeta || hasWati;
 
     setIsNotifyModalOpen(false);
+
+    const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
+    const deliveryRef = { current: hasAnyApi ? 'api' : 'broadcast' };
 
     setConfirmConfig({
       isOpen: true,
@@ -688,20 +743,38 @@ export function CustomersView() {
       isDestructive: false,
       showCancel: true,
       children: (
-        <div className="flex flex-col gap-2 mt-2">
-          <label className="text-sm font-semibold">Delivery Method</label>
-          <select 
-            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
-            onChange={(e) => deliveryModeRef.current = e.target.value}
-            defaultValue="broadcast"
-          >
-            <option value="broadcast">WhatsApp App (Forward Generic message to Broadcast List)</option>
-            <option value="web">WhatsApp Web (Manual Prompts - 1 by 1)</option>
-          </select>
+        <div className="flex flex-col gap-4 mt-2">
+          {hasMeta && hasWati && (
+             <div className="space-y-2">
+               <label className="text-sm font-semibold">WhatsApp Provider</label>
+               <select 
+                 className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+                 onChange={(e) => providerRef.current = e.target.value}
+                 defaultValue={providerRef.current}
+               >
+                 <option value="api">Meta Official API</option>
+                 <option value="wati">WATI API</option>
+               </select>
+             </div>
+          )}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold">Delivery Method</label>
+            <select 
+              className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+              onChange={(e) => deliveryRef.current = e.target.value}
+              defaultValue={deliveryRef.current}
+            >
+              {hasAnyApi && <option value="api">Automated (Background via API)</option>}
+              <option value="broadcast">Manual: WhatsApp App (Forward to Broadcast List)</option>
+              <option value="web">Manual: WhatsApp Web (Manual Prompts - 1 by 1)</option>
+            </select>
+          </div>
         </div>
       ),
       onConfirm: async () => {
-        if (deliveryModeRef.current === "broadcast") {
+        setConfirmConfig(prev => ({...prev, isOpen: false}));
+
+        if (deliveryRef.current === "broadcast") {
            const genericMessage = notifyMessage;
            const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
            window.open(url, '_blank');
@@ -714,8 +787,14 @@ export function CustomersView() {
         setNotifyProgress(0);
         
         let errors = [];
-        const isApiMode = deliveryModeRef.current === "api";
-        const tempSettings = { ...settings!, metaWhatsAppApiKey: isApiMode ? settings!.metaWhatsAppApiKey : "" };
+        const isApiMode = deliveryRef.current === "api";
+        const selectedProvider = providerRef.current;
+        
+        // Pass the chosen provider via tempSettings
+        const tempSettings = { ...settings, preferredNotificationMethod: selectedProvider };
+        
+        // If meta was not chosen, we can clear meta fields temporarily to ensure it doesn't default to it if WATI fails, 
+        // but 'preferredNotificationMethod' is enough for automation.ts route.
 
         let combinedMessage = notifyMessage;
 
@@ -750,11 +829,12 @@ export function CustomersView() {
               message: `Notifications finished with errors (${errors.length} failed):\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
               isDestructive: false,
               showCancel: true,
+              children: <></>, // Reset children
               onConfirm: () => {
                 const genericMessage = `Important Notice:\n\n${notifyMessage}`;
                 const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
                 window.open(url, '_blank');
-                setConfirmConfig({...confirmConfig, isOpen: false});
+                setConfirmConfig(prev => ({...prev, isOpen: false}));
               }
             });
           } else {

@@ -184,6 +184,56 @@ export function ManualView() {
           </div>
         </section>
 
+        {/* App Overview & Tabs */}
+        <section className="neu-bg p-8 rounded-3xl border border-[var(--shadow-dark)] shadow-lg relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-2 h-full bg-violet-500" />
+          <div className="flex items-center gap-4 mb-4">
+             <div className="p-3 bg-violet-100 text-violet-700 rounded-xl">
+               <BookOpen className="w-6 h-6" />
+             </div>
+             <h2 className="text-2xl font-bold">4. How the App Works & What Each Tab Does</h2>
+          </div>
+          <div className="space-y-4 text-sm leading-relaxed neu-text">
+            <p className="font-medium text-slate-800">
+              The Smart Billing App is your all-in-one CRM and automated billing solution. It maintains a fully synchronized database of your customers, automates their billing cycles, calculates late fees, and handles WhatsApp notifications automatically.
+            </p>
+            <div className="space-y-4 mt-2">
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Dashboard</h4>
+                  <p className="text-slate-600">Provides a high-level overview of your business metrics. You can see total active customers, pending payments, monthly revenue collected, and recent transaction history. Useful for checking the health of your operations at a glance.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Customers</h4>
+                  <p className="text-slate-600">Your core CRM. Here you can add new customers, edit details, adjust individual balances, manually suspend/activate accounts, and message them individually. You can use bulk tools to handle large excel lists.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Billing & Invoices</h4>
+                  <p className="text-slate-600">The central command for collections. View customers who currently owe money, generate their PDF invoices or escalation notices, scan QR codes on site, send manual bulk invoices to unpaid users, and mark accounts as paid.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Complaints</h4>
+                  <p className="text-slate-600">A ticketing system that integrates with WhatsApp Webhooks. If a customer replies to your WhatsApp with "complaint", a ticket is auto-created here. You can assign statuses like "Urgent" or "Resolved" and track employee tasks.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Reports</h4>
+                  <p className="text-slate-600">Create, store, and manage files like monthly water quality reports, society announcements, or official notices. You can automatically broadcast newly added reports to all active customers easily.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Chatbots</h4>
+                  <p className="text-slate-600">A visual interface to program automated replies for your WhatsApp business number. Set up trigger words so when a customer types "balance" or "help", the bot instantly replies without your intervention.</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Settings</h4>
+                  <p className="text-slate-600">The "brain" of your automation. Control exact amounts, billing cycles (how many months), set late fee grace periods, enter your WhatsApp/Wati API keys, and toggle which background rules run 24/7 (like the 3-day reminder rule!).</p>
+               </div>
+               <div>
+                  <h4 className="font-bold text-violet-800 text-base">Manual</h4>
+                  <p className="text-slate-600">You are here! Use this section to review setup instructions and reference guides anytime.</p>
+               </div>
+            </div>
+          </div>
+        </section>
+
       </div>
     </motion.div>
   );

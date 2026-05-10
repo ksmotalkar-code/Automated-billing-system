@@ -3,7 +3,6 @@ dist
 .env
 .git
 .gitignore
-firebase-applet-config.json
 .firebase
 .wwebjs_auth
 .wwebjs_cache

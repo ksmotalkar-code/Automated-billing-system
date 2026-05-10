@@ -11,16 +11,25 @@ import { createPortalLink } from './portal';
 export const generateInvoicePDF = (customer: Customer, settings: AppSettings) => {
   const doc = new jsPDF({ compress: true });
   
+  const isPaid = customer.balance <= 0;
+
   // Header
   doc.setFontSize(22);
-  doc.setTextColor(40, 40, 40);
-  doc.text('SMART BILLING INVOICE', 105, 20, { align: 'center' });
+  doc.setTextColor(isPaid ? 34 : 40, isPaid ? 197 : 40, isPaid ? 94 : 40); // green if paid, dark if unpaid
+  doc.text(isPaid ? 'PAYMENT RECEIPT' : 'SMART BILLING INVOICE', 105, 20, { align: 'center' });
   
   doc.setFontSize(10);
-  doc.text(`Invoice Date: ${new Date().toLocaleDateString()}`, 105, 30, { align: 'center' });
+  doc.setTextColor(100, 100, 100);
+  doc.text(`Date: ${new Date().toLocaleDateString()}`, 105, 30, { align: 'center' });
+
+  // Watermark
+  doc.setFontSize(60);
+  doc.setTextColor(isPaid ? 220 : 255, isPaid ? 255 : 220, isPaid ? 220 : 220); // faint green or red
+  doc.text(isPaid ? 'PAID' : 'UNPAID', 105, 150, { align: 'center', angle: -45 });
   
   // Company Info (Mock)
   doc.setFontSize(12);
+  doc.setTextColor(40, 40, 40);
   doc.text('Punjab Water Management Authority', 20, 45);
   doc.setFontSize(10);
   doc.text('Sector 17, Chandigarh, Punjab', 20, 50);
@@ -35,29 +44,39 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings) =>
   doc.text(`Mobile: ${customer.mobileNumber}`, 140, 60);
   
   // Table
+  const tableData = isPaid ? [
+    ['Water Usage Charges', `${settings.billingCycleMonths} Months`, settings.billingAmount.toFixed(2)],
+    ['Payment Received', '-', `-${settings.billingAmount.toFixed(2)}`],
+    ['Total Payable', '-', '0.00'],
+  ] : [
+    ['Water Usage Charges', `${settings.billingCycleMonths} Months`, settings.billingAmount.toFixed(2)],
+    ['Previous/Late Outstanding', '-', (customer.balance - settings.billingAmount).toFixed(2)],
+    ['Total Payable', '-', customer.balance.toFixed(2)],
+  ];
+
   autoTable(doc, {
     startY: 75,
     head: [['Description', 'Cycle', 'Amount (INR)']],
-    body: [
-      ['Water Usage Charges', `${settings.billingCycleMonths} Months`, settings.billingAmount.toFixed(2)],
-      ['Previous Outstanding', '-', (customer.balance - settings.billingAmount).toFixed(2)],
-      ['Total Payable', '-', customer.balance.toFixed(2)],
-    ],
+    body: tableData,
     theme: 'striped',
-    headStyles: { fillColor: [37, 99, 235] },
+    headStyles: { fillColor: isPaid ? [34, 197, 94] : [37, 99, 235] },
   });
   
   // Footer
   const finalY = (doc as any).lastAutoTable.finalY + 20;
   doc.setFontSize(12);
-  doc.text('Payment Instructions:', 20, finalY);
-  doc.setFontSize(10);
-  doc.text('1. Please pay via UPI using the QR code in the app.', 20, finalY + 7);
-  doc.text('2. Late payments will attract a penalty of INR ' + settings.penaltyAmount, 20, finalY + 12);
+  if (!isPaid) {
+    doc.text('Payment Instructions:', 20, finalY);
+    doc.setFontSize(10);
+    doc.text('1. Please pay via UPI using the QR code in the app.', 20, finalY + 7);
+    doc.text('2. Late payments will attract a penalty of INR ' + settings.penaltyAmount, 20, finalY + 12);
+  } else {
+    doc.text('Thank you for your timely payment!', 20, finalY);
+  }
   
   doc.setFontSize(14);
-  doc.setTextColor(37, 99, 235);
-  doc.text(`TOTAL DUE: INR ${customer.balance.toFixed(2)}`, 140, finalY + 10);
+  doc.setTextColor(isPaid ? 34 : 37, isPaid ? 197 : 99, isPaid ? 94 : 235);
+  doc.text(`TOTAL DUE: INR ${isPaid ? '0.00' : customer.balance.toFixed(2)}`, 140, finalY + 10);
   
   
   return doc.output('blob');
@@ -80,7 +99,12 @@ export const sendWhatsAppNotification = async (
     return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
   }
 
-  whatsappService.updateConfig(settings.metaWhatsAppApiKey || null, settings.metaWhatsAppPhoneNumberId || null, settings.cunnektApiKey || null);
+  whatsappService.updateConfig(
+    settings.metaWhatsAppApiKey || null, 
+    settings.metaWhatsAppPhoneNumberId || null, 
+    settings.watiAccessToken || null, 
+    settings.watiApiEndpoint || null
+  );
   
   let finalMessage = message;
   let usePortalLink = false;
@@ -284,6 +308,19 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       const isNewDay = !lastNotification || new Date(lastNotification).toDateString() !== now.toDateString();
       if (isNewDay) {
         console.log("Daily Notification Flag Set");
+
+        // 3-Day Reminder Logic
+        const daysSinceLastBillInt = lastBilling ? Math.floor((now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+        if (daysSinceLastBillInt > 0 && daysSinceLastBillInt % 3 === 0 && automation.bulkProcessing) {
+          console.log("3-Day Reminder Triggered for unpaid customers");
+          const unpaidCustomers = customers.filter(c => c.status === 'Active' && c.balance > 0);
+          for (const customer of unpaidCustomers) {
+            const pdfBlob = generateInvoicePDF(customer, settings);
+            const reminderMessage = `Dear ${customer.name}, this is a gentle reminder that your updated balance of INR ${customer.balance.toFixed(2)} is unpaid (including any applicable late fees). Please find your updated bill attached and pay promptly to avoid service impacts.`;
+            sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto reminder notice error", e));
+          }
+        }
+
         localStorage.setItem(`automation_notif_${settings.ownerId || 'sys'}`, now.toISOString());
         updatedSettings.lastNotificationDate = now.toISOString();
         needsSettingsUpdate = true;
@@ -302,7 +339,12 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
 };
 
 export const shareReportToCustomers = async (report: Report, customers: Customer[], settings: AppSettings) => {
-  whatsappService.updateConfig(settings.metaWhatsAppApiKey || null, settings.metaWhatsAppPhoneNumberId || null, settings.cunnektApiKey || null);
+  whatsappService.updateConfig(
+    settings.metaWhatsAppApiKey || null, 
+    settings.metaWhatsAppPhoneNumberId || null, 
+    settings.watiAccessToken || null,
+    settings.watiApiEndpoint || null
+  );
 
   let blob: Blob | undefined = undefined;
   let attachmentName: string | undefined = undefined;

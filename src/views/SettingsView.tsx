@@ -4,7 +4,7 @@ import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, Dol
 import { motion } from "motion/react";
 import { subscribeToSettings, saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
 import { useTranslation } from "react-i18next";
-import { Trash2, LogOut, MessageCircle, Loader2, X } from "lucide-react";
+import { Trash2, LogOut, MessageCircle, Loader2, X, Info } from "lucide-react";
 import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
@@ -79,7 +79,7 @@ export function SettingsView() {
       if (s) {
         setSettings(s);
         import("../services/whatsappService").then(({ whatsappService }) => {
-          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.cunnektApiKey || null);
+          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.watiAccessToken || null, s.watiApiEndpoint || null);
         });
       }
     });
@@ -117,8 +117,8 @@ export function SettingsView() {
           testMobile, 
           apiKey: settings.metaWhatsAppApiKey, 
           phoneId: settings.metaWhatsAppPhoneNumberId,
-          cunnektApiKey: settings.cunnektApiKey,
-          cunnektBaseUrl: settings.cunnektBaseUrl,
+          watiAccessToken: settings.watiAccessToken,
+          watiApiEndpoint: settings.watiApiEndpoint,
           method: settings.preferredNotificationMethod
         })
       });
@@ -192,16 +192,16 @@ export function SettingsView() {
       }
     }
 
-    // WhatsApp Configuration Validation (Cunnekt)
-    if (updatedSettings.preferredNotificationMethod === 'cunnekt') {
-      const apiKey = updatedSettings.cunnektApiKey?.trim() || '';
-      const baseUrl = updatedSettings.cunnektBaseUrl?.trim() || '';
+    // WhatsApp Configuration Validation (WATI)
+    if (updatedSettings.preferredNotificationMethod === 'wati') {
+      const accessToken = updatedSettings.watiAccessToken?.trim() || '';
+      const endpoint = updatedSettings.watiApiEndpoint?.trim() || '';
       
-      if (!apiKey || !baseUrl) {
+      if (!accessToken || !endpoint) {
         setIsSaving(false);
         showAlert(
-          "Cunnekt Configuration Incomplete",
-          "Your Cunnekt API Key or Base URL is missing. " +
+          "WATI Configuration Incomplete",
+          "Your WATI Access Token or API Endpoint is missing. " +
           "To ensure functionality, the notification method has been safely fallen back to 'Public Portal Link (Manual)'."
         );
         updatedSettings.preferredNotificationMethod = 'manual_link';
@@ -333,11 +333,11 @@ export function SettingsView() {
       return;
     }
     
-    if (!settings.metaWhatsAppApiKey && !settings.cunnektApiKey) {
+    if (!settings.metaWhatsAppApiKey && !settings.watiAccessToken) {
       setConfirmConfig({
         isOpen: true,
         title: "API Not Configured",
-        message: "You haven't configured any WhatsApp API (Meta or Cunnekt). Would you like to send messages manually via the WhatsApp App instead?",
+        message: "You haven't configured any WhatsApp API (Meta or WATI). Would you like to send messages manually via the WhatsApp App instead?",
         onConfirm: () => {
           setConfirmConfig({ ...confirmConfig, isOpen: false });
           startManualBroadcast();
@@ -350,7 +350,7 @@ export function SettingsView() {
     setConfirmConfig({
       isOpen: true,
       title: "Confirm Broadcast?",
-      message: `Are you sure you want to send this message to ALL active customers using ${settings.preferredNotificationMethod === 'cunnekt' ? 'Cunnekt' : 'Meta API'}?`,
+      message: `Are you sure you want to send this message to ALL active customers using ${settings.preferredNotificationMethod === 'wati' ? 'WATI' : 'Meta API'}?`,
       onConfirm: async () => {
         setIsBroadcasting(true);
         try {
@@ -375,8 +375,8 @@ export function SettingsView() {
                message: broadcastMessage, 
                apiKey: settings.metaWhatsAppApiKey, 
                phoneId: settings.metaWhatsAppPhoneNumberId,
-               cunnektApiKey: settings.cunnektApiKey,
-               cunnektBaseUrl: settings.cunnektBaseUrl,
+               watiAccessToken: settings.watiAccessToken,
+               watiApiEndpoint: settings.watiApiEndpoint,
                mediaBase64,
                mediaName
             })
@@ -564,7 +564,7 @@ export function SettingsView() {
               </div>
               <div>
                 <CardTitle className="text-lg">Automated WhatsApp Messaging</CardTitle>
-                <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal or Cunnekt to seamlessly send automated bills to customers.</p>
+                <p className="text-sm neu-text-muted">Setup WhatsApp via Meta Developer portal or WATI to seamlessly send automated bills to customers.</p>
                 <div className="bg-amber-50 border-l-4 border-amber-500 p-3 mb-4 mt-2">
                   <h4 className="text-amber-800 font-bold text-sm">⚠️ Meta 24-Hour Window & Templates Rule</h4>
                   <p className="text-amber-700 text-xs mt-1">
@@ -586,21 +586,12 @@ export function SettingsView() {
                     >
                       Meta Official API
                     </button>
-                    {providers.map(provider => (
-                      <button 
-                        key={provider.id}
-                        onClick={() => {
-                           setSettings({
-                               ...settings, 
-                               preferredNotificationMethod: provider.id,
-                               cunnektBaseUrl: provider.baseUrl
-                           });
-                        }}
-                        className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settings.preferredNotificationMethod === provider.id ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-emerald-600'}`}
-                      >
-                        {provider.name}
-                      </button>
-                    ))}
+                    <button 
+                      onClick={() => setSettings({...settings, preferredNotificationMethod: 'wati'})}
+                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${settings.preferredNotificationMethod === 'wati' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white text-emerald-600'}`}
+                    >
+                      WATI API
+                    </button>
                   </div>
                 </div>
 
@@ -631,30 +622,31 @@ export function SettingsView() {
                       <p className="text-xs neu-text-muted ml-1 mt-1">Found in your Meta App Dashboard &gt; WhatsApp &gt; API Setup &gt; Phone number ID.</p>
                     </div>
                   </>
-                ) : settings.preferredNotificationMethod ? (
+                ) : settings.preferredNotificationMethod === 'wati' ? (
                   <>
                     <div className="space-y-2">
-                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">Provide API Key</label>
+                      <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">WATI Access Token</label>
                       <input
                         type="password"
-                        value={settings.cunnektApiKey || ''}
-                        onChange={(e) => setSettings({ ...settings, cunnektApiKey: e.target.value })}
+                        value={settings.watiAccessToken || ''}
+                        onChange={(e) => setSettings({ ...settings, watiAccessToken: e.target.value })}
                         className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
                         placeholder="••••••••••••••"
                       />
+                      <p className="text-xs neu-text-muted ml-1 mt-1">From WATI Dashboard &gt; API Docs.</p>
                     </div>
                     <div className="space-y-2">
                       <label className="text-sm font-bold uppercase tracking-wider neu-text-muted ml-1">
-                        Provider Base URL
+                        API Endpoint
                       </label>
                       <input
                         type="text"
-                        value={settings.cunnektBaseUrl || ''}
-                        onChange={(e) => setSettings({ ...settings, cunnektBaseUrl: e.target.value })}
-                        disabled
-                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium opacity-70"
-                        placeholder="Configured by Provider"
+                        value={settings.watiApiEndpoint || ''}
+                        onChange={(e) => setSettings({ ...settings, watiApiEndpoint: e.target.value })}
+                        className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                        placeholder="https://live-server-xxxx.wati.io"
                       />
+                      <p className="text-xs neu-text-muted ml-1 mt-1">Your unique WATI API endpoint URL.</p>
                     </div>
                   </>
                 ) : null}
@@ -673,7 +665,7 @@ export function SettingsView() {
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={handleTestWhatsApp}
-                      disabled={isTestLoading || (!settings.metaWhatsAppApiKey && !settings.cunnektApiKey)}
+                      disabled={isTestLoading || (!settings.metaWhatsAppApiKey && !settings.watiAccessToken)}
                       className="px-6 py-3 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 disabled:opacity-50 whitespace-nowrap"
                     >
                       {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Send Test Message"}
@@ -783,19 +775,15 @@ export function SettingsView() {
                     value={settings.preferredNotificationMethod || 'api'}
                     onChange={(e) => {
                        const selected = e.target.value;
-                       const providerMatch = providers.find(p => p.id === selected);
                        setSettings({ 
                          ...settings, 
-                         preferredNotificationMethod: selected,
-                         cunnektBaseUrl: providerMatch ? providerMatch.baseUrl : settings.cunnektBaseUrl
+                         preferredNotificationMethod: selected
                        });
                     }}
                     className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-bold text-emerald-600"
                   >
                     <option value="api">Meta Automated API (Official)</option>
-                    {providers.map(provider => (
-                      <option key={provider.id} value={provider.id}>{provider.name} ({provider.baseUrl})</option>
-                    ))}
+                    <option value="wati">WATI API</option>
                     <option value="manual_link">Public Portal Link (Manual)</option>
                   </select>
                   <p className="text-xs neu-text-muted ml-1 mt-2">
@@ -842,24 +830,39 @@ export function SettingsView() {
 
               <div className="grid gap-4">
                 {[
-                  { key: 'billingLifecycle', label: 'Automated Billing Lifecycle' },
-                  { key: 'ruleBased', label: 'Rule-based Automation' },
-                  { key: 'lateFee', label: 'Auto Late Fee & Waiver' },
-                  { key: 'scheduledBilling', label: 'Scheduled Billing Cycles' },
-                  { key: 'bulkProcessing', label: 'Bulk Processing Engine' },
-                  { key: 'smartNotifications', label: 'Smart Notification Timing' },
-                  { key: 'autoShareReports', label: 'Automate Report Sharing' },
-                  { key: 'autoCreateComplaints', label: 'Auto Create Complaints via WhatsApp Response' },
-                  { key: 'enforceIstTimeWindow', label: 'Enforce 9AM-10AM IST Time Window' }
+                  { key: 'billingLifecycle', label: 'Automated Billing Lifecycle', desc: 'Automatically manages the full lifecycle from invoice generation to overdue escalation.' },
+                  { key: 'ruleBased', label: 'Rule-based Automation', desc: 'Enforces your configured business rules strictly without manual intervention.' },
+                  { key: 'lateFee', label: 'Auto Late Fee & Waiver', desc: 'Automatically adds penalties to unpaid balances when the grace period expires.' },
+                  { key: 'scheduledBilling', label: 'Scheduled Billing Cycles', desc: 'Generates new bills exactly when the billing cycle demands.' },
+                  { key: 'bulkProcessing', label: 'Bulk Processing Engine', desc: 'Sends notifications and generates PDFs for all customers in background batches.' },
+                  { key: 'smartNotifications', label: 'Smart Notification Timing', desc: 'Schedules notifications optimally and sends 3-day reminders to unpaid customers.' },
+                  { key: 'autoShareReports', label: 'Automate Report Sharing', desc: 'Instantly broadcasts created reports to all customers via WhatsApp.' },
+                  { key: 'autoCreateComplaints', label: 'Auto Create Complaints via WhatsApp Response', desc: 'Raises a ticket when customers reply with "complaint" via WhatsApp.' },
+                  { key: 'enforceIstTimeWindow', label: 'Enforce 9AM-10AM IST Time Window', desc: 'Restricts active notification dispatch to daytime hours for politeness.' }
                 ].map(item => (
-                  <label key={item.key} className="flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer">
-                    <span className="text-sm font-bold">{item.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={settings.automation?.[item.key as keyof typeof settings.automation] ?? true}
-                      onChange={(e) => setSettings({ ...settings, automation: { ...settings.automation, [item.key]: e.target.checked } as any })}
-                      className="w-6 h-6 rounded border-[var(--shadow-dark)] text-blue-600 focus:ring-blue-500 bg-transparent"
-                    />
+                  <label key={item.key} className="group relative flex items-center justify-between p-4 neu-pressed rounded-xl cursor-pointer hover:bg-black/5 transition-colors">
+                    <div className="flex flex-col gap-1 pr-4">
+                      <span className="text-sm font-bold flex items-center gap-2">
+                         {item.label}
+                         <Info className="w-4 h-4 text-blue-500 opacity-70 group-hover:opacity-100 transition-opacity" />
+                      </span>
+                      
+                      {/* Glassy Tooltip */}
+                      <div className="absolute left-0 bottom-full mb-2 w-[calc(100%-2rem)] md:w-80 ml-4 p-3 bg-white/80 backdrop-blur-md border border-white/50 shadow-xl rounded-xl text-xs text-slate-700 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 translate-y-2 group-hover:translate-y-0 z-10">
+                        <div className="font-semibold text-blue-800 mb-1">{item.label}</div>
+                        {item.desc}
+                      </div>
+
+                    </div>
+                    <div className="relative inline-block w-12 h-6 rounded-full transition-colors duration-300 shrink-0" style={{ backgroundColor: settings.automation?.[item.key as keyof typeof settings.automation] ?? true ? 'var(--accent)' : 'var(--shadow-dark)' }}>
+                      <input
+                        type="checkbox"
+                        checked={settings.automation?.[item.key as keyof typeof settings.automation] ?? true}
+                        onChange={(e) => setSettings({ ...settings, automation: { ...settings.automation, [item.key]: e.target.checked } as any })}
+                        className="sr-only"
+                      />
+                      <motion.div animate={{ x: settings.automation?.[item.key as keyof typeof settings.automation] ?? true ? 24 : 2 }} className="absolute left-0 top-1 w-4 h-4 bg-white rounded-full shadow-sm" />
+                    </div>
                   </label>
                 ))}
               </div>

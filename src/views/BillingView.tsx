@@ -33,7 +33,7 @@ export function BillingView() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
-  const [showPaidAndSent, setShowPaidAndSent] = useState(false);
+  const [activeTab, setActiveTab] = useState<'Unpaid' | 'Paid'>('Unpaid');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
   const [isIndividualNotifyOpen, setIsIndividualNotifyOpen] = useState(false);
@@ -103,7 +103,7 @@ export function BillingView() {
 
   const getMockStatus = (customer: Customer) => {
     if (customer.balance === 0) {
-      return customer.invoiceSent ? "Paid & Notified" : "Paid";
+      return customer.invoiceSent ? "Paid & Sent" : "Paid";
     }
     if (customer.balance > settings.billingAmount) return "Overdue";
     return "Pending";
@@ -117,8 +117,10 @@ export function BillingView() {
     if (!matchesSearch) return false;
 
     const status = getMockStatus(c);
-    if (status === "Paid & Notified" && !showPaidAndSent) {
-      return false; // hide Paid & Notified if toggle is off
+    if (activeTab === 'Unpaid') {
+      if (status === "Paid" || status === "Paid & Sent") return false;
+    } else {
+      if (status !== "Paid" && status !== "Paid & Sent") return false;
     }
     return true;
   });
@@ -220,7 +222,7 @@ export function BillingView() {
     let defaultMsg = "";
     if (status === "Pending" || status === "Overdue") {
       defaultMsg = `Hi ${customer.name},\nYour current balance is ₹${customer.balance}. Please make the payment at your earliest convenience to avoid any service interruption.`;
-    } else if (status === "Paid" || status === "Paid & Notified") {
+    } else if (status === "Paid" || status === "Paid & Sent") {
       defaultMsg = `Hi ${customer.name},\nThank you for your recent payment. Your account balance is now ₹${customer.balance}.`;
     } else {
       defaultMsg = `Hi ${customer.name},\n`;
@@ -247,25 +249,67 @@ export function BillingView() {
       return;
     }
 
-    setIsSendingNotify(true);
-    try {
-      // Message is already pre-filled with the customer name
-      const message = notifyMessage;
-      const result = await sendWhatsAppNotification(individualNotifyCustomer, message, settings, individualAttachment || undefined, individualAttachment?.name, false, false);
-      
-      if (result.success) {
-        showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
-        setIsIndividualNotifyOpen(false);
-        setIndividualNotifyCustomer(null);
-        setNotifyMessage("");
-        setIndividualAttachment(null);
-      } else {
-        showAlert("Failed", result.error || "Could not send notification.");
+    const hasMeta = !!(settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId);
+    const hasWati = !!settings.watiAccessToken;
+    
+    const sendFn = async (preferredMethod: string) => {
+      setIsSendingNotify(true);
+      try {
+        const tempSettings = { ...settings, preferredNotificationMethod: preferredMethod };
+        const message = notifyMessage;
+        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, false);
+        
+        if (result.success) {
+          showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
+          setIsIndividualNotifyOpen(false);
+          setIndividualNotifyCustomer(null);
+          setNotifyMessage("");
+          setIndividualAttachment(null);
+        } else {
+          showAlert("Failed", result.error || "Could not send notification.");
+        }
+      } catch (err) {
+        showAlert("Error", "An unexpected error occurred.");
+      } finally {
+        setIsSendingNotify(false);
       }
-    } catch (err) {
-      showAlert("Error", "An unexpected error occurred.");
-    } finally {
-      setIsSendingNotify(false);
+    };
+
+    if (hasMeta && hasWati) {
+       const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
+       const deliveryRef = { current: 'api' };
+       
+       setConfirmConfig({
+          isOpen: true,
+          title: "Select Sending Method",
+          message: "Both Meta and WATI APIs are configured. Select how to send this message:",
+          isDestructive: false,
+          showCancel: true,
+          children: (
+            <div className="flex flex-col gap-4 mt-2">
+              <div className="space-y-2">
+                 <label className="text-sm font-semibold">WhatsApp Provider</label>
+                 <select onChange={(e) => providerRef.current = e.target.value} defaultValue={providerRef.current} className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm">
+                   <option value="api">Meta Official API</option>
+                   <option value="wati">WATI API</option>
+                 </select>
+              </div>
+              <div className="space-y-2">
+                 <label className="text-sm font-semibold">Delivery Method</label>
+                 <select onChange={(e) => deliveryRef.current = e.target.value} defaultValue="api" className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm">
+                   <option value="api">Automated (Background via API)</option>
+                   <option value="manual_link">Manual: WhatsApp App/Web</option>
+                 </select>
+              </div>
+            </div>
+          ),
+          onConfirm: () => {
+             setConfirmConfig(prev => ({...prev, isOpen: false}));
+             sendFn(deliveryRef.current === 'manual_link' ? 'manual_link' : providerRef.current);
+          }
+       });
+    } else {
+       sendFn(settings.preferredNotificationMethod || 'api');
     }
   };
 
@@ -309,7 +353,14 @@ export function BillingView() {
       return;
     }
 
-    deliveryModeRef.current = "api"; // reset default
+    if (!settings) return;
+
+    const hasMeta = !!(settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId);
+    const hasWati = !!settings.watiAccessToken;
+    const hasAnyApi = hasMeta || hasWati;
+
+    const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
+    const deliveryRef = { current: hasAnyApi ? 'api' : 'web' };
 
     setConfirmConfig({
       isOpen: true,
@@ -318,26 +369,44 @@ export function BillingView() {
       isDestructive: false,
       showCancel: true,
       children: (
-        <div className="flex flex-col gap-2 mt-2">
-          <label className="text-sm font-semibold">Delivery Method</label>
-          <select 
-            className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
-            onChange={(e) => deliveryModeRef.current = e.target.value}
-            defaultValue="api"
-          >
-            <option value="api">WhatsApp Cloud API (Automated)</option>
-            <option value="web">WhatsApp Web (Manual Prompts - Slow)</option>
-          </select>
+        <div className="flex flex-col gap-4 mt-2">
+          {hasMeta && hasWati && (
+             <div className="space-y-2">
+               <label className="text-sm font-semibold">WhatsApp Provider</label>
+               <select 
+                 className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+                 onChange={(e) => providerRef.current = e.target.value}
+                 defaultValue={providerRef.current}
+               >
+                 <option value="api">Meta Official API</option>
+                 <option value="wati">WATI API</option>
+               </select>
+             </div>
+          )}
+          <div className="space-y-2">
+            <label className="text-sm font-semibold">Delivery Method</label>
+            <select 
+              className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+              onChange={(e) => deliveryRef.current = e.target.value}
+              defaultValue={deliveryRef.current}
+            >
+              {hasAnyApi && <option value="api">Automated (Background via API)</option>}
+              <option value="web">Manual: WhatsApp Web</option>
+            </select>
+          </div>
         </div>
       ),
       onConfirm: async () => {
+        setConfirmConfig(prev => ({...prev, isOpen: false}));
+
         setIsSendingBulk(true);
         setBulkProgress(0);
         
         let errors = [];
-        const isApiMode = deliveryModeRef.current === "api";
-        // Temporarily enforce bulk API usage preference in memory for this run
-        const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" }; // By clearing api key, it forces manual if Web is selected
+        const isApiMode = deliveryRef.current === "api";
+        const selectedProvider = providerRef.current;
+        
+        const tempSettings = { ...settings, preferredNotificationMethod: selectedProvider };
 
         const batch = writeBatch(db);
         let updatesSkipped = 0;
@@ -389,11 +458,12 @@ export function BillingView() {
               message: `Some customers couldn't be notified via API:\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
               isDestructive: false,
               showCancel: true,
+              children: <></>,
               onConfirm: () => {
                 const genericMessage = `Important Notice:\n\nWater bills have been generated for this cycle. Please check your app or portal.`;
                 const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
                 window.open(url, '_blank');
-                setConfirmConfig({...confirmConfig, isOpen: false});
+                setConfirmConfig(prev => ({...prev, isOpen: false}));
               }
             });
           } else {
@@ -405,6 +475,7 @@ export function BillingView() {
 
         // Ensure automated system keeps running after clicking sent monthly bills
         try {
+          // runAutomationCycle isn't fully robust here, maybe omit or await safely
           await runAutomationCycle(customers, settings);
         } catch (e) {
           console.error("Failed to run automation cycle post-dispatch", e);
@@ -536,13 +607,18 @@ export function BillingView() {
           <p className="neu-text-muted">{t('Manage Invoices')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 mr-4 px-3 py-1.5 neu-pressed rounded-xl">
-            <span className="text-xs font-bold uppercase tracking-wider neu-text-muted">Show Sent</span>
-            <button 
-              onClick={() => setShowPaidAndSent(!showPaidAndSent)}
-              className={`w-10 h-5 rounded-full transition-colors relative ${showPaidAndSent ? 'bg-blue-600' : 'bg-gray-300'}`}
+          <div className="flex items-center p-1 bg-gray-100 rounded-xl mr-2">
+            <button
+              onClick={() => setActiveTab('Unpaid')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'Unpaid' ? 'bg-white shadow text-blue-800' : 'text-gray-500 hover:text-gray-800'}`}
             >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${showPaidAndSent ? 'left-6' : 'left-1'}`} />
+              Unpaid Invoices
+            </button>
+            <button
+              onClick={() => setActiveTab('Paid')}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'Paid' ? 'bg-white shadow text-green-800' : 'text-gray-500 hover:text-gray-800'}`}
+            >
+              Paid & Sent
             </button>
           </div>
           <motion.button 
@@ -648,7 +724,7 @@ export function BillingView() {
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                           customer.status === 'Suspended' ? 'bg-red-200 text-red-900 border border-red-500 font-bold tracking-wider' :
                           status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 
-                          status === 'Paid & Notified' ? 'bg-blue-100 text-blue-700' :
+                          status === 'Paid & Sent' ? 'bg-blue-100 text-blue-700' :
                           status === 'Overdue' ? 'bg-red-100 text-red-700' :
                           'bg-amber-100 text-amber-700'
                         }`}>
@@ -674,14 +750,14 @@ export function BillingView() {
                           </button>
                           <button 
                             onClick={(_) => {
-                              if (status === 'Paid & Notified') {
+                              if (status === 'Paid & Sent') {
                                 promptResendNotification(customer);
                               } else {
                                 handleSendWhatsApp(customer);
                               }
                             }}
                             className="p-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-lg transition-colors" 
-                            title={status === 'Paid & Notified' ? "Resend WhatsApp Notification" : "Send WhatsApp"}
+                            title={status === 'Paid & Sent' ? "Resend WhatsApp Notification" : "Send WhatsApp"}
                           >
                             <MessageCircle className="w-4 h-4" />
                           </button>

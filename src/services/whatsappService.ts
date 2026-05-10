@@ -15,8 +15,9 @@ export interface WhatsAppMessage {
 class WhatsAppService {
   private apiKey: string | null = null;
   private phoneNumberId: string | null = null;
-  private cunnektApiKey: string | null = null;
+  private watiAccessToken: string | null = null;
   private baseUrl: string = 'https://graph.facebook.com/v17.0'; // Example for Meta WhatsApp Business API
+  private watiApiEndpoint: string | null = null;
 
   constructor() {
     // These will be populated from environment variables or settings later
@@ -24,10 +25,13 @@ class WhatsAppService {
     this.phoneNumberId = import.meta.env.VITE_WHATSAPP_PHONE_NUMBER_ID || null;
   }
 
-  public updateConfig(apiKey: string | null, phoneNumberId: string | null, cunnektApiKey?: string | null) {
+  public updateConfig(apiKey: string | null, phoneNumberId: string | null, watiAccessToken?: string | null, watiApiEndpoint?: string | null) {
     this.apiKey = apiKey ? apiKey.trim() : null;
-    if (cunnektApiKey !== undefined) {
-       this.cunnektApiKey = cunnektApiKey ? cunnektApiKey.trim() : null;
+    if (watiAccessToken !== undefined) {
+       this.watiAccessToken = watiAccessToken ? watiAccessToken.trim() : null;
+    }
+    if (watiApiEndpoint !== undefined) {
+       this.watiApiEndpoint = watiApiEndpoint ? watiApiEndpoint.trim() : null;
     }
     if (phoneNumberId) {
       let cleaned = phoneNumberId.trim();
@@ -47,8 +51,8 @@ class WhatsAppService {
    */
   public isConfigured(): boolean {
     const hasMeta = !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
-    const hasCunnekt = !!(this.cunnektApiKey && this.cunnektApiKey.trim());
-    return hasMeta || hasCunnekt;
+    const hasWati = !!(this.watiAccessToken && this.watiAccessToken.trim());
+    return hasMeta || hasWati;
   }
 
   /**
