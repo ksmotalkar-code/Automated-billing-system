@@ -1116,6 +1116,8 @@ async function startServer() {
       const msgLower = message.toLowerCase().trim();
       let matched = false;
       let attachments: any[] = [];
+      let sysTrigger = "";
+      let hasCustomCommandMatched = false;
 
       // Also fetch customer for variables
       let custData: any = {};
@@ -1135,11 +1137,30 @@ async function startServer() {
           }
       }
 
+      // First check user defined commands (which includes modified system commands!)
+      for (const cmd of chatbotSettings.commands || []) {
+         if (!cmd.isActive) continue;
+         if (testChatbotCommand(message, cmd.triggerWord, cmd.buttonLabel)) {
+            replyText = cmd.response || '';
+            sysTrigger = cmd.triggerWord;
+            hasCustomCommandMatched = true;
+            matched = true;
+            break;
+         }
+      }
+
       const adminSettings = await getSettings(ownerId);
-      const intentRes = await routeSystemIntent(msgLower, custData, ownerId, adminSettings);
+      
+      if (!hasCustomCommandMatched) {
+          sysTrigger = msgLower;
+      }
+
+      const intentRes = await routeSystemIntent(sysTrigger, custData, ownerId, adminSettings, hasCustomCommandMatched ? replyText : "");
       if (intentRes.matched) {
          replyText = intentRes.replyText;
          attachments = intentRes.attachments;
+         matched = true;
+      } else if (hasCustomCommandMatched) {
          matched = true;
       } else if (msgLower.startsWith("complaint:")) {
          const complaintText = message.substring(10).trim();
@@ -1164,23 +1185,6 @@ async function startServer() {
             replyText = `Please provide more details for your complaint.`;
          }
          matched = true;
-      }
-
-      if (!matched) {
-        for (const cmd of chatbotSettings.commands || []) {
-           if (!cmd.isActive) continue;
-           if (testChatbotCommand(message, cmd.triggerWord, cmd.buttonLabel)) {
-              replyText = cmd.response || '';
-              // Also process it for generic attachments via intent helper
-              const sysIntentRes = await routeSystemIntent(cmd.triggerWord, custData, ownerId, adminSettings, replyText);
-              if (sysIntentRes.matched && sysIntentRes.attachments.length > 0) {
-                 replyText = sysIntentRes.replyText;
-                 attachments = sysIntentRes.attachments;
-              }
-              matched = true;
-              break;
-           }
-        }
       }
 
       // Replace variables
@@ -1312,19 +1316,42 @@ async function startServer() {
                         } catch (e) {}
                      }
 
+                     const chatbotSettings = await getChatbotSettings(ownerId);
                      let handled = false;
                      const msgLower = msgBody.toLowerCase().trim();
+                     let responseText = "I'm sorry, I don't understand that command.";
+                     let sysTrigger = "";
+                     let hasCustomCommandMatched = false;
 
-                     // System commands mapped directly
-                     const intentRes = await routeSystemIntent(msgLower, matchedCustomer, ownerId, settings);
+                     if (chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
+                       for (const cmd of chatbotSettings.commands) {
+                          if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
+                            console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
+                            responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
+                            sysTrigger = cmd.triggerWord;
+                            hasCustomCommandMatched = true;
+                            break;
+                          }
+                       }
+                     }
+
+                     if (!hasCustomCommandMatched) {
+                        sysTrigger = msgLower;
+                     }
+
+                     const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "");
+                     
+                     let attachmentsToPass: any[] = [];
                      if (intentRes.matched) {
-                          const responseText = intentRes.replyText;
-                          await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                          if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
-                          handled = true;
+                         responseText = intentRes.replyText;
+                         if (intentRes.attachments && intentRes.attachments.length > 0) {
+                            attachmentsToPass = intentRes.attachments;
+                         }
+                         handled = true;
+                     } else if (hasCustomCommandMatched) {
+                         handled = true;
                      } else if (msgLower.startsWith("complaint:")) {
                         const complaintText = msgBody.substring(10).trim();
-                        let responseText = "";
                         if (complaintText.length > 5) {
                            const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
                            await saveComplaintData(complaintId, {
@@ -1346,47 +1373,30 @@ async function startServer() {
                         } else {
                            responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
                         }
-                        await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                        if (dbInstance) { try { await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({ role: 'assistant', content: responseText, source: 'whatsapp', timestamp: admin.firestore.FieldValue.serverTimestamp() }); } catch (e) {} }
                         handled = true;
                      }
 
-                     const chatbotSettings = await getChatbotSettings(ownerId);
-                     
-                     if (!handled && chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
-                       for (const cmd of chatbotSettings.commands) {
-                          if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
-                            console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
-                            if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
-                              try {
-                                 let responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
-                                 const sysIntentRes = await routeSystemIntent(cmd.triggerWord, matchedCustomer, ownerId, settings, responseText);
-                                 if (sysIntentRes.matched && sysIntentRes.attachments.length > 0) {
-                                     responseText = sysIntentRes.replyText;
-                                 }
-                                 
-                                 await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                                
-                                const dbInstance = admin.apps.length ? admin.firestore() : null;
-                                if (dbInstance) {
-                                   try {
-                                      await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
-                                        role: 'assistant',
-                                        content: responseText,
-                                        source: 'whatsapp',
-                                        timestamp: admin.firestore.FieldValue.serverTimestamp()
-                                      });
-                                   } catch (e) {}
-                                }
-                                
-                                handled = true;
-                                break;
-                             } catch (e) {
-                                console.error("[Webhook] Failed to send chatbot reply:", e);
+                     if (handled && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
+                         try {
+                             if (attachmentsToPass.length > 0) {
+                               await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText, attachmentsToPass[0].data, attachmentsToPass[0].name);
+                             } else {
+                               await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
                              }
-                           }
+                             const dbInstance = admin.apps.length ? admin.firestore() : null;
+                             if (dbInstance) {
+                                try {
+                                   await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                                     role: 'assistant',
+                                     content: responseText,
+                                     source: 'whatsapp',
+                                     timestamp: admin.firestore.FieldValue.serverTimestamp()
+                                   });
+                                } catch (e) {}
+                             }
+                         } catch (e) {
+                             console.error("[Webhook] Failed to send chatbot reply:", e);
                          }
-                       }
                      }
 
                      const isComplaint = msgBody.toLowerCase().includes('complaint') || msgBody.toLowerCase().includes('complain');
