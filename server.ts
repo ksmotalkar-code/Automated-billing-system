@@ -5,9 +5,6 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import admin from "firebase-admin";
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from 'firebase/app';
 import { getFirestore as getClientFirestore, doc, getDoc as getDocClient, collection as collectionClient, query as queryClient, where as whereClient, getDocs as getDocsClient, setDoc as setDocClient } from 'firebase/firestore';
@@ -658,7 +655,6 @@ async function startServer() {
        const istHour = istTime.getHours();
        
        // Optimization: Use a shared standard font set if we process many customers
-       const StandardFonts = require('pdf-lib').StandardFonts;
 
        if (settings.automation.enforceIstTimeWindow && !specificOwnerId) {
           if (istHour < 9 || istHour >= 18) { // Expanded window for general automation check
