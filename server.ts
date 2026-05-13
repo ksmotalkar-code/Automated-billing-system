@@ -50,6 +50,9 @@ interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
+  metaTemplateBilling?: string;
+  metaTemplateReceipt?: string;
+  metaTemplateBroadcast?: string;
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
@@ -298,7 +301,7 @@ interface AppSettings {
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = 3000;
 
   // Security and performance middleware
   app.use(helmet({
@@ -454,6 +457,9 @@ async function startServer() {
         const uploadData = await uploadRes.json();
         if (!uploadRes.ok) {
           console.error(`[WhatsApp] Media Upload Error:`, uploadData);
+          if (uploadData.error && uploadData.error.message && uploadData.error.message.includes('register this phone number')) {
+             throw new Error("Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.");
+          }
           throw new Error(uploadData.error?.message || "Failed to upload media to WhatsApp");
         }
         mediaId = uploadData.id;
@@ -474,15 +480,15 @@ async function startServer() {
        };
     } else if (templateCategory) {
        bodyPayload.type = 'template';
-       let templateName = 'general_announcement';
+       let templateName = settings.metaTemplateBroadcast || 'general_announcement';
        let components: any[] = [];
        
        if (templateCategory === 'billing') {
-         templateName = 'monthly_bill_notification';
+         templateName = settings.metaTemplateBilling || 'monthly_bill_notification';
        } else if (templateCategory === 'receipt') {
-         templateName = 'payment_reminder'; // or a separate receipt template if defined
+         templateName = settings.metaTemplateReceipt || 'payment_reminder'; 
        } else if (templateCategory === 'broadcast') {
-         templateName = 'general_announcement';
+         templateName = settings.metaTemplateBroadcast || 'general_announcement';
        }
 
        if (mediaId && templateCategory === 'billing') {
@@ -552,7 +558,9 @@ async function startServer() {
     if (!response.ok) {
       console.error(`[WhatsApp] Meta API Error:`, data.error);
       let errMsg = data.error?.message || "Meta API Error";
-      if (data.error?.type === 'OAuthException') {
+      if (data.error && data.error.message && data.error.message.includes('register this phone number')) {
+          errMsg = "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.";
+      } else if (data.error?.type === 'OAuthException') {
         errMsg = `OAuthException: ${data.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
       }
       throw new Error(errMsg);
@@ -902,7 +910,7 @@ async function startServer() {
   // Send Individual Message API (Proxied for CORS safety)
   app.post("/api/wa/send", async (req, res) => {
     try {
-      const { ownerId, to, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, mediaBase64, mediaName } = req.body;
+      const { ownerId, to, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, mediaBase64, mediaName, templateCategory } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
       
       let settings: any = { 
@@ -913,13 +921,27 @@ async function startServer() {
         preferredNotificationMethod: method
       };
 
-      if (!apiKey && !watiAccessToken && admin.apps.length) {
+      if (admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
-         settings = settingsDoc.data() as any;
+         if (settingsDoc.exists) {
+            const dbSettings = settingsDoc.data() as any;
+            if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+            if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+         }
+      }
+
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
+        return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }
       
-      const data = await sendWhatsAppMessage(settings, to, message, mediaBase64, mediaName);
+      const data = await sendWhatsAppMessage(settings, to, message, mediaBase64, mediaName, false, templateCategory);
       res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -929,26 +951,30 @@ async function startServer() {
   // Bulk Broadcast API
   app.post("/api/wa/broadcast", async (req, res) => {
     try {
-      const { ownerId, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, recipients, mediaBase64, mediaName } = req.body;
+      const { ownerId, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, recipients, mediaBase64, mediaName, method } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
       
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,
         watiAccessToken: watiAccessToken,
-        watiApiEndpoint: watiApiEndpoint
+        watiApiEndpoint: watiApiEndpoint,
+        preferredNotificationMethod: method
       };
 
       if (admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          if (settingsDoc.exists) {
-           const dbSettings = settingsDoc.data() as any;
-           if (!apiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-           if (!phoneId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
-           if (!watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
-           if (!watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-           settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+            const dbSettings = settingsDoc.data() as any;
+            if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+            if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
          }
       }
       if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
@@ -1003,11 +1029,19 @@ async function startServer() {
         preferredNotificationMethod: method
       };
 
-      if (!apiKey && !watiAccessToken && admin.apps.length) {
+      if (admin.apps.length) {
          const db = admin.firestore();
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
-         settings = settingsDoc.data() as any;
+         if (settingsDoc.exists) {
+            const dbSettings = settingsDoc.data() as any;
+            if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+         }
       }
+      
       if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
         return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }

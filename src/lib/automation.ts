@@ -89,7 +89,8 @@ export const sendWhatsAppNotification = async (
   attachment?: Blob, 
   attachmentName?: string,
   isBulkMode?: boolean,
-  includePortalLink: boolean = true
+  includePortalLink: boolean = true,
+  templateCategory?: 'billing' | 'receipt' | 'broadcast'
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   if (customer.status === 'Suspended') {
     return { success: false, error: "Customer is suspended. Notifications are disabled for suspended accounts." };
@@ -103,7 +104,8 @@ export const sendWhatsAppNotification = async (
     settings.metaWhatsAppApiKey || null, 
     settings.metaWhatsAppPhoneNumberId || null, 
     settings.watiAccessToken || null, 
-    settings.watiApiEndpoint || null
+    settings.watiApiEndpoint || null,
+    settings.preferredNotificationMethod || null
   );
   
   let finalMessage = message;
@@ -138,7 +140,8 @@ export const sendWhatsAppNotification = async (
       message: finalMessage,
       attachment,
       attachmentName,
-      attachmentType: attachment ? 'application/pdf' : undefined
+      attachmentType: attachment ? 'application/pdf' : undefined,
+      templateCategory
     });
 
     if (result.success) {
@@ -227,7 +230,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
           if (automation.smartNotifications && automation.bulkProcessing) {
             const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
             const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
-            sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto billing notice error", e));
+            sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Auto billing notice error", e));
           }
         }
         try {
@@ -289,7 +292,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
          if (automation.bulkProcessing) {
            const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
            const escalationPdf = generateEscalationPDF(customer, settings);
-           sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true).catch(e => console.error("Escalation notice error", e));
+           sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Escalation notice error", e));
          }
       }
       try {
@@ -317,7 +320,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
           for (const customer of unpaidCustomers) {
             const pdfBlob = generateInvoicePDF(customer, settings);
             const reminderMessage = `Dear ${customer.name}, this is a gentle reminder that your updated balance of INR ${customer.balance.toFixed(2)} is unpaid (including any applicable late fees). Please find your updated bill attached and pay promptly to avoid service impacts.`;
-            sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true).catch(e => console.error("Auto reminder notice error", e));
+            sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Auto reminder notice error", e));
           }
         }
 
@@ -343,7 +346,8 @@ export const shareReportToCustomers = async (report: Report, customers: Customer
     settings.metaWhatsAppApiKey || null, 
     settings.metaWhatsAppPhoneNumberId || null, 
     settings.watiAccessToken || null,
-    settings.watiApiEndpoint || null
+    settings.watiApiEndpoint || null,
+    settings.preferredNotificationMethod || null
   );
 
   let blob: Blob | undefined = undefined;
@@ -383,7 +387,9 @@ export const shareReportToCustomers = async (report: Report, customers: Customer
        settings,
        blob,
        attachmentName,
-       true // isBulkMode
+       true,
+       true,
+       'broadcast'
      );
   }
 };

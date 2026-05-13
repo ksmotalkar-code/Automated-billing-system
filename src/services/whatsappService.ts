@@ -10,6 +10,7 @@ export interface WhatsAppMessage {
   attachment?: Blob | File;
   attachmentName?: string;
   attachmentType?: string;
+  templateCategory?: 'billing' | 'receipt' | 'broadcast';
 }
 
 class WhatsAppService {
@@ -18,6 +19,7 @@ class WhatsAppService {
   private watiAccessToken: string | null = null;
   private baseUrl: string = 'https://graph.facebook.com/v17.0'; // Example for Meta WhatsApp Business API
   private watiApiEndpoint: string | null = null;
+  private preferredMethod: string | null = null;
 
   constructor() {
     // These will be populated from environment variables or settings later
@@ -25,13 +27,16 @@ class WhatsAppService {
     this.phoneNumberId = import.meta.env.VITE_WHATSAPP_PHONE_NUMBER_ID || null;
   }
 
-  public updateConfig(apiKey: string | null, phoneNumberId: string | null, watiAccessToken?: string | null, watiApiEndpoint?: string | null) {
+  public updateConfig(apiKey: string | null, phoneNumberId: string | null, watiAccessToken?: string | null, watiApiEndpoint?: string | null, preferredMethod?: string | null) {
     this.apiKey = apiKey ? apiKey.trim() : null;
     if (watiAccessToken !== undefined) {
        this.watiAccessToken = watiAccessToken ? watiAccessToken.trim() : null;
     }
     if (watiApiEndpoint !== undefined) {
        this.watiApiEndpoint = watiApiEndpoint ? watiApiEndpoint.trim() : null;
+    }
+    if (preferredMethod !== undefined) {
+       this.preferredMethod = preferredMethod;
     }
     if (phoneNumberId) {
       let cleaned = phoneNumberId.trim();
@@ -92,7 +97,13 @@ class WhatsAppService {
           to: params.to,
           message: params.message,
           mediaBase64,
-          mediaName
+          mediaName,
+          templateCategory: params.templateCategory,
+          apiKey: this.apiKey,
+          phoneId: this.phoneNumberId,
+          watiAccessToken: this.watiAccessToken,
+          watiApiEndpoint: this.watiApiEndpoint,
+          method: this.preferredMethod
         }),
       });
 

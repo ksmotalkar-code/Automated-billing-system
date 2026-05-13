@@ -8,8 +8,8 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "NODE_OPTIONS='--max-old-space-size=1024' vite build && esbuild server.ts --bundle --platform=node --format=esm --target=node18 --outfile=dist/server.js --packages=external",
-    "start": "NODE_ENV=production node dist/server.js",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit"

@@ -79,7 +79,7 @@ export function SettingsView() {
       if (s) {
         setSettings(s);
         import("../services/whatsappService").then(({ whatsappService }) => {
-          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.watiAccessToken || null, s.watiApiEndpoint || null);
+          whatsappService.updateConfig(s.metaWhatsAppApiKey || null, s.metaWhatsAppPhoneNumberId || null, s.watiAccessToken || null, s.watiApiEndpoint || null, s.preferredNotificationMethod || null);
         });
       }
     });
@@ -378,7 +378,8 @@ export function SettingsView() {
                watiAccessToken: settings.watiAccessToken,
                watiApiEndpoint: settings.watiApiEndpoint,
                mediaBase64,
-               mediaName
+               mediaName,
+               method: settings.preferredNotificationMethod
             })
           });
           const data = await resp.json();
@@ -650,6 +651,55 @@ export function SettingsView() {
                     </div>
                   </>
                 ) : null}
+
+                {settings.preferredNotificationMethod === 'api' && (
+                  <div className="md:col-span-2 pt-6 mt-2 border-t border-[var(--shadow-dark)] space-y-4">
+                    <h4 className="font-bold text-md text-emerald-600 flex items-center gap-2">
+                      <FileCode className="w-5 h-5" /> Meta API Message Templates
+                    </h4>
+                    <p className="text-sm neu-text-muted">
+                      Meta strictly requires pre-approved templates for automated messages. 
+                      You can create these in your <b>Meta Business Suite &gt; WhatsApp Manager &gt; Message Templates</b>.
+                      Once approved, paste the exact <b>Template Names</b> below:
+                    </p>
+                    
+                    <div className="grid gap-4 md:grid-cols-2">
+                       <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">Daily Bill / Invoice Template Name</label>
+                          <input
+                            type="text"
+                            value={settings.metaTemplateBilling || ''}
+                            onChange={(e) => setSettings({ ...settings, metaTemplateBilling: e.target.value })}
+                            className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                            placeholder="monthly_bill_notification"
+                          />
+                          <p className="text-[10px] neu-text-muted ml-1">Sends the PDF Invoice. Req: Header (Doc), Body (v1=Name, v2=Amt, v3=Bal)</p>
+                       </div>
+                       <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">Payment Receipt Template Name</label>
+                          <input
+                            type="text"
+                            value={settings.metaTemplateReceipt || ''}
+                            onChange={(e) => setSettings({ ...settings, metaTemplateReceipt: e.target.value })}
+                            className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                            placeholder="payment_reminder"
+                          />
+                          <p className="text-[10px] neu-text-muted ml-1">Sends upon payment. Req: Body (v1=Name, v2=Amount)</p>
+                       </div>
+                       <div className="space-y-2">
+                          <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">Broadcast / News Template Name</label>
+                          <input
+                            type="text"
+                            value={settings.metaTemplateBroadcast || ''}
+                            onChange={(e) => setSettings({ ...settings, metaTemplateBroadcast: e.target.value })}
+                            className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                            placeholder="general_announcement"
+                          />
+                          <p className="text-[10px] neu-text-muted ml-1">Used in Broadcast view. Req: Body (v1=Message)</p>
+                       </div>
+                    </div>
+                  </div>
+                )}
                 
                 <div className="space-y-4 md:col-span-2 pt-6 mt-2 border-t border-[var(--shadow-dark)]">
                   <h4 className="font-bold text-md text-emerald-600">Test Your API Connection</h4>

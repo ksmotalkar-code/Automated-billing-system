@@ -206,6 +206,9 @@ export interface AppSettings {
   metaWhatsAppApiKey?: string;
   metaWhatsAppPhoneNumberId?: string;
   metaWhatsAppVerifyToken?: string;
+  metaTemplateBilling?: string;
+  metaTemplateReceipt?: string;
+  metaTemplateBroadcast?: string;
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
