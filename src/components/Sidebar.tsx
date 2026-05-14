@@ -130,9 +130,9 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                 className={cn(
                   "w-full flex items-center gap-3 p-3 text-sm rounded-2xl transition-all text-left font-black uppercase tracking-widest group relative overflow-hidden",
                   isActive 
-                    ? "neu-pressed neu-accent border-2 border-indigo-500/30 shadow-inner" 
-                    : "neu-flat neu-text hover:neu-accent",
-                  !isExpanded && "justify-center"
+                    ? "neu-pressed neu-accent border-l-4 border-[var(--accent)] shadow-inner" 
+                    : "neu-flat neu-text hover:neu-pressed-sm hover:neu-accent",
+                  !isExpanded && "justify-center border-l-0"
                 )}
                 title={!isExpanded ? t(layer.label) : undefined}
               >
@@ -142,7 +142,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                     className="absolute left-0 w-1 h-6 bg-indigo-500 rounded-r-full"
                   />
                 )}
-                <Icon className={cn("w-5 h-5 shrink-0 transition-transform group-hover:rotate-12", isActive ? "neu-accent" : "neu-accent")} />
+                <Icon className={cn("shrink-0 transition-transform group-hover:rotate-12", isActive ? "neu-accent" : "neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
                 {isExpanded && <span className="truncate">{t(layer.label)}</span>}
                 {!isExpanded && (
                   <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
@@ -170,13 +170,13 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                 className={cn(
                   "w-full flex items-center gap-3 p-3 text-sm rounded-xl transition-all text-left font-medium group relative",
                   isActive 
-                    ? "neu-pressed neu-accent" 
-                    : "neu-flat neu-text-muted hover:neu-text",
-                  !isExpanded && "justify-center"
+                    ? "neu-pressed neu-accent border-l-4 border-[var(--accent)] shadow-inner" 
+                    : "neu-flat neu-text-muted hover:neu-text hover:neu-pressed-sm",
+                  !isExpanded && "justify-center border-l-0"
                 )}
                 title={!isExpanded ? t(layer.label) : undefined}
               >
-                <Icon className={cn("w-5 h-5 shrink-0", isActive ? "neu-accent" : "neu-text-muted")} />
+                <Icon className={cn("shrink-0 transition-transform group-hover:scale-110", isActive ? "neu-accent" : "neu-text-muted group-hover:neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
                 {isExpanded && <span className="truncate hover-underline">{t(layer.label)}</span>}
                 {!isExpanded && (
                   <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
@@ -200,7 +200,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
           )}
         >
           <div className="flex items-center gap-3">
-            <Languages className="w-5 h-5 shrink-0 neu-accent" />
+            <Languages className={cn("shrink-0 neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
             {isExpanded && <span>{t('Language')}</span>}
           </div>
           {isExpanded && <span className="capitalize text-xs neu-text-muted">{i18n.language === 'en' ? 'English' : 'ਪੰਜਾਬੀ'}</span>}
@@ -269,7 +269,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
           )}
         >
           <div className="flex items-center gap-3">
-            <Palette className="w-5 h-5 shrink-0 neu-accent" />
+            <Palette className={cn("shrink-0 neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
             {isExpanded && <span>Theme</span>}
           </div>
           {isExpanded && <span className="capitalize text-xs neu-text-muted">{theme}</span>}
@@ -285,12 +285,12 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
           whileTap={{ scale: 0.98 }}
           onClick={() => setActiveLayer("settings")}
           className={cn(
-            "w-full flex items-center gap-3 p-3 mt-3 neu-flat rounded-xl text-sm font-medium transition-all active:neu-pressed group relative",
-            activeLayer === "settings" ? "neu-pressed neu-accent" : "",
-            !isExpanded && "justify-center"
+            "w-full flex items-center gap-3 p-3 mt-3 neu-flat rounded-xl text-sm font-medium transition-all hover:neu-pressed-sm active:neu-pressed group relative",
+            activeLayer === "settings" ? "neu-pressed neu-accent border-l-4 border-[var(--accent)] shadow-inner" : "",
+            !isExpanded && "justify-center border-l-0"
           )}
         >
-          <Settings className={cn("w-5 h-5 shrink-0", activeLayer === "settings" ? "neu-accent" : "neu-text-muted")} />
+          <Settings className={cn("shrink-0 transition-transform group-hover:rotate-90", activeLayer === "settings" ? "neu-accent" : "neu-text-muted group-hover:neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
           {isExpanded && <span>{t('Settings')}</span>}
           {!isExpanded && (
             <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
@@ -309,7 +309,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
               !isExpanded && "justify-center"
             )}
           >
-            <Download className="w-5 h-5 shrink-0" />
+            <Download className={cn("shrink-0", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
             {isExpanded && <span>Install Desktop App</span>}
             {!isExpanded && (
               <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">

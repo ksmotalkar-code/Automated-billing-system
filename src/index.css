@@ -123,6 +123,19 @@
     }
   }
 
+  /* Accessibility: Focus States */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(99, 179, 237, 0.4);
+    transition: outline-color 0s ease, box-shadow 0.2s ease;
+  }
+
   .static-glow:hover {
     animation: static-electricity 0.3s infinite alternate;
     cursor: pointer;
@@ -259,7 +272,45 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Custom Scrollbar - Glass UI */
+/* Elite Sparkles */
+@keyframes elite-sparkles {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.elite-sparkle-card {
+  position: relative;
+}
+
+.elite-sparkle-card::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000);
+  background-size: 400%;
+  animation: elite-sparkles 10s linear infinite;
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8)) blur(10px);
+}
+
+.elite-sparkle-card:hover::before {
+  opacity: 1;
+}
+
+.elite-sparkle-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  border-radius: inherit;
+  z-index: -1;
+  background-color: var(--bg-color);
+}
+
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

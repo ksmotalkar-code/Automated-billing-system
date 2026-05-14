@@ -217,11 +217,32 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center neu-bg neu-text p-4">
+      <div id="auth-container" className="min-h-screen flex flex-col items-center justify-center neu-bg neu-text p-4 relative overflow-hidden z-10 hover-sparkle-bg">
+        {/* Background Elite Graphics */}
+        <div className="absolute inset-0 pointer-events-none z-[-1] overflow-hidden">
+           <motion.div 
+            animate={{ 
+              scale: [1, 1.2, 1],
+              rotate: [0, 90, 0]
+            }}
+            transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+            className={`absolute -top-24 -left-24 w-96 h-96 rounded-full blur-3xl ${uiStyle === 'glassmorphism' ? 'bg-[var(--accent)]/40' : 'bg-blue-500/20'}`}
+          />
+          <motion.div 
+            animate={{ 
+              scale: [1, 1.3, 1],
+              rotate: [0, -90, 0]
+            }}
+            transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+            className={`absolute bottom-0 right-0 w-96 h-96 rounded-full blur-3xl ${uiStyle === 'glassmorphism' ? 'bg-indigo-500/40' : 'bg-indigo-500/20'}`}
+          />
+        </div>
+
         <motion.div 
+          id="auth-card"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="p-8 neu-pressed rounded-3xl max-w-md w-full text-center space-y-6"
+          className="p-8 neu-pressed rounded-3xl max-w-md w-full text-center space-y-6 relative z-20 elite-sparkle-card"
         >
           <div className="w-20 h-20 mx-auto rounded-2xl flex items-center justify-center text-white font-bold text-4xl static-glow transition-all duration-300" style={{ background: 'var(--accent)' }}>
             TS
@@ -376,7 +397,7 @@ export default function App() {
           />
         </div>
       </div>
-      <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full">
+      <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full min-w-0">
         {quotaExceededFlag && (
           <motion.div 
             initial={{ opacity: 0, y: -20 }}

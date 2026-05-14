@@ -424,7 +424,7 @@ export function SettingsView() {
           whileTap={{ scale: 0.95 }}
           onClick={handleSave}
           disabled={isSaving}
-          className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 disabled:opacity-70"
+          className="flex justify-center items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 disabled:opacity-70 w-full sm:w-auto"
         >
           {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {isSaving ? "Saving..." : "Save All Changes"}
@@ -497,7 +497,7 @@ export function SettingsView() {
       {activeTab === 'broadcast' && (
         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-6">
           <Card className="border-2 border-purple-500/20">
-            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-purple-600">
                 <Globe className="w-6 h-6" />
               </div>
@@ -559,7 +559,7 @@ export function SettingsView() {
       {activeTab === 'whatsapp' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-emerald-500/20 mb-6">
-            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-emerald-600">
                 <MessageCircle className="w-6 h-6" />
               </div>
@@ -849,7 +849,7 @@ export function SettingsView() {
       {activeTab === 'billing' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-blue-500/20 mb-6">
-            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-blue-600">
                 <Database className="w-6 h-6" />
               </div>
@@ -920,7 +920,7 @@ export function SettingsView() {
           </Card>
           
           <Card className="border-2 border-blue-500/20 mb-6">
-        <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+        <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
           <div className="p-2 neu-pressed rounded-xl text-emerald-600">
             <DollarSign className="w-6 h-6" />
           </div>
@@ -1047,7 +1047,7 @@ export function SettingsView() {
       {activeTab === 'gateway' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-indigo-500/20 mb-6">
-            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-indigo-600">
                 <CreditCard className="w-6 h-6" />
               </div>
@@ -1147,7 +1147,7 @@ export function SettingsView() {
           <div className="grid gap-6 md:grid-cols-2">
             {settingsGroups.filter(g => g.title === "Security & Privacy").map((group, i) => (
               <Card className="h-full" key={group.title}>
-                <CardHeader className="flex flex-row items-center gap-3 pb-2">
+                <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-2">
                   <div className={`p-2 neu-pressed rounded-xl ${group.color}`}>
                     <group.icon className="w-5 h-5" />
                   </div>
@@ -1175,7 +1175,7 @@ export function SettingsView() {
       {isAdmin && (
         <motion.div id="providers-admin" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-2 border-amber-500/20 mb-6 mt-8">
-            <CardHeader className="flex flex-row items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
+            <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center gap-3 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-2 neu-pressed rounded-xl text-amber-600">
                 <Database className="w-6 h-6" />
               </div>
@@ -1361,7 +1361,7 @@ export function SettingsView() {
             animate={{ opacity: 1, scale: 1 }}
             className="neu-panel bg-[#f8f9fa] w-full max-w-4xl max-h-[90vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl relative"
           >
-            <div className="flex justify-between items-center p-6 border-b border-[#e1e3eb] bg-white text-[#1e1e2d]">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-6 border-b border-[#e1e3eb] bg-white text-[#1e1e2d] gap-4">
               <h2 className="text-xl font-bold flex items-center gap-2">
                 <FileCode className="w-5 h-5 text-indigo-500" /> Application Logs
               </h2>

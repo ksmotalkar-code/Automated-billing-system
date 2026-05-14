@@ -107,17 +107,17 @@ export function DashboardView() {
       transition={{ duration: 0.5 }}
       className="space-y-6"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">{t('Dashboard')}</h2>
           <p className="neu-text-muted">{t('Overview & Metrics')}</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {pendingComplaints.length > 0 && (
             <motion.div 
                initial={{ scale: 0.8, opacity: 0 }} 
                animate={{ scale: 1, opacity: 1 }} 
-               className="flex items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full border border-amber-200"
+               className="flex flex-wrap items-center gap-2 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-full border border-amber-200"
             >
                <Bell className="w-4 h-4 animate-bounce" />
                <span className="text-xs font-bold">{pendingComplaints.length} New Complaints</span>

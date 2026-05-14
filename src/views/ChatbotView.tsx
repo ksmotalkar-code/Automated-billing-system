@@ -100,7 +100,7 @@ export function ChatbotView() {
 
   return (
     <div className="p-2 space-y-6 max-w-4xl mx-auto">
-      <div className="flex justify-between items-end">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
           <h1 className="text-4xl font-black tracking-tight mb-3">Chatbot Rules Setup</h1>
           <p className="text-lg neu-text-muted">
