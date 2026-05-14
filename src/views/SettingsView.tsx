@@ -724,7 +724,8 @@ export function SettingsView() {
                   <p className="text-xs neu-text-muted italic">
                     Click this after saving your API credentials to confirm everything is working correctly. 
                     <br/><br/>
-                    <strong className="text-amber-600">Important (Meta API):</strong> If using Meta's Cloud API, you MUST send a message ("hi") from your personal WhatsApp to your Business number first! Free-form messages are silently rejected by Meta if the recipient hasn't initiated a conversation in the last 24 hours.
+                    <strong className="text-amber-600">Important (Live Numbers):</strong> The default Meta test template ("hello_world") ONLY works for the Meta Test Number. If you switch to your real Live Phone Number ID, this tool will attempt to use your 'Broadcast Template' first, and then attempt a free-form message. <br/>
+                    <strong className="underline">You MUST either configure a Broadcast template OR send a WhatsApp message to your own Live Business Number FIRST</strong> to open the 24-hour window, otherwise Meta will instantly <strong>reject</strong> the test.
                   </p>
                 </div>
                 
@@ -1053,7 +1054,7 @@ export function SettingsView() {
               </div>
               <div>
                 <CardTitle className="text-lg">Enterprise Payment Gateway</CardTitle>
-                <p className="text-sm neu-text-muted">Connect your Bank API (Razorpay, Stripe, Cashfree) to automatically clear balances via Webhooks.</p>
+                <p className="text-sm neu-text-muted">Connect your Bank API (WhatsApp Pay, Stripe, Cashfree) to automatically clear balances via Webhooks.</p>
               </div>
             </CardHeader>
             <CardContent className="pt-6">

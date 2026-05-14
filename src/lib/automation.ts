@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Customer, AppSettings, updateCustomer, saveSettings, Report } from './db';
+import { Customer, AppSettings, updateCustomer, saveSettings, Report, logAutomationError } from './db';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { whatsappService } from '../services/whatsappService';
@@ -228,9 +228,22 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
 
           // If smart notifications are enabled, automatically text them their new bill
           if (automation.smartNotifications && automation.bulkProcessing) {
-            const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
-            const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
-            sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Auto billing notice error", e));
+            try {
+              const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
+              const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
+              sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, 'billing')
+                .then(res => {
+                  if (!res.success && res.error) {
+                    logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'billing' });
+                  }
+                })
+                .catch(e => {
+                  console.error("Auto billing notice error", e);
+                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'billing' });
+                });
+            } catch (err: any) {
+              logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'billing' });
+            }
           }
         }
         try {
@@ -290,9 +303,22 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
          batch.update(doc(db, 'customers', customer.id), { status: 'Suspended' });
          
          if (automation.bulkProcessing) {
-           const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
-           const escalationPdf = generateEscalationPDF(customer, settings);
-           sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Escalation notice error", e));
+           try {
+             const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
+             const escalationPdf = generateEscalationPDF(customer, settings);
+             sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'billing')
+               .then(res => {
+                 if (!res.success && res.error) {
+                   logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'suspension' });
+                 }
+               })
+               .catch(e => {
+                 console.error("Escalation notice error", e);
+                 logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'suspension' });
+               });
+           } catch (err: any) {
+             logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'suspension' });
+           }
          }
       }
       try {
@@ -318,9 +344,22 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
           console.log("3-Day Reminder Triggered for unpaid customers");
           const unpaidCustomers = customers.filter(c => c.status === 'Active' && c.balance > 0);
           for (const customer of unpaidCustomers) {
-            const pdfBlob = generateInvoicePDF(customer, settings);
-            const reminderMessage = `Dear ${customer.name}, this is a gentle reminder that your updated balance of INR ${customer.balance.toFixed(2)} is unpaid (including any applicable late fees). Please find your updated bill attached and pay promptly to avoid service impacts.`;
-            sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true, true, 'billing').catch(e => console.error("Auto reminder notice error", e));
+            try {
+              const pdfBlob = generateInvoicePDF(customer, settings);
+              const reminderMessage = `Dear ${customer.name}, this is a gentle reminder that your updated balance of INR ${customer.balance.toFixed(2)} is unpaid (including any applicable late fees). Please find your updated bill attached and pay promptly to avoid service impacts.`;
+              sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true, true, 'billing')
+                .then(res => {
+                  if (!res.success && res.error) {
+                    logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'reminder' });
+                  }
+                })
+                .catch(e => {
+                  console.error("Auto reminder notice error", e);
+                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'reminder' });
+                });
+            } catch (err: any) {
+              logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'reminder' });
+            }
           }
         }
 

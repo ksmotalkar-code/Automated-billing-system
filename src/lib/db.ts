@@ -947,3 +947,56 @@ export const addWhatsappMessageRecord = async (msg: Omit<WhatsappMessage, 'id' |
     throw error;
   }
 };
+
+export interface AutomationError {
+  id: string;
+  customerId: string;
+  customerName: string;
+  errorMessage: string;
+  resolved: boolean;
+  timestamp: string;
+  type: string;
+  ownerId: string;
+}
+
+export const logAutomationError = async (errorInfo: Omit<AutomationError, 'id' | 'timestamp' | 'resolved' | 'ownerId'>) => {
+  if (isQuotaExceeded()) return;
+  try {
+    const docRef = doc(collection(db, 'automation_errors'));
+    await setDoc(docRef, {
+      ...errorInfo,
+      id: docRef.id,
+      timestamp: new Date().toISOString(),
+      resolved: false,
+      ownerId: auth.currentUser?.uid || 'sys'
+    });
+  } catch (error) {
+    console.error("Failed to log automation error", error);
+  }
+};
+
+export const subscribeToAutomationErrors = (callback: (errors: AutomationError[]) => void) => {
+  const user = auth.currentUser;
+  if (!user) return () => {};
+
+  const q = query(
+    collection(db, 'automation_errors'),
+    where('ownerId', '==', user.uid)
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    const errorsList = snapshot.docs.map(d => d.data() as AutomationError);
+    errorsList.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    callback(errorsList);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'automation_errors');
+  });
+};
+
+export const resolveAutomationError = async (id: string, notify: boolean = false) => {
+  try {
+    await updateDoc(doc(db, 'automation_errors', id), { resolved: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'automation_errors');
+  }
+};

@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, subscribeToTransactions, subscribeToComplaints, subscribeToSettings, Customer, Transaction, Complaint, AppSettings } from "../lib/db";
+import { subscribeToCustomers, subscribeToTransactions, subscribeToComplaints, subscribeToSettings, subscribeToAutomationErrors, resolveAutomationError, Customer, Transaction, Complaint, AppSettings, AutomationError } from "../lib/db";
 import { useTranslation } from "react-i18next";
 
 export function DashboardView() {
@@ -12,6 +12,7 @@ export function DashboardView() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [automationErrors, setAutomationErrors] = useState<AutomationError[]>([]);
 
   const [whatsappWebStatus, setWhatsappWebStatus] = useState<any>(null);
 
@@ -20,6 +21,7 @@ export function DashboardView() {
     const unsubTransactions = subscribeToTransactions(setTransactions);
     const unsubComplaints = subscribeToComplaints(setComplaints);
     const unsubSettings = subscribeToSettings(setSettings);
+    const unsubErrors = subscribeToAutomationErrors(setAutomationErrors);
     
     // Fetch WhatsApp Web Status
     const fetchWaStatus = async () => {
@@ -42,6 +44,7 @@ export function DashboardView() {
       unsubTransactions();
       unsubComplaints();
       unsubSettings();
+      unsubErrors();
       clearInterval(interval);
     };
   }, []);
@@ -322,6 +325,53 @@ export function DashboardView() {
           </Card>
         </motion.div>
       </div>
+
+      {automationErrors.filter(e => !e.resolved).length > 0 && (
+        <div className="grid gap-4 grid-cols-1">
+          <motion.div className="col-span-1" whileHover={{ scale: 1.01 }} transition={{ type: "spring", stiffness: 300 }}>
+            <Card className="h-full border-2 border-red-500/20">
+              <CardHeader className="bg-red-500/5 pb-4">
+                <CardTitle className="flex items-center gap-2 text-red-600">
+                  <AlertTriangle className="w-5 h-5" /> Automation Issues Need Attention
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 max-h-[300px] overflow-y-auto">
+                <div className="space-y-4">
+                  <AnimatePresence>
+                    {automationErrors.filter(e => !e.resolved).map(err => (
+                      <motion.div 
+                        key={err.id}
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="flex items-start gap-4 p-4 neu-pressed rounded-xl border border-red-500/10 bg-white"
+                      >
+                        <AlertTriangle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                        <div className="flex-1 space-y-1">
+                          <div className="flex justify-between items-start">
+                            <p className="text-sm font-bold text-slate-800">
+                              Error sending <span className="uppercase text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded ml-1">{err.type}</span>
+                            </p>
+                            <span className="text-xs text-slate-500">{new Date(err.timestamp).toLocaleDateString()}</span>
+                          </div>
+                          <p className="text-xs font-medium text-slate-600">Customer: <span className="font-bold">{err.customerName}</span> (ID: {err.customerId})</p>
+                          <p className="text-xs text-red-600 bg-red-50 p-2 rounded flex-1 mt-2 font-mono break-all line-clamp-3">{err.errorMessage}</p>
+                        </div>
+                        <button 
+                          onClick={() => resolveAutomationError(err.id)}
+                          className="px-3 py-1.5 bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 rounded-lg text-xs font-bold whitespace-nowrap"
+                        >
+                          Mark Resolved
+                        </button>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
+      )}
 
       <div className="grid gap-4 grid-cols-1">
         <motion.div className="col-span-1" whileHover={{ scale: 1.01 }} transition={{ type: "spring", stiffness: 300 }}>

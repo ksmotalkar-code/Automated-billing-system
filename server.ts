@@ -318,12 +318,12 @@ async function startServer() {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
   });
 
-  // 1. Payment Webhook Endpoint (e.g. Razorpay, Cashfree)
+  // 1. Payment Webhook Endpoint (e.g. WhatsApp Pay, Cashfree)
   // The bank sends a POST request here when someone scans your dynamic QR and pays
   app.post("/api/payment-webhook/:ownerId", async (req, res) => {
     try {
       const { ownerId } = req.params;
-      const signature = req.headers['x-razorpay-signature'] || req.headers['x-webhook-signature'];
+      const signature = req.headers['x-whatsapp-signature'] || req.headers['x-webhook-signature'];
       
       let webhookSecret = null;
       const settings = await getSettings(ownerId);
@@ -337,9 +337,9 @@ async function startServer() {
       const payload = req.body;
       console.log(`Received payment Webhook for owner ${ownerId}:`, payload);
       
-      // Expected structure from your payment gateway (example Razorpay)
-      const customerId = payload.payload?.payment?.entity?.notes?.customerId;
-      const amountPaid = (payload.payload?.payment?.entity?.amount || 0) / 100; // if in paise
+      // Expected structure from your payment gateway (example WhatsApp Pay)
+      const customerId = payload.payload?.payment?.entity?.notes?.customerId || payload.metadata?.customerId;
+      const amountPaid = payload.payload?.payment?.entity?.amount || payload.amount || 0;
       
       // Fallback: Check if they just sent plain root attributes
       const fallbackCustomerId = payload.customerId || payload.customer_id;
@@ -553,8 +553,17 @@ async function startServer() {
 
     const data = await response.json();
     if (!response.ok) {
-      console.error(`[WhatsApp] Meta API Error:`, data.error);
       let errMsg = data.error?.message || "Meta API Error";
+      // Ignore logging if this is a test message failing due to missing hello_world template, 
+      // as our route handler expects this and falls back to text messages.
+      const errStr = errMsg.toLowerCase();
+      const isExpectedFallbackError = isTestMessage && (errStr.includes('hello_world') || errStr.includes('hello world') || errStr.includes('test number') || errStr.includes('does not exist') || errStr.includes('131058'));
+      const isExpectedWindowError = !isTestMessage && (errStr.includes('131047') || errStr.includes('24 hours') || errStr.includes('free-form') || errStr.includes('doesn\'t exist') || errStr.includes('template'));
+      
+      if (!isExpectedFallbackError && !isExpectedWindowError) {
+        console.error(`[WhatsApp] Meta API Error: ${errMsg}`);
+      }
+      
       if (data.error && data.error.message && data.error.message.includes('register this phone number')) {
           errMsg = "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.";
       } else if (data.error?.type === 'OAuthException') {
@@ -1043,7 +1052,33 @@ async function startServer() {
       }
 
       const message = "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
-      await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
+      
+      try {
+        // Try with hello_world template (works for Meta Test Numbers)
+        await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
+      } catch (err: any) {
+        // If meta throws template not found (meaning it's a live number which lacks hello_world)
+        const errLower = err.message.toLowerCase();
+        if (errLower.includes('hello_world') || errLower.includes('hello world') || errLower.includes('test number') || errLower.includes('does not exist') || errLower.includes('131058')) {
+           try {
+              // Try sending as a broadcast template first (useful for live numbers without 24h window)
+              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', [message]);
+           } catch (fallbackErr: any) {
+              try {
+                  // Final Attempt: standard text message (only works if 24h window is open)
+                  await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false);
+              } catch (finalErr: any) {
+                  const finalLower = finalErr.message.toLowerCase();
+                  if (finalLower.includes('131047') || finalLower.includes('24 hours') || finalLower.includes('free-form')) {
+                     throw new Error("Live Number detected: To test on a live phone number, you MUST do ONE of two things: 1) Configure an approved 'Broadcast Template' in the UI settings below, OR 2) Send an initial WhatsApp message (e.g. 'Hi') from your phone to your Business Phone Number to open a 24-hour service window.");
+                  }
+                  throw new Error(`Live Number test failed. Ensure your Meta Cloud API and templates are set up correctly. (API response: ${finalErr.message})`);
+              }
+           }
+        } else {
+           throw err;
+        }
+      }
 
       res.json({ status: "success", info: "Message sent! Check your phone." });
     } catch (err: any) {
