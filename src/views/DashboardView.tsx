@@ -259,8 +259,8 @@ export function DashboardView() {
               <CardTitle>Revenue vs Expected</CardTitle>
             </CardHeader>
             <CardContent className="pl-2">
-              <div className="h-[300px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-[300px] w-full min-h-[300px]">
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <AreaChart data={displayData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
@@ -290,8 +290,8 @@ export function DashboardView() {
               <CardTitle>Account Status Distribution</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-[200px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-[200px] w-full min-h-[200px]">
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                   <PieChart>
                     <Pie
                       data={pieData}

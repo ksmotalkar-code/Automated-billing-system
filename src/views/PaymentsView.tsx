@@ -472,6 +472,7 @@ export function PaymentsView() {
               </div>
             ) : (
               <>
+              <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
               <thead className="text-xs uppercase neu-text-muted border-b border-[var(--shadow-dark)]">
                 <tr>
@@ -541,6 +542,7 @@ export function PaymentsView() {
                 )}
               </tbody>
             </table>
+            </div>
             
             {/* Pagination Controls */}
             {activeTab === 'list' && totalPages > 1 && (

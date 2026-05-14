@@ -1010,7 +1010,7 @@ export function CustomersView() {
 
       <Card>
         <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-4 sm:space-y-0 pb-4">
-          <div className="flex flex-1 items-center gap-4 w-full">
+          <div className="flex flex-1 flex-col sm:flex-row items-start sm:items-center gap-4 w-full">
             <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
               <Search className="w-4 h-4 neu-text-muted" />
               <input 

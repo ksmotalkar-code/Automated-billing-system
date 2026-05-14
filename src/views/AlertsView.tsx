@@ -327,12 +327,12 @@ export function AlertsView() {
       transition={{ duration: 0.5 }}
       className="space-y-6"
     >
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Alerts & Notifications</h2>
           <p className="neu-text-muted">Monitor payments and send reminders</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -364,9 +364,7 @@ export function AlertsView() {
               </>
             )}
           </button>
-        </div>
         {unpaidCustomers.length > 0 && viewMode === 'unpaid' && (
-          <div className="flex items-center gap-3">
             <button 
               onClick={handleNotifyAllUnpaid}
               disabled={isSendingBulk || !settings?.automation?.bulkProcessing}
@@ -383,10 +381,9 @@ export function AlertsView() {
                 </>
               )}
             </button>
-          </div>
         )}
         {(viewMode === 'paid' || viewMode === 'paid_notified') && (
-          <div className="flex items-center gap-3">
+          <>
             <button 
               onClick={() => setViewMode(viewMode === 'paid' ? 'paid_notified' : 'paid')}
               className="px-4 py-2 neu-flat text-emerald-600 rounded-xl text-sm font-bold hover:bg-emerald-500/10 transition-colors"
@@ -411,8 +408,9 @@ export function AlertsView() {
                 )}
               </button>
             )}
-          </div>
+          </>
         )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

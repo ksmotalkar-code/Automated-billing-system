@@ -90,22 +90,22 @@ export function ComplaintsView() {
             </div>
           </div>
         </CardTitle>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full sm:w-64">
-            <Search className="w-4 h-4 neu-text-muted" />
+            <Search className="w-4 h-4 neu-text-muted shrink-0" />
             <input 
               type="text" 
               placeholder="Search complaints..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm w-full neu-text"
+              className="bg-transparent border-none outline-none text-sm w-full neu-text min-w-0"
             />
           </div>
           <button 
             onClick={handleDeleteAllResolved}
-            className="flex items-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-200 transition whitespace-nowrap"
+            className="flex items-center justify-center gap-2 px-4 py-2 bg-rose-100 text-rose-700 rounded-xl text-xs font-bold hover:bg-rose-200 transition shrink-0"
           >
-            <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Delete All Resolved</span>
+            <Trash2 className="w-4 h-4" /> <span>Delete All Resolved</span>
           </button>
         </div>
       </CardHeader>
