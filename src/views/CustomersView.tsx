@@ -285,17 +285,25 @@ export function CustomersView() {
       const data = await file.arrayBuffer();
       const workbook = XLSX.read(data);
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-      const jsonData = XLSX.utils.sheet_to_json<any>(worksheet);
+      const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
 
-      const parsedCustomers = jsonData.map(row => ({
-          id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
-          name: String(row.Name || row.name || row.Customer || "").trim(),
-          mobileNumber: String(row.Mobile || row.mobile || row.Phone || row.mobileNumber || "").trim(),
-          balance: parseFloat(row.Balance || row.balance || "0") || 0,
-          status: (row.Status || row.status || "Active").toString().toLowerCase() === "suspended" ? "Suspended" : "Active",
-          ownerId: auth.currentUser?.uid,
-          createdAt: new Date().toISOString()
-      })).filter(c => c.name && c.mobileNumber);
+      const parsedCustomers = jsonData.map(row => {
+          const keys = Object.keys(row);
+          const nameKey = keys.find(k => k.toLowerCase().includes('name') || k.toLowerCase().includes('customer')) || keys[0];
+          const mobileKey = keys.find(k => k.toLowerCase().includes('mobile') || k.toLowerCase().includes('phone') || k.toLowerCase().includes('number') || k.toLowerCase().includes('contact')) || (keys.length > 1 ? keys[1] : keys[0]);
+          const balanceKey = keys.find(k => k.toLowerCase().includes('balance') || k.toLowerCase().includes('due') || k.toLowerCase().includes('amount')) || (keys.length > 2 ? keys[2] : "");
+          const statusKey = keys.find(k => k.toLowerCase().includes('status') || k.toLowerCase().includes('state')) || "";
+
+          return {
+              id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+              name: String(row[nameKey] || row.Name || row.name || row.Customer || "Unnamed").trim() || "Unnamed",
+              mobileNumber: String(row[mobileKey] || row.Mobile || row.mobile || row.Phone || row.mobileNumber || "0000000000").trim() || "0000000000",
+              balance: parseFloat(row[balanceKey] || row.Balance || row.balance || "0") || 0,
+              status: (row[statusKey] || row.Status || row.status || "Active").toString().toLowerCase() === "suspended" ? "Suspended" : "Active",
+              ownerId: auth.currentUser?.uid,
+              createdAt: new Date().toISOString()
+          };
+      });
       
       setStagingCustomers(parsedCustomers);
       setStagingPage(1);
@@ -442,7 +450,13 @@ export function CustomersView() {
     }
 
     setIsSavingUser(true);
-    addCustomer({ ...newCustomer, status: finalStatus }).catch((err: any) => {
+    addCustomer({ ...newCustomer, status: finalStatus }).then(() => {
+      // Send Welcome Message
+      if (settings && settings.automation && finalStatus === 'Active') {
+         let message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
+         sendWhatsAppNotification({...newCustomer, status: finalStatus} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
+      }
+    }).catch((err: any) => {
       if (err.message && err.message.includes('Quota')) {
         showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
       } else {
@@ -512,7 +526,7 @@ export function CustomersView() {
         if (settings && settings.automation) {
            let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
            if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
-           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify isolate error:", err));
+           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, false, true, newStatus === 'Suspended' ? 'suspension' : 'broadcast').catch(err => console.error("Auto notify isolate error:", err));
         }
         setIsEditModalOpen(false);
         setEditingCustomer(null);

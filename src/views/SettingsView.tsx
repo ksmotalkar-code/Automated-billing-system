@@ -193,6 +193,19 @@ export function SettingsView() {
     }, 3000);
   };
 
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await saveSettings(settings);
+      showAlert("Saved", "Settings successfully saved.");
+    } catch (e) {
+      console.error("Save failed", e);
+      showAlert("Error", "Failed to save settings.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const performReset = async () => {
     setIsResetting(true);
     try {
@@ -386,9 +399,22 @@ export function SettingsView() {
              System Configuration
           </p>
         </div>
-        <div className="flex justify-center items-center gap-2 px-6 py-3 bg-[var(--accent)]/10 text-[var(--accent)] rounded-2xl text-[10px] font-black uppercase tracking-widest border border-[var(--accent)]/20 w-full sm:w-auto mt-4 sm:mt-0">
-          <Save className="w-4 h-4" />
-          Settings are auto-saved
+        <div className="flex items-center gap-3">
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={handleSave}
+            disabled={isSaving}
+            className="flex justify-center items-center gap-2 px-6 py-3 bg-[var(--accent)] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest border border-[var(--accent)] shadow-xl shadow-[var(--accent)]/20 w-full sm:w-auto mt-4 sm:mt-0 disabled:opacity-50"
+          >
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            {isSaving ? "Saving..." : "Save Now"}
+          </motion.button>
+          
+          <div className="flex justify-center items-center gap-2 px-6 py-3 bg-[var(--accent)]/10 text-[var(--accent)] rounded-2xl text-[10px] font-black uppercase tracking-widest border border-[var(--accent)]/20 w-full sm:w-auto mt-4 sm:mt-0">
+            <Zap className="w-4 h-4" />
+            Auto-saving active
+          </div>
         </div>
       </div>
 
@@ -584,11 +610,15 @@ export function SettingsView() {
                        </div>
                     </div>
                     
-                    <div className="grid gap-4 md:grid-cols-3">
+                    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                        {[
+                         { id: 'metaTemplateWelcome', label: 'Welcome/Onboarding', placeholder: 'welcome_customer_v1' },
                          { id: 'metaTemplateBilling', label: 'Cyclic Invoice', placeholder: 'bill_reminder_v1' },
                          { id: 'metaTemplateReceipt', label: 'Success Receipt', placeholder: 'payment_ack_v3' },
-                         { id: 'metaTemplateBroadcast', label: 'Bulk Broadcast', placeholder: 'mass_broadcast_generic' }
+                         { id: 'metaTemplateBroadcast', label: 'Bulk Broadcast', placeholder: 'mass_broadcast_generic' },
+                         { id: 'metaTemplateOverdue', label: 'Overdue Penalty', placeholder: 'penalty_alert_v1' },
+                         { id: 'metaTemplateSuspension', label: 'Suspension Notice', placeholder: 'service_suspended' },
+                         { id: 'metaTemplateCustom', label: 'Custom/Other', placeholder: 'custom_alert' }
                        ].map(tmp => (
                          <div key={tmp.id} className="space-y-3">
                             <label className="text-[9px] font-black uppercase tracking-[0.1em] neu-text-muted ml-1">{tmp.label}</label>
@@ -633,9 +663,14 @@ export function SettingsView() {
                           className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-black uppercase tracking-widest text-emerald-600 cursor-pointer shadow-inner"
                         >
                           <option value="hello_world">Meta: hello_world</option>
+                          {settings.metaTemplateWelcome && <option value={settings.metaTemplateWelcome}>Welcome: {settings.metaTemplateWelcome}</option>}
                           {settings.metaTemplateBilling && <option value={settings.metaTemplateBilling}>Billing: {settings.metaTemplateBilling}</option>}
                           {settings.metaTemplateReceipt && <option value={settings.metaTemplateReceipt}>Receipt: {settings.metaTemplateReceipt}</option>}
-                          <option value="custom">Custom Entry</option>
+                          {settings.metaTemplateBroadcast && <option value={settings.metaTemplateBroadcast}>Broadcast: {settings.metaTemplateBroadcast}</option>}
+                          {settings.metaTemplateOverdue && <option value={settings.metaTemplateOverdue}>Overdue: {settings.metaTemplateOverdue}</option>}
+                          {settings.metaTemplateSuspension && <option value={settings.metaTemplateSuspension}>Suspension: {settings.metaTemplateSuspension}</option>}
+                          {settings.metaTemplateCustom && <option value={settings.metaTemplateCustom}>Custom: {settings.metaTemplateCustom}</option>}
+                          <option value="custom">Manual Text (Custom Entry)</option>
                         </select>
                       </div>
                    </div>

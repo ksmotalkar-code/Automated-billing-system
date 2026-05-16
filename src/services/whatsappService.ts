@@ -10,7 +10,7 @@ export interface WhatsAppMessage {
   attachment?: Blob | File;
   attachmentName?: string;
   attachmentType?: string;
-  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'custom';
+  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
 }
 
 class WhatsAppService {

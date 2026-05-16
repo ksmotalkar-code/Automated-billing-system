@@ -90,7 +90,7 @@ export const sendWhatsAppNotification = async (
   attachmentName?: string,
   isBulkMode?: boolean,
   includePortalLink: boolean = true,
-  templateCategory?: 'billing' | 'receipt' | 'broadcast'
+  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom'
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   if (customer.status === 'Suspended') {
     return { success: false, error: "Customer is suspended. Notifications are disabled for suspended accounts." };
@@ -276,6 +276,24 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         batch.update(doc(db, 'customers', customer.id), {
           balance: customer.balance + settings.penaltyAmount
         });
+        
+        if (automation.bulkProcessing) {
+          try {
+            const overdueMessage = `NOTICE: A late fee of INR ${settings.penaltyAmount.toFixed(2)} has been applied to your account. Your new balance is INR ${(customer.balance + settings.penaltyAmount).toFixed(2)}. Please pay at earliest.`;
+            sendWhatsAppNotification({...customer, balance: customer.balance + settings.penaltyAmount}, overdueMessage, settings, undefined, undefined, true, true, 'overdue')
+              .then(res => {
+                if (!res.success && res.error) {
+                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'overdue' });
+                }
+              })
+              .catch(e => {
+                console.error("Overdue notice error", e);
+                logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'overdue' });
+              });
+          } catch (err: any) {
+             logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'overdue' });
+          }
+        }
       }
       try {
         await batch.commit();
@@ -306,7 +324,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
            try {
              const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
              const escalationPdf = generateEscalationPDF(customer, settings);
-             sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'billing')
+             sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'suspension')
                .then(res => {
                  if (!res.success && res.error) {
                    logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'suspension' });

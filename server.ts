@@ -526,7 +526,7 @@ async function startServer() {
   });
 
   // Helper for Meta WhatsApp API
-  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'custom', templateParams?: any[], customTemplateName?: string) {
+  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom', templateParams?: any[], customTemplateName?: string) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
     }
@@ -609,9 +609,17 @@ async function startServer() {
          if (templateCategory === 'billing') {
            templateName = settings.metaTemplateBilling || 'monthly_bill_notification';
          } else if (templateCategory === 'receipt') {
-           templateName = settings.metaTemplateReceipt || 'payment_reminder'; 
+           templateName = settings.metaTemplateReceipt || 'payment_ack_v3'; 
          } else if (templateCategory === 'broadcast') {
-           templateName = settings.metaTemplateBroadcast || 'general_announcement';
+           templateName = settings.metaTemplateBroadcast || 'mass_broadcast_generic';
+         } else if (templateCategory === 'welcome') {
+           templateName = settings.metaTemplateWelcome || 'welcome_customer_v1';
+         } else if (templateCategory === 'overdue') {
+           templateName = settings.metaTemplateOverdue || 'penalty_alert_v1';
+         } else if (templateCategory === 'suspension') {
+           templateName = settings.metaTemplateSuspension || 'service_suspended';
+         } else if (templateCategory === 'custom') {
+           templateName = settings.metaTemplateCustom || 'custom_alert';
          }
        }
 
@@ -744,7 +752,7 @@ async function startServer() {
   }
 
   // Generic Send WhatsApp API
-  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'custom', templateParams?: any[], customTemplateName?: string) {
+  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom', templateParams?: any[], customTemplateName?: string) {
     if (settings.preferredNotificationMethod === 'manual_link') {
        throw new Error("Manual link selected, API disabled.");
     }
@@ -1181,6 +1189,10 @@ async function startServer() {
   app.post("/api/wa/test", async (req, res) => {
     try {
       const { ownerId, testMobile, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, templateToTest } = req.body;
+      if (!ownerId) {
+        return res.status(400).json({ error: "No user authenticated." });
+      }
+      
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,

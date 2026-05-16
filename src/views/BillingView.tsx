@@ -185,7 +185,7 @@ export function BillingView() {
     const pdfBlob = generateInvoicePDF(customer, settings);
     
     // Open WhatsApp (Automated if API configured, else manual)
-    const result = await sendWhatsAppNotification(customer, message, settings, pdfBlob, `Invoice_${customer.id}.pdf`, false);
+    const result = await sendWhatsAppNotification(customer, message, settings, pdfBlob, `Invoice_${customer.id}.pdf`, false, true, 'billing');
     
     if (!result.success) {
        showAlert("Sending Failed", `Could not send notification: ${result.error}`);
@@ -239,7 +239,7 @@ export function BillingView() {
       try {
         const tempSettings = { ...settings, preferredNotificationMethod: preferredMethod };
         const message = notifyMessage;
-        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, false);
+        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, false, 'custom');
         
         if (result.success) {
           showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
@@ -400,7 +400,7 @@ export function BillingView() {
           // Generate PDF for attachment
           const pdfBlob = generateInvoicePDF(customer, settings);
           
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode, true, 'receipt');
           if (result.success) {
              batch.update(doc(db, 'customers', customer.id), { invoiceSent: true, paymentNotified: true });
              updatesSkipped++;

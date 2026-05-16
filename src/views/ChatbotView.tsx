@@ -52,6 +52,15 @@ export function ChatbotView() {
     fetchSettings();
   }, []);
 
+  useEffect(() => {
+    if (loading) return;
+    
+    const timer = setTimeout(() => {
+      handleSave();
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [settings, loading]);
+
   const handleSave = () => {
     setSaving(true);
     setSaveMessage("");

@@ -30,7 +30,8 @@ export interface PaymentReceipt {
 }
 
 export const createPortalLink = async (customer: Customer, settings: AppSettings): Promise<string> => {
-  if (!auth.currentUser) throw new Error("Must be logged in to create portal link");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Must be logged in to create portal link");
   
   // Generate a random unguessable ID for the portal
   const portalId = Array.from(crypto.getRandomValues(new Uint8Array(24)))
@@ -39,7 +40,7 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
 
   const portalData: PublicPortalData = {
     portalId,
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
     customerId: customer.id,
     customerName: customer.name || "Customer",
     mobileNumber: customer.mobileNumber || "",

@@ -220,6 +220,10 @@ export interface AppSettings {
   metaTemplateBilling?: string;
   metaTemplateReceipt?: string;
   metaTemplateBroadcast?: string;
+  metaTemplateWelcome?: string;
+  metaTemplateOverdue?: string;
+  metaTemplateSuspension?: string;
+  metaTemplateCustom?: string;
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
@@ -254,13 +258,14 @@ export interface WhatsappMessage {
 }
 
 export const cleanupOldData = async () => {
-  if (!auth.currentUser) return;
+  const user = auth.currentUser;
+  if (!user) return;
   
-  const lastCleanup = localStorage.getItem(`last_cleanup_${auth.currentUser.uid}`);
+  const lastCleanup = localStorage.getItem(`last_cleanup_${user.uid}`);
   const today = new Date().toDateString();
   if (lastCleanup === today) return; // Already cleaned up today
   
-  localStorage.setItem(`last_cleanup_${auth.currentUser.uid}`, today);
+  localStorage.setItem(`last_cleanup_${user.uid}`, today);
 
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
@@ -269,13 +274,13 @@ export const cleanupOldData = async () => {
   
   const qData = query(
     collection(db, 'uploadedData'), 
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     where('uploadedAt', '<', sixMonthsAgo.toISOString())
   );
 
   const qComplaints = query(
     collection(db, 'complaints'),
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     where('expiresAt', '<', now)
   );
   
@@ -310,13 +315,14 @@ const checkQuotaBeforeWrite = (action: string) => {
 };
 
 export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): Promise<Customer> => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Customer");
   
   // Check for duplicates
   const q = query(
       collection(db, 'customers'), 
-      where('ownerId', '==', auth.currentUser.uid),
+      where('ownerId', '==', user.uid),
       where('mobileNumber', '==', customer.mobileNumber)
   );
   const snapshot = await getDocs(q);
@@ -337,7 +343,7 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
   const newCustomer: Customer = {
     ...customer,
     id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
     createdAt: new Date().toISOString()
   };
   try {
@@ -360,7 +366,8 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
 };
 
 export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateCheck = false) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Cannot update customer.");
   
   let isDuplicate = false;
@@ -370,7 +377,7 @@ export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateChe
     // Check for duplicates (if mobile number changed)
     const q = query(
         collection(db, 'customers'), 
-        where('ownerId', '==', auth.currentUser.uid),
+        where('ownerId', '==', user.uid),
         where('mobileNumber', '==', updatedCustomer.mobileNumber)
     );
     const snapshot = await getDocs(q);
@@ -418,7 +425,8 @@ const deleteInBatches = async (querySnapshot: any) => {
 };
 
 export const deleteCustomer = async (id: string) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Delete Customer");
   try {
     const batch = writeBatch(db);
@@ -429,7 +437,7 @@ export const deleteCustomer = async (id: string) => {
     const q = query(
       collection(db, 'transactions'), 
       where('customerId', '==', id),
-      where('ownerId', '==', auth.currentUser.uid)
+      where('ownerId', '==', user.uid)
     );
     const snapshot = await getDocs(q);
     snapshot.docs.forEach(doc => batch.delete(doc.ref));
@@ -441,7 +449,8 @@ export const deleteCustomer = async (id: string) => {
 };
 
 export const deleteCustomersBatch = async (ids: string[]) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   try {
     // Delete customers in chunks of 200
     for (let i = 0; i < ids.length; i += 200) {
@@ -457,7 +466,7 @@ export const deleteCustomersBatch = async (ids: string[]) => {
       const q = query(
         collection(db, 'transactions'), 
         where('customerId', '==', id),
-        where('ownerId', '==', auth.currentUser.uid)
+        where('ownerId', '==', user.uid)
       );
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
@@ -488,15 +497,16 @@ export const updateCustomersBatchStatus = async (ids: string[], status: 'Active'
 };
 
 export const deleteAllCustomers = async () => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   try {
     // Delete all customers for this user
-    const qCust = query(collection(db, 'customers'), where('ownerId', '==', auth.currentUser.uid));
+    const qCust = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
     const snapCust = await getDocs(qCust);
     await deleteInBatches(snapCust);
 
     // Delete all transactions for this user
-    const qTxn = query(collection(db, 'transactions'), where('ownerId', '==', auth.currentUser.uid));
+    const qTxn = query(collection(db, 'transactions'), where('ownerId', '==', user.uid));
     const snapTxn = await getDocs(qTxn);
     await deleteInBatches(snapTxn);
   } catch (error) {
@@ -505,13 +515,14 @@ export const deleteAllCustomers = async () => {
 };
 
 export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'>): Promise<Transaction> => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Transaction");
   const newTransaction: Transaction = {
     ...transaction,
     id: `TXN-${uuidv4().substring(0, 8).toUpperCase()}`,
     date: new Date().toISOString(),
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
   };
   try {
     await setDoc(doc(db, 'transactions', newTransaction.id), newTransaction);
@@ -523,24 +534,26 @@ export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date
 };
 
 export const saveSettings = async (settings: AppSettings) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Writes temporarily disabled.");
   try {
-    await setDoc(doc(db, 'settings', auth.currentUser.uid), { ...settings, ownerId: auth.currentUser.uid });
+    await setDoc(doc(db, 'settings', user.uid), { ...settings, ownerId: user.uid });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `settings/${auth.currentUser.uid}`);
+    handleFirestoreError(error, OperationType.WRITE, `settings/${user.uid}`);
   }
 };
 
 export const saveUploadedData = async (fileName: string, data: any[]) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   const id = `UPLOAD-${uuidv4().substring(0, 8).toUpperCase()}`;
   const upload: UploadedData = {
     id,
     fileName,
     data: JSON.stringify(data),
     uploadedAt: new Date().toISOString(),
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
   };
   try {
     await setDoc(doc(db, 'uploadedData', id), upload);
@@ -567,8 +580,9 @@ export const resetAllBalances = async (customers: Customer[]) => {
 };
 
 export const resetDatabase = async () => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
-  console.log("Starting master database reset for user:", auth.currentUser.uid);
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  console.log("Starting master database reset for user:", user.uid);
   try {
     // 1. Delete all customers and transactions
     console.log("Deleting customers and transactions...");
@@ -576,7 +590,7 @@ export const resetDatabase = async () => {
 
     // 2. Delete uploaded data
     console.log("Deleting uploaded data history...");
-    const qUpload = query(collection(db, 'uploadedData'), where('ownerId', '==', auth.currentUser.uid));
+    const qUpload = query(collection(db, 'uploadedData'), where('ownerId', '==', user.uid));
     const snapUpload = await getDocs(qUpload);
     if (!snapUpload.empty) {
       await deleteInBatches(snapUpload);
@@ -584,7 +598,7 @@ export const resetDatabase = async () => {
 
     // 3. Delete settings
     console.log("Deleting user settings...");
-    await deleteDoc(doc(db, 'settings', auth.currentUser.uid));
+    await deleteDoc(doc(db, 'settings', user.uid));
     
     console.log("Master reset completed successfully.");
   } catch (error) {
@@ -594,7 +608,8 @@ export const resetDatabase = async () => {
 };
 
 export const importCustomersFromText = async (text: string) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   const lines = text.split('\n');
   const customers: Omit<Customer, 'id' | 'ownerId'>[] = [];
   let currentCustomer: any = null;
@@ -641,7 +656,7 @@ export const importCustomersFromText = async (text: string) => {
       batch.set(docRef, {
         ...custData,
         id,
-        ownerId: auth.currentUser.uid,
+        ownerId: user.uid,
         createdAt: new Date().toISOString()
       });
     }
@@ -654,10 +669,11 @@ export const importCustomersFromText = async (text: string) => {
 };
 
 export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'customers'), 
-    where('ownerId', '==', auth.currentUser.uid)
+    where('ownerId', '==', user.uid)
   );
   return onSnapshot(q, (snapshot) => {
     const customers = snapshot.docs.map(doc => {
@@ -678,10 +694,11 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
 };
 
 export const subscribeToTransactions = (callback: (transactions: Transaction[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'transactions'), 
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     orderBy('date', 'desc'),
     limit(500)
   );
@@ -694,8 +711,9 @@ export const subscribeToTransactions = (callback: (transactions: Transaction[]) 
 };
 
 export const subscribeToSettings = (callback: (settings: AppSettings | null) => void) => {
-  if (!auth.currentUser) return () => {};
-  return onSnapshot(doc(db, 'settings', auth.currentUser.uid), (docSnap) => {
+  const user = auth.currentUser;
+  if (!user) return () => {};
+  return onSnapshot(doc(db, 'settings', user.uid), (docSnap) => {
     if (docSnap.exists()) {
       callback(docSnap.data() as AppSettings);
     } else {
@@ -720,17 +738,18 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
           bulkProcessing: true,
           smartNotifications: true
         },
-        ownerId: auth.currentUser.uid
+        ownerId: user.uid
       });
     }
   }, (error) => {
-    handleFirestoreError(error, OperationType.GET, `settings/${auth.currentUser.uid}`);
+    handleFirestoreError(error, OperationType.GET, `settings/${user.uid}`);
   });
 };
 
 export const subscribeToUploadedData = (callback: (data: UploadedData[]) => void) => {
-  if (!auth.currentUser) return () => {};
-  const q = query(collection(db, 'uploadedData'), where('ownerId', '==', auth.currentUser.uid));
+  const user = auth.currentUser;
+  if (!user) return () => {};
+  const q = query(collection(db, 'uploadedData'), where('ownerId', '==', user.uid));
   return onSnapshot(q, (snapshot) => {
     const data = snapshot.docs.map(doc => doc.data() as UploadedData);
     callback(data);
@@ -740,10 +759,11 @@ export const subscribeToUploadedData = (callback: (data: UploadedData[]) => void
 };
 
 export const subscribeToPendingReceipts = (callback: (receipts: any[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'payment_receipts'), 
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     where('status', '==', 'Pending')
   );
   return onSnapshot(q, (snapshot) => {
@@ -755,10 +775,11 @@ export const subscribeToPendingReceipts = (callback: (receipts: any[]) => void) 
 };
 
 export const subscribeToComplaints = (callback: (complaints: Complaint[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'complaints'), 
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     orderBy('createdAt', 'desc'),
     limit(200)
   );
@@ -771,12 +792,13 @@ export const subscribeToComplaints = (callback: (complaints: Complaint[]) => voi
 };
 
 export const addReport = async (report: Omit<Report, 'id' | 'ownerId' | 'createdAt'>): Promise<Report> => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   const newReport: Report = {
     ...report,
     id: `REP-${uuidv4().substring(0, 8).toUpperCase()}`,
     createdAt: new Date().toISOString(),
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
   };
   try {
     await setDoc(doc(db, 'reports', newReport.id), newReport);
@@ -788,11 +810,12 @@ export const addReport = async (report: Omit<Report, 'id' | 'ownerId' | 'created
 };
 
 export const addReportFolder = async (name: string): Promise<ReportFolder> => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   const newFolder: ReportFolder = {
     id: `FLD-${uuidv4().substring(0, 8).toUpperCase()}`,
     name,
-    ownerId: auth.currentUser.uid,
+    ownerId: user.uid,
     createdAt: new Date().toISOString()
   };
   try {
@@ -814,10 +837,11 @@ export const deleteReportFolder = async (id: string): Promise<void> => {
 };
 
 export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'reportFolders'), 
-    where('ownerId', '==', auth.currentUser.uid)
+    where('ownerId', '==', user.uid)
   );
   return onSnapshot(q, (snapshot) => {
     const folders = snapshot.docs.map(doc => doc.data() as ReportFolder);
@@ -828,10 +852,11 @@ export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => 
 };
 
 export const subscribeToReports = (callback: (reports: Report[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'reports'), 
-    where('ownerId', '==', auth.currentUser.uid)
+    where('ownerId', '==', user.uid)
   );
   return onSnapshot(q, (snapshot) => {
     const reports = snapshot.docs.map(doc => doc.data() as Report);
@@ -851,7 +876,8 @@ export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Reje
 };
 
 export const resolveComplaint = async (id: string, notify: boolean = false) => {
-  if (!auth.currentUser) return;
+  const user = auth.currentUser;
+  if (!user) return;
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + 6);
   try {
@@ -870,7 +896,7 @@ export const resolveComplaint = async (id: string, notify: boolean = false) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             complaintId: id,
-            ownerId: auth.currentUser.uid,
+            ownerId: user.uid,
             customerId: data.customerId
           })
         });
@@ -946,34 +972,37 @@ export interface ChatbotSettings {
 }
 
 export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {
-  if (!auth.currentUser) return null;
+  const user = auth.currentUser;
+  if (!user) return null;
   try {
-    const docSnap = await getDoc(doc(db, 'chatbotSettings', auth.currentUser.uid));
+    const docSnap = await getDoc(doc(db, 'chatbotSettings', user.uid));
     if (docSnap.exists()) {
       return docSnap.data() as ChatbotSettings;
     }
     return null;
   } catch (error) {
-    handleFirestoreError(error, OperationType.GET, `chatbotSettings/${auth.currentUser.uid}`);
+    handleFirestoreError(error, OperationType.GET, `chatbotSettings/${user.uid}`);
     return null;
   }
 };
 
 export const saveChatbotSettings = async (settings: ChatbotSettings) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
   try {
-    const docRef = doc(db, 'chatbotSettings', auth.currentUser.uid);
+    const docRef = doc(db, 'chatbotSettings', user.uid);
     await setDoc(docRef, settings, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${auth.currentUser.uid}`);
+    handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${user.uid}`);
   }
 };
 
 export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) => void) => {
-  if (!auth.currentUser) return () => {};
+  const user = auth.currentUser;
+  if (!user) return () => {};
   const q = query(
     collection(db, 'whatsapp_messages'), 
-    where('ownerId', '==', auth.currentUser.uid),
+    where('ownerId', '==', user.uid),
     orderBy('timestamp', 'desc'),
     limit(100)
   );
@@ -987,13 +1016,14 @@ export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) 
 };
 
 export const addWhatsappMessageRecord = async (msg: Omit<WhatsappMessage, 'id' | 'ownerId'>) => {
-  if (!auth.currentUser) return;
+  const user = auth.currentUser;
+  if (!user) return;
   try {
     const docRef = doc(collection(db, 'whatsapp_messages'));
     const fullMsg: WhatsappMessage = {
       ...msg,
       id: docRef.id,
-      ownerId: auth.currentUser.uid,
+      ownerId: user.uid,
     };
     await setDoc(docRef, fullMsg);
     return fullMsg;
