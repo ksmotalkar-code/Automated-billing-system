@@ -88,7 +88,7 @@ export function BillingView() {
     if (customer.balance === 0) {
       return customer.invoiceSent ? "Paid & Sent" : "Paid";
     }
-    if (customer.balance > settings.billingAmount) return "Overdue";
+    if (customer.balance > (settings?.billingAmount || 200)) return "Overdue";
     return "Pending";
   };
 
@@ -148,7 +148,7 @@ export function BillingView() {
   
   // Calculate due date based on settings
   const dueDate = new Date();
-  dueDate.setDate(settings.penaltyDays || 10);
+  dueDate.setDate(settings?.penaltyDays || 10);
   const formattedDueDate = dueDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 
   const getInvoiceId = (customerId: string) => {

@@ -33,7 +33,7 @@ import { DraggableOrb } from "./components/DraggableOrb";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("dashboard");
-  const { customers, settings } = useData();
+  const { customers, settings, isLoading } = useData();
   const [theme, _setTheme] = useState(() => localStorage.getItem("app_theme") || "midnight");
   const [uiStyle, _setUiStyle] = useState(() => localStorage.getItem("app_uiStyle") || "glassmorphism"); // "neumorphism" or "glassmorphism"
   
@@ -362,6 +362,21 @@ export default function App() {
             Sign in with Google
           </button>
         </motion.div>
+      </div>
+    );
+  }
+
+  if (isLoading || !settings) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center neu-bg neu-text space-y-6">
+        <motion.div 
+          animate={{ rotate: -360 }}
+          transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+          className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-[inset_4px_4px_8px_rgba(0,0,0,0.1),inset_-4px_-4px_8px_rgba(255,255,255,0.7)]"
+        >
+          <div className="w-8 h-8 rounded-full border-4 border-indigo-500 border-b-transparent animate-spin"></div>
+        </motion.div>
+        <p className="text-sm font-bold tracking-widest text-indigo-500 uppercase">Loading Data...</p>
       </div>
     );
   }
