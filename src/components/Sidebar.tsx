@@ -35,16 +35,14 @@ export const layers = [
 ];
 
 const themes = [
-  { id: 'light', name: 'Light', color: '#e0e5ec' },
-  { id: 'dark', name: 'Dark', color: '#2d3748' },
-  { id: 'ocean', name: 'Ocean', color: '#d9e2ec' },
-  { id: 'forest', name: 'Forest', color: '#e2e8e4' },
-  { id: 'sunset', name: 'Sunset', color: '#fde8e8' },
-  { id: 'lavender', name: 'Lavender', color: '#e9e4f0' },
-  { id: 'sand', name: 'Sand', color: '#f4f1ea' },
-  { id: 'mint', name: 'Mint', color: '#e6f2ed' },
-  { id: 'rose', name: 'Rose', color: '#fce8f3' },
-  { id: 'midnight', name: 'Midnight', color: '#1a202c' },
+  { id: 'midnight', name: 'Original Midnight', color: '#1a202c' },
+  { id: 'light', name: 'Original', color: '#e0e5ec' },
+  { id: 'dark', name: 'Premium Dark', color: '#1a1a1a' },
+  { id: 'obsidian', name: 'Obsidian', color: '#0b0c10' },
+  { id: 'platinum', name: 'Platinum', color: '#e5e4e2' },
+  { id: 'emerald', name: 'Emerald', color: '#004d40' },
+  { id: 'sapphire', name: 'Sapphire', color: '#082567' },
+  { id: 'ruby', name: 'Ruby', color: '#5c001e' },
   { id: 'accessible-high', name: 'High Contrast', color: '#ffffff' },
   { id: 'color-blind', name: 'Color Blind', color: '#004488' },
 ];

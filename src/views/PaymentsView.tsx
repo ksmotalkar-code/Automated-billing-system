@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer, addTransaction, subscribeToPendingReceipts, updateReceiptStatus } from "../lib/db";
+import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { PaymentReceipt } from "../lib/portal";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -14,8 +15,7 @@ import { v4 as uuidv4 } from "uuid";
 export function PaymentsView() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<'pending' | 'list'>('pending');
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [pendingReceipts, setPendingReceipts] = useState<PaymentReceipt[]>([]);
+  const { customers, settings, pendingReceipts } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -56,30 +56,9 @@ export function PaymentsView() {
     });
   };
 
-  const [settings, setSettings] = useState<AppSettings>({ 
-    upiQrCodeImage: null,
-    billingAmount: 200,
-    billingCycleMonths: 2,
-    penaltyAmount: 40,
-    penaltyDays: 10
-  });
-
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
-
-  useEffect(() => {
-    const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubReceipts = subscribeToPendingReceipts(setPendingReceipts);
-    const unsubSettings = subscribeToSettings((s) => {
-      if (s) setSettings(s);
-    });
-    return () => {
-      unsubCustomers();
-      unsubReceipts();
-      unsubSettings();
-    };
-  }, []);
 
   // Reset to first page when search query changes
   useEffect(() => {
@@ -170,11 +149,11 @@ export function PaymentsView() {
           const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
           const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
           await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         } else {
           const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
           const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         }
       } else if (updatedCustomer.balance === 0) {
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false });
@@ -235,7 +214,7 @@ export function PaymentsView() {
               if (settings.automation?.smartNotifications) {
                 const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
                 const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-                sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode).catch(err => console.error("Auto notify error:", err));
+                sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode, true, 'receipt').catch(err => console.error("Auto notify error:", err));
               }
           }
           await batch.commit();
@@ -286,11 +265,11 @@ export function PaymentsView() {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official invoice.`;
         const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       } else {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(receipt.amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
         const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`).catch(err => console.error("Auto notify error:", err));
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       }
     } catch (error) {
       console.error("Error approving receipt:", error);

@@ -2,7 +2,8 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send, Loader2, Paperclip, X } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, Customer, subscribeToSettings, AppSettings, updateCustomer } from "../lib/db";
+import { Customer, AppSettings, updateCustomer } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { writeBatch, doc } from "firebase/firestore";
 import { db } from "../firebase";
 import { sendWhatsAppNotification } from "../lib/automation";
@@ -11,8 +12,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { useRef } from "react";
 
 export function AlertsView() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const { customers, settings } = useData();
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [notifyingId, setNotifyingId] = useState<string | null>(null);
@@ -47,15 +47,6 @@ export function AlertsView() {
       showCancel: false
     });
   };
-
-  useEffect(() => {
-    const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubSettings = subscribeToSettings(setSettings);
-    return () => {
-      unsubCustomers();
-      unsubSettings();
-    };
-  }, []);
 
   const [viewMode, setViewMode] = useState<'all' | 'paid' | 'paid_notified' | 'unpaid'>('all');
   const [currentPage, setCurrentPage] = useState(1);
@@ -110,7 +101,7 @@ export function AlertsView() {
       }
     }
 
-    const result = await sendWhatsAppNotification(customer, message, settings, attachment, fileName, false);
+    const result = await sendWhatsAppNotification(customer, message, settings, attachment, fileName, false, true, 'broadcast');
     setNotifyingId(null);
     
     if (!result.success) {
@@ -157,7 +148,7 @@ export function AlertsView() {
         const isApiMode = deliveryModeRef.current === "api";
         const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
 
-        const batch = writeBatch(db);
+        let batch = writeBatch(db);
         let updatesSkipped = 0;
 
         for (let i = 0; i < targets.length; i++) {
@@ -171,7 +162,7 @@ export function AlertsView() {
             fileName = customAttachment.name;
           }
 
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode, true, 'broadcast');
           if (result.success) {
              batch.update(doc(db, 'customers', customer.id), { paymentNotified: true });
              updatesSkipped++;
@@ -179,6 +170,7 @@ export function AlertsView() {
              if (updatesSkipped % 100 === 0) {
                  try {
                      await batch.commit();
+                     batch = writeBatch(db); // Create a new batch after commit
                  } catch (e: any) {
                      if (e.code === 'resource-exhausted') {
                          errors.push("Quota Exceeded: Reached Firebase free limits.");
@@ -283,7 +275,7 @@ export function AlertsView() {
             }
           }
 
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode);
+          const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode, true, 'broadcast');
           if (!result.success) {
              errors.push(`${customer.name}: ${result.error}`);
           }

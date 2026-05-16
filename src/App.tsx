@@ -22,7 +22,8 @@ import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useTranslation } from 'react-i18next';
-import { subscribeToCustomers, subscribeToSettings, cleanupOldData, Customer, AppSettings } from "./lib/db";
+import { subscribeToCustomers, subscribeToSettings, cleanupOldData, Customer, AppSettings, saveSettings } from "./lib/db";
+import { useData } from "./contexts/DataContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { runAutomationCycle } from "./lib/automation";
 
@@ -32,11 +33,48 @@ import { DraggableOrb } from "./components/DraggableOrb";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("dashboard");
-  const [theme, setTheme] = useState("midnight");
-  const [uiStyle, setUiStyle] = useState("glassmorphism"); // "neumorphism" or "glassmorphism"
+  const { customers, settings } = useData();
+  const [theme, _setTheme] = useState(() => localStorage.getItem("app_theme") || "midnight");
+  const [uiStyle, _setUiStyle] = useState(() => localStorage.getItem("app_uiStyle") || "glassmorphism"); // "neumorphism" or "glassmorphism"
+  
+  const setTheme = (newTheme: string) => {
+    _setTheme(newTheme);
+    if (settings) {
+       saveSettings({ ...settings, appTheme: newTheme }).catch(console.error);
+    }
+  };
+
+  const setUiStyle = (newStyle: string) => {
+    _setUiStyle(newStyle);
+    if (settings) {
+       saveSettings({ ...settings, appUiStyle: newStyle }).catch(console.error);
+    }
+  };
+
+  useEffect(() => {
+    if (settings) {
+      if (settings.appTheme && settings.appTheme !== theme) {
+        _setTheme(settings.appTheme);
+      }
+      if (settings.appUiStyle && settings.appUiStyle !== uiStyle) {
+        _setUiStyle(settings.appUiStyle);
+      }
+    }
+  }, [settings]);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  
+  useEffect(() => {
+    localStorage.setItem("app_theme", theme);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem("app_uiStyle", uiStyle);
+    document.documentElement.setAttribute("data-ui", uiStyle);
+  }, [uiStyle]);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,8 +83,6 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const { t } = useTranslation();
 
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [portalMode, setPortalMode] = useState(false);
 
   useEffect(() => {
@@ -91,16 +127,10 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Automation & Data Sync
+  // Cleanup logic
   useEffect(() => {
     if (user) {
-      const unsubCustomers = subscribeToCustomers(setCustomers);
-      const unsubSettings = subscribeToSettings(setSettings);
       cleanupOldData(); // Run cleanup on login
-      return () => {
-        unsubCustomers();
-        unsubSettings();
-      };
     }
   }, [user]);
 

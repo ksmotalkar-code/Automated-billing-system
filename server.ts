@@ -5,15 +5,119 @@ import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
 import admin from "firebase-admin";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from 'firebase/app';
-import { getFirestore as getClientFirestore, doc, getDoc as getDocClient, collection as collectionClient, query as queryClient, where as whereClient, getDocs as getDocsClient, setDoc as setDocClient } from 'firebase/firestore';
+import { getFirestore as getClientFirestore, doc as docClient, getDoc as getDocClient, collection as collectionClient, query as queryClient, where as whereClient, getDocs as getDocsClient, setDoc as setDocClient } from 'firebase/firestore';
 import { getAuth as getClientAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import fs from 'fs';
+
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: 'server-admin',
+    },
+    operationType,
+    path
+  };
+  console.error('[Firestore Error Details]:', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 // Load config from root regardless of where the script runs
 const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
 const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+
+function getAdminDb() {
+  if (!admin.apps.length) return null;
+  try {
+    const adminApp = admin.apps[0];
+    
+    // Determine whether to use the specific Database ID or the default
+    let saProjectId;
+    try {
+      if (process.env.FIREBASE_SERVICE_ACCOUNT && process.env.FIREBASE_SERVICE_ACCOUNT.trim().startsWith('{')) {
+         saProjectId = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT).project_id;
+      }
+    } catch(e) {}
+    
+    // Attempt to connect to the specific database instance, or use default if specified
+    if (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)' && firebaseConfig.firestoreDatabaseId !== 'default' && (!saProjectId || saProjectId === firebaseConfig.projectId)) {
+       return getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
+    } else {
+       // Using custom service account or default db ID
+       return getFirestore(adminApp);
+    }
+  } catch (err: any) {
+    if (err.code === 5 || (err.message && err.message.includes('NOT_FOUND'))) {
+       let saProjectId = "unknown";
+       try {
+         if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+            saProjectId = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT).project_id;
+         }
+       } catch(e) {}
+       
+       console.error(`\n=======================================================\n[ACTION REQUIRED] Firestore Database Not Found!\nYour Admin SDK is connected to the project: ${saProjectId}\nHowever, this project DOES NOT have a Firestore Database created yet.\n\nPlease go to:\nhttps://console.firebase.google.com/project/${saProjectId}/firestore\nAnd click "Create Database".\n=======================================================\n`);
+       return null;
+    }
+    console.error("Error getting Admin Firestore:", err.message);
+    return null;
+  }
+}
+
+function getRequiredAdminDb() {
+  const db = getAdminDb();
+  if (!db) {
+     const msg = "CRITICAL: Firebase Admin Database is not available. This is often due to a Project ID mismatch or missing FIREBASE_SERVICE_ACCOUNT. Check server logs for details.";
+     console.error(msg);
+     throw new Error(msg);
+  }
+  return db;
+}
+
+export async function getSettings(ownerId: string): Promise<AppSettings | null> {
+  const adminDb = getAdminDb();
+  if (adminDb) {
+    try {
+      const docRef = adminDb.collection("settings").doc(ownerId);
+      const snap = await docRef.get();
+      if (snap.exists) return snap.data() as AppSettings;
+    } catch (error: any) {
+      handleFirestoreError(error, OperationType.GET, `settings/${ownerId}`);
+    }
+  }
+  
+  try {
+    // Fallback to client SDK
+    const docRef = docClient(clientDb, "settings", ownerId);
+    const snap = await getDocClient(docRef);
+    if (snap.exists()) return snap.data() as AppSettings;
+  } catch (error) {
+    console.error("Client getSettings error:", error);
+  }
+  return null;
+}
 
 // We'll import node-cron when the user sets up their Firebase Admin
 import cron from "node-cron";
@@ -53,6 +157,8 @@ interface AppSettings {
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
+  paymentGatewayKey?: string;
+  paymentGatewaySecret?: string;
   enableWhatsappWeb?: boolean;
   automation?: AutomationSettings;
 }
@@ -61,6 +167,13 @@ interface AppSettings {
   if (process.env.FIREBASE_SERVICE_ACCOUNT && process.env.FIREBASE_SERVICE_ACCOUNT.trim().startsWith('{')) {
     try {
       const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      const saProjectId = serviceAccount.project_id;
+      const configProjectId = firebaseConfig.projectId;
+
+      if (saProjectId !== configProjectId) {
+         console.warn(`[FIREBASE] Project ID mismatch DETECTED on service account! SA Project: ${saProjectId}, Config Project: ${configProjectId}. Admin DB operations may not work as expected.`);
+      }
+
       if (!admin.apps.length) {
         admin.initializeApp({
           credential: admin.credential.cert(serviceAccount)
@@ -73,12 +186,24 @@ interface AppSettings {
   } else if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     console.warn("FIREBASE_SERVICE_ACCOUNT found but is not valid JSON. Ignoring.");
   } else {
-    console.warn("FIREBASE_SERVICE_ACCOUNT not found. Webhook/Cron automation will be limited.");
+    console.warn("FIREBASE_SERVICE_ACCOUNT not found. Attempting to use Google Cloud Application Default Credentials (ADC)...");
+    try {
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          credential: admin.credential.applicationDefault(),
+          projectId: firebaseConfig.projectId
+        });
+        console.log("Firebase Admin Initialized using Application Default Credentials (ADC).");
+      }
+    } catch (err: any) {
+      console.warn("Failed to initialize with ADC. Webhook/Cron automation will be limited. You can still use the app.", err.message);
+    }
   }
 
   // Initialize Client SDK as a fallback for Hosted environments (Service User Pattern)
   const clientApp = initializeClientApp(firebaseConfig);
-  const clientDb = getClientFirestore(clientApp, firebaseConfig.firestoreDatabaseId);
+  const clientDbId = (firebaseConfig.firestoreDatabaseId === '(default)' || firebaseConfig.firestoreDatabaseId === 'default') ? undefined : firebaseConfig.firestoreDatabaseId;
+  const clientDb = getClientFirestore(clientApp, clientDbId);
   const clientAuth = getClientAuth(clientApp);
 
   // Attempt to log in as a "Service User" if configured
@@ -144,15 +269,17 @@ interface AppSettings {
     let matched = false;
     let attachments: any[] = [];
     
-    if (msgLower === "system_dl_bill" || msgLower.includes("download bill")) {
+    if (msgLower === "system_dl_bill" || msgLower.includes("download bill") || msgLower.includes("invoice")) {
        const amt = custData.balance || 0;
        replyText = replyText || `Here is your invoice. Your outstanding balance is Rs. ${amt}.`;
        try {
           const b64Pdf = await generateInvoicePdf(custData.name || 'Customer', amt);
           attachments.push({ type: 'file', name: 'Invoice.pdf', data: b64Pdf });
-       } catch(e) {}
+       } catch(e) {
+          console.error("PDF generation failed:", e);
+       }
        matched = true;
-    } else if (msgLower === "system_qr_pay" || msgLower.includes("qr for pay")) {
+    } else if (msgLower === "system_qr_pay" || msgLower.includes("qr for pay") || msgLower.includes("pay bill") || msgLower.includes("upi")) {
        replyText = replyText || "Scan the attached UPI QR code to pay your bill.";
        const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
        if (qrImage) {
@@ -161,7 +288,18 @@ interface AppSettings {
            replyText = "Sorry, no UPI QR code has been set by the administration yet.";
        }
        matched = true;
-    } else if (msgLower === "system_bill" || msgLower.includes("see my bill")) {
+    } else if (msgLower === "hi" || msgLower === "hello" || msgLower === "menu" || msgLower === "help") {
+       replyText = `Hello ${custData.name}! I am your Smart Billing Assistant. How can I help you today?
+       
+Available Commands:
+1️⃣ *Balance* - Check current outstanding
+2️⃣ *Bill* - Download latest invoice
+3️⃣ *Pay* - Get UPI QR code for payment
+4️⃣ *Complaint* - Register a service issue
+5️⃣ *Status* - Check supply timings
+6️⃣ *Quality* - Check water quality report`;
+       matched = true;
+    } else if (msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
        const amt = custData.balance || 0;
        replyText = replyText || `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}.`;
        matched = true;
@@ -175,7 +313,7 @@ interface AppSettings {
        let hasReport = false;
        let reportName = "";
        let reportFiles: any[] = [];
-       const dbInstance = admin.apps.length ? admin.firestore() : null;
+       const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
        if (dbInstance) {
          const reportsSnap = await dbInstance.collection("reports").where("ownerId", "==", ownerId).limit(1).get();
          if (!reportsSnap.empty) {
@@ -225,28 +363,13 @@ interface AppSettings {
     return { matched, replyText, attachments };
   }
 
-  async function getSettings(ownerId: string) {
-    try {
-      if (admin.apps.length) {
-        const doc = await admin.firestore().collection("settings").doc(ownerId).get();
-        return doc.exists ? doc.data() : null;
-      } else {
-        const docSnap = await getDocClient(doc(clientDb, "settings", ownerId));
-        return docSnap.exists() ? docSnap.data() : null;
-      }
-    } catch(e) {
-      console.warn("Failed to get settings in server (needs Admin SDK for protected data)", e);
-      return null;
-    }
-  }
-
   async function getChatbotSettings(ownerId: string) {
     try {
       if (admin.apps.length) {
-        const doc = await admin.firestore().collection("chatbotSettings").doc(ownerId).get();
+        const doc = await getRequiredAdminDb().collection("chatbotSettings").doc(ownerId).get();
         return doc.exists ? doc.data() : null;
       } else {
-        const docSnap = await getDocClient(doc(clientDb, "chatbotSettings", ownerId));
+        const docSnap = await getDocClient(docClient(clientDb, "chatbotSettings", ownerId));
         return docSnap.exists() ? docSnap.data() : null;
       }
     } catch(e) {
@@ -257,7 +380,7 @@ interface AppSettings {
 
   async function getCustomerByMobile(ownerId: string, mobileSearch: string) {
     if (admin.apps.length) {
-      const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
+      const snap = await getRequiredAdminDb().collection("customers").where("ownerId", "==", ownerId).get();
       // Since mobile numbers might contain country codes, dashes, etc., we fetch all and find, OR better: if possible we query. 
       // Firestore doesn't do "endsWith" queries natively well without a specific field. 
       // For efficiency, we will fetch and filter, but we could improve this later. For now, it's ok.
@@ -279,7 +402,7 @@ interface AppSettings {
 
   async function getCustomers(ownerId: string) {
     if (admin.apps.length) {
-      const snap = await admin.firestore().collection("customers").where("ownerId", "==", ownerId).get();
+      const snap = await getRequiredAdminDb().collection("customers").where("ownerId", "==", ownerId).get();
       return snap.docs.map(d => ({ id: d.id, ...d.data() }));
     } else {
       const q = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
@@ -290,9 +413,9 @@ interface AppSettings {
 
   async function saveComplaintData(complaintId: string, data: any) {
     if (admin.apps.length) {
-      await admin.firestore().collection("complaints").doc(complaintId).set(data);
+      await getRequiredAdminDb().collection("complaints").doc(complaintId).set(data);
     } else {
-      await setDocClient(doc(clientDb, "complaints", complaintId), data);
+      await setDocClient(docClient(clientDb, "complaints", complaintId), data);
     }
   }
 
@@ -353,14 +476,14 @@ async function startServer() {
 
       /* 
          If `firebase-admin` is connected (requires Service Account):
-         1. admin.firestore().collection('customers').doc(finalCustomerId).get()
+         1. getRequiredAdminDb().collection('customers').doc(finalCustomerId).get()
          2. Deduct `amountPaid` from `balance`
          3. Save to `transactions` subcollection
          4. If balance == 0, trigger `generateInvoicePDF` and `sendWhatsAppNotification` natively using Node.js logic!
       */
       if (admin.apps.length) {
          try {
-           const db = admin.firestore();
+           const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
            const custRef = db.collection('customers').doc(finalCustomerId);
            const custDoc = await custRef.get();
            if (custDoc.exists) {
@@ -403,7 +526,7 @@ async function startServer() {
   });
 
   // Helper for Meta WhatsApp API
-  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast', templateParams?: any[]) {
+  async function sendMetaWhatsApp(settings: any, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'custom', templateParams?: any[], customTemplateName?: string) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
     }
@@ -463,33 +586,36 @@ async function startServer() {
         console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
       } catch (err) {
         console.error(`[WhatsApp] Error handling media:`, err);
-        // Continue and send as text message if media upload fails?
-        // Let's just append an error log but send text anyway
       }
     }
 
 
-    if (isTestMessage) {
+    if (message && message.toLowerCase().trim() === "hello world") {
+      isTestMessage = true;
+    }
+
+    if (isTestMessage && !customTemplateName) {
        bodyPayload.type = 'template';
        bodyPayload.template = {
          name: "hello_world",
          language: { code: "en_US" }
        };
-    } else if (templateCategory) {
+    } else if (templateCategory || customTemplateName) {
        bodyPayload.type = 'template';
-       let templateName = settings.metaTemplateBroadcast || 'general_announcement';
+       let templateName = customTemplateName || settings.metaTemplateBroadcast || 'general_announcement';
        let components: any[] = [];
        
-       if (templateCategory === 'billing') {
-         templateName = settings.metaTemplateBilling || 'monthly_bill_notification';
-       } else if (templateCategory === 'receipt') {
-         templateName = settings.metaTemplateReceipt || 'payment_reminder'; 
-       } else if (templateCategory === 'broadcast') {
-         templateName = settings.metaTemplateBroadcast || 'general_announcement';
+       if (!customTemplateName) {
+         if (templateCategory === 'billing') {
+           templateName = settings.metaTemplateBilling || 'monthly_bill_notification';
+         } else if (templateCategory === 'receipt') {
+           templateName = settings.metaTemplateReceipt || 'payment_reminder'; 
+         } else if (templateCategory === 'broadcast') {
+           templateName = settings.metaTemplateBroadcast || 'general_announcement';
+         }
        }
 
-       if (mediaId && templateCategory === 'billing') {
-         // Add document header for billing template
+       if (mediaId) {
          components.push({
             type: "header",
             parameters: [
@@ -509,32 +635,26 @@ async function startServer() {
            type: "body",
            parameters: templateParams.map(p => ({ type: "text", text: String(p) }))
          });
+       } else if (isTestMessage && customTemplateName) {
+          // generic fallback param when test template is used
        }
 
        bodyPayload.template = {
          name: templateName,
-         language: { code: "en_US" }, // Usually Meta prefers en_US or en_GB, we'll try en_US
-         components: components
+         language: { code: "en_US" },
+         components: components.length > 0 ? components : undefined
        };
     } else {
       if (mediaId) {
-        // Determine if it's an image or generic document
         const mimeType = mediaBase64?.split(';')[0].split(':')[1] || '';
         const isImage = mimeType.startsWith('image/');
         
         if (isImage) {
           bodyPayload.type = 'image';
-          bodyPayload.image = {
-            id: mediaId,
-            caption: message
-          };
+          bodyPayload.image = { id: mediaId, caption: message };
         } else {
           bodyPayload.type = 'document';
-          bodyPayload.document = {
-            id: mediaId,
-            caption: message,
-            filename: mediaName || 'document.pdf'
-          };
+          bodyPayload.document = { id: mediaId, caption: message, filename: mediaName || 'document.pdf' };
         }
       } else {
         bodyPayload.type = 'text';
@@ -554,20 +674,21 @@ async function startServer() {
     const data = await response.json();
     if (!response.ok) {
       let errMsg = data.error?.message || "Meta API Error";
+      console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(data));
+      
       // Ignore logging if this is a test message failing due to missing hello_world template, 
       // as our route handler expects this and falls back to text messages.
       const errStr = errMsg.toLowerCase();
       const isExpectedFallbackError = isTestMessage && (errStr.includes('hello_world') || errStr.includes('hello world') || errStr.includes('test number') || errStr.includes('does not exist') || errStr.includes('131058'));
       const isExpectedWindowError = !isTestMessage && (errStr.includes('131047') || errStr.includes('24 hours') || errStr.includes('free-form') || errStr.includes('doesn\'t exist') || errStr.includes('template'));
       
-      if (!isExpectedFallbackError && !isExpectedWindowError) {
-        console.error(`[WhatsApp] Meta API Error: ${errMsg}`);
-      }
-      
       if (data.error && data.error.message && data.error.message.includes('register this phone number')) {
           errMsg = "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.";
       } else if (data.error?.type === 'OAuthException') {
         errMsg = `OAuthException: ${data.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
+        if (data.error.error_data && data.error.error_data.details) {
+            errMsg += ` Details: ${data.error.error_data.details}`;
+        }
       }
       throw new Error(errMsg);
     }
@@ -623,7 +744,7 @@ async function startServer() {
   }
 
   // Generic Send WhatsApp API
-  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast', templateParams?: any[]) {
+  async function sendWhatsAppMessage(settings: AppSettings, to: string, message: string, mediaBase64?: string, mediaName?: string, isTestMessage: boolean = false, templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'custom', templateParams?: any[], customTemplateName?: string) {
     if (settings.preferredNotificationMethod === 'manual_link') {
        throw new Error("Manual link selected, API disabled.");
     }
@@ -634,14 +755,14 @@ async function startServer() {
       return await sendWatiWhatsApp(settings, to, message, mediaBase64, mediaName);
     } else {
       // Default to Meta or explicit 'api'
-      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage, templateCategory, templateParams);
+      return await sendMetaWhatsApp(settings, to, message, mediaBase64, mediaName, isTestMessage, templateCategory, templateParams, customTemplateName);
     }
   }
 
   // Reusable Automation Engine
   async function runDailyAutomation(specificOwnerId: string | null = null) {
      if (!admin.apps.length) return;
-     const db = admin.firestore();
+     const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
      
      // 1. Fetch settings
      let settingsSnap;
@@ -872,7 +993,7 @@ async function startServer() {
     console.log("Running Daily Automation Engine (Cron)...");
     
     if (!admin.apps.length) return;
-    const db = admin.firestore();
+    const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
     
     // Auto-Delete resolved complaints older than 6 months
     try {
@@ -893,11 +1014,23 @@ async function startServer() {
         await batch.commit();
         console.log(`Auto-deleted ${oldComplaintsSnap.size} old complaints.`);
       }
-    } catch (err) {
-      console.error("Failed to auto-delete old complaints", err);
+    } catch (err: any) {
+      if (err.code === 5 || (err.message && err.message.includes('NOT_FOUND'))) {
+        // Warning already logged by getAdminDb
+      } else {
+        console.error("Failed to auto-delete old complaints", err);
+      }
     }
     
-    await runDailyAutomation();
+    try {
+      await runDailyAutomation();
+    } catch (autoErr: any) {
+      if (autoErr.code === 5 || (autoErr.message && autoErr.message.includes('NOT_FOUND'))) {
+         // Warning already logged by getAdminDb
+      } else {
+         console.error("Daily automation failed", autoErr);
+      }
+    }
   });
 
   app.post("/api/cron/daily", async (req, res) => {
@@ -906,9 +1039,14 @@ async function startServer() {
       console.log(`Starting Manual Daily Automation Engine Trigger for ${ownerId || 'ALL'}...`);
       await runDailyAutomation(ownerId);
       res.json({ status: "success" });
-    } catch (error) {
-       console.error("Cron Error", error);
-       res.status(500).json({ error: "Automation failed" });
+    } catch (error: any) {
+       if (error.code === 5 || (error.message && error.message.includes('NOT_FOUND'))) {
+          console.error(`[ACTION REQUIRED] Manual automation skipped. Firestore Database not found in project ${firebaseConfig.projectId}.`);
+          res.status(404).json({ error: "Firestore Database not found. Please create it in the Firebase console." });
+       } else {
+          console.error("Cron Error", error);
+          res.status(500).json({ error: "Automation failed" });
+       }
     }
   });
 
@@ -926,19 +1064,25 @@ async function startServer() {
         preferredNotificationMethod: method
       };
 
-      if (admin.apps.length) {
-         const db = admin.firestore();
-         const settingsDoc = await db.collection("settings").doc(ownerId).get();
-         if (settingsDoc.exists) {
-            const dbSettings = settingsDoc.data() as any;
-            if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-            if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
-            if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
-            if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-            if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
-            if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
-            if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
-            if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+      if (admin.apps.length && (!settings.metaWhatsAppApiKey && !settings.watiAccessToken)) {
+         try {
+           const db = getAdminDb(); 
+           if (db) {
+             const settingsDoc = await db.collection("settings").doc(ownerId).get();
+             if (settingsDoc.exists) {
+                const dbSettings = settingsDoc.data() as any;
+                if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
+                if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
+                if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+                if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
+                if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+                if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
+                if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
+                if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+             }
+           }
+         } catch (e) {
+           console.warn("Failed to fetch settings from internal DB:", e);
          }
       }
 
@@ -967,19 +1111,25 @@ async function startServer() {
         preferredNotificationMethod: method
       };
 
-      if (admin.apps.length) {
-         const db = admin.firestore();
-         const settingsDoc = await db.collection("settings").doc(ownerId).get();
-         if (settingsDoc.exists) {
-            const dbSettings = settingsDoc.data() as any;
-            if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-            if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
-            if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
-            if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-            if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
-            if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
-            if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
-            if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+      if (admin.apps.length && (!settings.metaWhatsAppApiKey && !settings.watiAccessToken)) {
+         try {
+           const db = getAdminDb(); 
+           if (db) {
+             const settingsDoc = await db.collection("settings").doc(ownerId).get();
+             if (settingsDoc.exists) {
+                const dbSettings = settingsDoc.data() as any;
+                if (!settings.metaWhatsAppApiKey) settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
+                if (!settings.metaWhatsAppPhoneNumberId) settings.metaWhatsAppPhoneNumberId = dbSettings.metaWhatsAppPhoneNumberId;
+                if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
+                if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
+                if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+                if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
+                if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
+                if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+             }
+           }
+         } catch(e) {
+           console.warn("Failed to fetch settings from internal DB for broadcast:", e);
          }
       }
       if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
@@ -988,7 +1138,7 @@ async function startServer() {
 
       let customers = recipients || [];
       if (!recipients && admin.apps.length) {
-         const db = admin.firestore();
+         const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
          const customersSnap = await db.collection("customers")
            .where("ownerId", "==", ownerId)
            .where("status", "==", "Active")
@@ -1004,15 +1154,20 @@ async function startServer() {
 
       console.log(`Broadcasting to ${customers.length} customers...`);
       
-      const results = { success: 0, failed: 0 };
+      const results = { success: 0, failed: 0, errors: [] as string[] };
       
       for (const customer of customers) {
         try {
           await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'broadcast', [message]);
           results.success++;
-        } catch (e) {
+        } catch (e: any) {
           results.failed++;
+          results.errors.push(`${customer.name}: ${e.message}`);
         }
+      }
+
+      if (results.failed > 0) {
+        console.warn(`[Broadcast] Completed with failures:`, results.errors);
       }
 
       res.json({ status: "completed", ...results });
@@ -1025,7 +1180,7 @@ async function startServer() {
   // Test WhatsApp API Configuration
   app.post("/api/wa/test", async (req, res) => {
     try {
-      const { ownerId, testMobile, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method } = req.body;
+      const { ownerId, testMobile, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, templateToTest } = req.body;
       let settings: any = { 
         metaWhatsAppApiKey: apiKey, 
         metaWhatsAppPhoneNumberId: phoneId,
@@ -1035,7 +1190,7 @@ async function startServer() {
       };
 
       if (admin.apps.length) {
-         const db = admin.firestore();
+         const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
          const settingsDoc = await db.collection("settings").doc(ownerId).get();
          if (settingsDoc.exists) {
             const dbSettings = settingsDoc.data() as any;
@@ -1044,6 +1199,10 @@ async function startServer() {
             if (!settings.watiAccessToken) settings.watiAccessToken = dbSettings.watiAccessToken;
             if (!settings.watiApiEndpoint) settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
             if (!settings.preferredNotificationMethod) settings.preferredNotificationMethod = dbSettings.preferredNotificationMethod;
+            // Also fetch template names for convenience if not provided
+            if (!settings.metaTemplateBilling) settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt) settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast) settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
          }
       }
       
@@ -1054,29 +1213,88 @@ async function startServer() {
       const message = "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
       
       try {
-        // Try with hello_world template (works for Meta Test Numbers)
-        await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
+        let templateName;
+        if (templateToTest && templateToTest !== 'hello_world') {
+           // Test specific template
+           templateName = templateToTest;
+           if (templateToTest === 'billing') templateName = settings.metaTemplateBilling;
+           else if (templateToTest === 'receipt') templateName = settings.metaTemplateReceipt;
+           else if (templateToTest === 'broadcast') templateName = settings.metaTemplateBroadcast;
+
+           if (!templateName) throw new Error(`The '${templateToTest}' template name is not configured in your settings.`);
+           
+           await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, 'custom', ["Test Data"], templateName);
+        } else {
+           // Default test (hello_world)
+           await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
+        }
       } catch (err: any) {
         // If meta throws template not found (meaning it's a live number which lacks hello_world)
         const errLower = err.message.toLowerCase();
-        if (errLower.includes('hello_world') || errLower.includes('hello world') || errLower.includes('test number') || errLower.includes('does not exist') || errLower.includes('131058')) {
+        let needsFallback = false;
+
+        if (errLower.includes('132000') || errLower.includes('expected number of params')) {
+           const match = err.message.match(/expected number of params \((\d+)\)/);
+           if (match && match[1]) {
+               const numParams = parseInt(match[1]);
+               const paramsArr = Array(numParams).fill("Test");
+               paramsArr[0] = "Test Data"; // First param gets short test string instead of long message
+               try {
+                  const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
+                  const tName = (templateToTest && templateToTest !== 'hello_world') ? (templateToTest === 'billing' ? settings.metaTemplateBilling : (templateToTest === 'receipt' ? settings.metaTemplateReceipt : (templateToTest === 'broadcast' ? settings.metaTemplateBroadcast : templateToTest))) : undefined;
+                  await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, paramsArr, tName);
+                  return res.json({ status: "success", info: `Message sent! Auto-filled ${numParams} parameter(s).` });
+               } catch (err2: any) {
+                  const err2Lower = err2.message.toLowerCase();
+                  if (err2Lower.includes('131058') || err2Lower.includes('hello_world') || err2Lower.includes('hello world') || err2Lower.includes('test number') || err2Lower.includes('does not exist')) {
+                      needsFallback = true;
+                  } else {
+                      throw err2;
+                  }
+               }
+           } else {
+               needsFallback = true;
+           }
+        } else if (errLower.includes('hello_world') || errLower.includes('hello world') || errLower.includes('test number') || errLower.includes('does not exist') || errLower.includes('131058')) {
+            needsFallback = true;
+        } else {
+            throw err;
+        }
+
+        if (needsFallback) {
            try {
               // Try sending as a broadcast template first (useful for live numbers without 24h window)
-              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', [message]);
+              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', ["Test Data"]);
            } catch (fallbackErr: any) {
+              const fbLower = fallbackErr.message.toLowerCase();
+              let finalErrFallback = fallbackErr;
+
+              if (fbLower.includes('132000') || fbLower.includes('expected number of params')) {
+                 const match2 = fallbackErr.message.match(/expected number of params \((\d+)\)/);
+                 if (match2 && match2[1]) {
+                     const numParams = parseInt(match2[1]);
+                     const paramsArr = Array(numParams).fill("Test");
+                     paramsArr[0] = "Test Data";
+                     try {
+                         await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', paramsArr);
+                         return res.json({ status: "success", info: `Message sent! Auto-filled ${numParams} parameter(s) for Broadcast.` });
+                     } catch (err3) {
+                         finalErrFallback = err3;
+                     }
+                 }
+              }
+
               try {
                   // Final Attempt: standard text message (only works if 24h window is open)
                   await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false);
               } catch (finalErr: any) {
                   const finalLower = finalErr.message.toLowerCase();
                   if (finalLower.includes('131047') || finalLower.includes('24 hours') || finalLower.includes('free-form')) {
-                     throw new Error("Live Number detected: To test on a live phone number, you MUST do ONE of two things: 1) Configure an approved 'Broadcast Template' in the UI settings below, OR 2) Send an initial WhatsApp message (e.g. 'Hi') from your phone to your Business Phone Number to open a 24-hour service window.");
+                     throw new Error(`Live Number detected: To test on a live phone number, you MUST do ONE of two things: 1) Configure an approved 'Broadcast Template' in the UI settings below (current broadcast template got error: ${finalErrFallback.message}), OR 2) Send an initial WhatsApp message (e.g. 'Hi') from your phone to your Business Phone Number to open a 24-hour service window.`);
                   }
                   throw new Error(`Live Number test failed. Ensure your Meta Cloud API and templates are set up correctly. (API response: ${finalErr.message})`);
               }
            }
-        } else {
-           throw err;
         }
       }
 
@@ -1093,19 +1311,19 @@ async function startServer() {
   app.get("/api/portal-chat/init/:portalId", async (req, res) => {
     try {
       const { portalId } = req.params;
-      const portalSnap = await getDocClient(doc(clientDb, "public_portals", portalId));
+      const portalSnap = await getDocClient(docClient(clientDb, "public_portals", portalId));
       if (!portalSnap.exists()) {
         return res.status(404).json({ error: "Portal not found" });
       }
-      const portalData = portalSnap.data();
+      const portalData = portalSnap.data() as any;
       const ownerId = portalData.ownerId;
       const customerId = portalData.customerId;
 
-      const chatbotSettings = await getChatbotSettings(ownerId);
+      const chatbotSettings = await getChatbotSettings(ownerId) as any;
       const commands = (chatbotSettings && chatbotSettings.isActive) ? (chatbotSettings.commands || []) : [];
 
       let history: any[] = [];
-      const dbInstance = admin.apps.length ? admin.firestore() : null;
+      const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
       if (dbInstance) {
          const chatHistoryRef = dbInstance.collection("customers").doc(customerId).collection("chat_history").orderBy("timestamp", "asc").limit(20);
          const chatSnap = await chatHistoryRef.get();
@@ -1161,18 +1379,18 @@ async function startServer() {
       if (!message || !customerId || !ownerId) return res.status(400).json({ error: "Missing parameters" });
 
       const chatbotSettings = await getChatbotSettings(ownerId);
-      if (!chatbotSettings || !chatbotSettings.isActive) {
+      if (!chatbotSettings || !(chatbotSettings as any).isActive) {
         return res.status(400).json({ error: "Chatbot is not enabled." });
       }
 
-      const dbInstance = admin.apps.length ? admin.firestore() : null;
+      const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
 
       // Save user message
       if (dbInstance) {
          await dbInstance.collection("customers").doc(customerId).collection("chat_history").add({
            role: 'user',
            content: message,
-           timestamp: admin.firestore.FieldValue.serverTimestamp()
+           timestamp: FieldValue.serverTimestamp()
          });
       }
 
@@ -1195,7 +1413,7 @@ async function startServer() {
       
       // Fallback: get portalData because it contains the snapshot of balance
       if (!custData.name) {
-          const portalSnap = await getDocClient(doc(clientDb, "public_portals", portalId));
+          const portalSnap = await getDocClient(docClient(clientDb, "public_portals", portalId));
           if (portalSnap.exists()) {
              custData = portalSnap.data() || {};
              custData.name = custData.customerName; // map customerName to name for variables
@@ -1203,7 +1421,7 @@ async function startServer() {
       }
 
       // First check user defined commands (which includes modified system commands!)
-      for (const cmd of chatbotSettings.commands || []) {
+      for (const cmd of (chatbotSettings as any).commands || []) {
          if (!cmd.isActive) continue;
          if (testChatbotCommand(message, cmd.triggerWord, cmd.buttonLabel)) {
             replyText = cmd.response || '';
@@ -1261,7 +1479,7 @@ async function startServer() {
            role: 'assistant',
            content: replyText,
            attachments: attachments.length > 0 ? attachments : null,
-           timestamp: admin.firestore.FieldValue.serverTimestamp()
+           timestamp: FieldValue.serverTimestamp()
          });
       }
 
@@ -1278,7 +1496,7 @@ async function startServer() {
       const { complaintId, ownerId, customerId } = req.body;
       if (!complaintId || !ownerId || !customerId) return res.status(400).json({ error: "Missing params" });
 
-      const db = admin.firestore();
+      const db = getAdminDb(); if (!db) throw new Error("Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.");
       const settingsSnap = await db.collection("settings").doc(ownerId).get();
       const settings = settingsSnap.exists ? settingsSnap.data() : null;
       
@@ -1292,7 +1510,7 @@ async function startServer() {
         await db.collection("customers").doc(customerId).collection("chat_history").add({
           role: 'assistant',
           content: msg,
-          timestamp: admin.firestore.FieldValue.serverTimestamp()
+          timestamp: FieldValue.serverTimestamp()
         });
         
         return res.json({ success: true });
@@ -1369,19 +1587,19 @@ async function startServer() {
                 if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
                      const settings = await getSettings(ownerId);
                      
-                     const dbInstance = admin.apps.length ? admin.firestore() : null;
+                     const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                      if (dbInstance) {
                         try {
                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
                              role: 'user',
                              content: msgBody,
                              source: 'whatsapp',
-                             timestamp: admin.firestore.FieldValue.serverTimestamp()
+                             timestamp: FieldValue.serverTimestamp()
                            });
                         } catch (e) {}
                      }
 
-                     const chatbotSettings = await getChatbotSettings(ownerId);
+                     const chatbotSettings = await getChatbotSettings(ownerId) as any;
                      let handled = false;
                      const msgLower = msgBody.toLowerCase().trim();
                      let responseText = "I'm sorry, I don't understand that command.";
@@ -1448,14 +1666,14 @@ async function startServer() {
                              } else {
                                await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
                              }
-                             const dbInstance = admin.apps.length ? admin.firestore() : null;
+                             const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                              if (dbInstance) {
                                 try {
                                    await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
                                      role: 'assistant',
                                      content: responseText,
                                      source: 'whatsapp',
-                                     timestamp: admin.firestore.FieldValue.serverTimestamp()
+                                     timestamp: FieldValue.serverTimestamp()
                                    });
                                 } catch (e) {}
                              }

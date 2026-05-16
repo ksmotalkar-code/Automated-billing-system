@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Complaint, subscribeToComplaints, resolveComplaint, archiveComplaint, deleteComplaint, updateComplaint } from "../lib/db";
+import { Complaint, resolveComplaint, deleteComplaint, updateComplaint } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { motion } from "motion/react";
-import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search, Tag, Flag } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
-  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const { complaints } = useData();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Resolved'>('All');
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmConfig, setConfirmConfig] = useState({
@@ -17,16 +18,15 @@ export function ComplaintsView() {
     isDestructive: true,
   });
 
-  useEffect(() => {
-    const unsub = subscribeToComplaints(setComplaints);
-    return () => unsub();
-  }, []);
-
   const handleDelete = async (c: Complaint) => {
+    if (c.status !== 'Resolved') {
+      alert("Only resolved complaints can be deleted.");
+      return;
+    }
     setConfirmConfig({
       isOpen: true,
       title: "Delete Complaint",
-      message: c.status === 'Resolved' ? "Are you sure you want to permanently delete this resolved complaint?" : "Are you sure you want to delete this pending complaint?",
+      message: "Are you sure you want to permanently delete this resolved complaint?",
       isDestructive: true,
       onConfirm: async () => {
         try {
@@ -148,6 +148,11 @@ export function ComplaintsView() {
                       >
                         <option value="">No Category</option>
                         <option value="Billing Issue">Billing Issue</option>
+                        <option value="Payment Dispute">Payment Dispute</option>
+                        <option value="Water Quality">Water Quality</option>
+                        <option value="Meter Reading">Meter Reading</option>
+                        <option value="Leakage">Leakage</option>
+                        <option value="New Connection">New Connection</option>
                         <option value="Service Request">Service Request</option>
                         <option value="Technical Problem">Technical Problem</option>
                       </select>

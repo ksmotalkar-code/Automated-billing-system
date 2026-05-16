@@ -2,7 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Customer, subscribeToCustomers, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, deleteAllCustomers, subscribeToSettings, AppSettings } from "../lib/db";
+import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { sendWhatsAppNotification } from "../lib/automation";
@@ -37,61 +38,71 @@ const CustomerTableRow = React.memo(({
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: Math.min(index * 0.01, 0.5) }}
-      whileHover={{ x: 5, backgroundColor: "rgba(255, 255, 255, 0.05)" }}
+      whileHover={{ backgroundColor: "rgba(var(--accent-rgb), 0.05)" }}
       onClick={() => onRowClick(customer)}
-      className="border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors cursor-pointer"
+      className="border-b border-[var(--shadow-dark)] last:border-0 transition-colors cursor-pointer group"
     >
       <td className="px-4 py-4" onClick={(e) => e.stopPropagation()}>
-          <input 
-            type="checkbox"
-            checked={isSelected}
-            onChange={(e) => onToggleSelect(customer.id, e.target.checked)}
-            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-          />
-        </td>
-        <td className="px-4 py-4 font-medium">{customer.id}</td>
-      <td className="px-4 py-4">{customer.name}</td>
-      <td className="px-4 py-4">{customer.mobileNumber}</td>
-      <td className="px-4 py-4">
-        <span className={`px-2 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-          customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-        }`}>
-          {customer.status}
-          {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
-        </span>
-        {customer.status === 'Faulty' && (
-          <div className="text-[10px] text-red-500 font-bold mt-1 max-w-[120px] leading-tight flex items-start gap-1">
-            <AlertTriangle className="w-3 h-3 flex-shrink-0" />
-            <span>Data conflict. Click row to edit & fix.</span>
+          <div className="flex items-center justify-center">
+            <input 
+              type="checkbox"
+              checked={isSelected}
+              onChange={(e) => onToggleSelect(customer.id, e.target.checked)}
+              className="w-4 h-4 rounded border-[var(--shadow-dark)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+            />
           </div>
-        )}
+        </td>
+        <td className="px-4 py-4 font-mono text-[10px] uppercase tracking-tighter opacity-60 group-hover:opacity-100 transition-opacity whitespace-nowrap">{customer.id}</td>
+      <td className="px-4 py-4 font-black uppercase tracking-tight text-sm whitespace-nowrap">{customer.name}</td>
+      <td className="px-4 py-4 text-xs font-bold neu-text-muted whitespace-nowrap">{customer.mobileNumber}</td>
+      <td className="px-4 py-4">
+        <div className="flex flex-col gap-1">
+          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 w-fit ${
+            customer.status === 'Active' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-red-500/10 text-red-600 border border-red-500/20'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${customer.status === 'Active' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+            {customer.status}
+          </span>
+          {customer.status === 'Faulty' && (
+            <div className="text-[9px] text-red-500 font-black uppercase tracking-tighter flex items-center gap-1 animate-pulse">
+              <AlertTriangle className="w-3 h-3" />
+              <span>Conflict Detected</span>
+            </div>
+          )}
+        </div>
       </td>
-      <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
+      <td className="px-4 py-4 font-black text-[var(--accent)] text-base whitespace-nowrap">{formatCurrency(customer.balance)}</td>
       <td className="px-4 py-4 text-right">
-        <div className="flex justify-end items-center gap-1">
-          <button 
-            className="p-1 hover:bg-blue-50 text-blue-600 rounded-lg transition-colors"
+        <div className="flex justify-end items-center gap-2">
+          <motion.button 
+            whileHover={{ scale: 1.1, backgroundColor: 'rgba(59, 130, 246, 0.1)' }}
+            whileTap={{ scale: 0.9 }}
+            className="p-2 neu-flat-sm text-blue-600 rounded-xl transition-all"
             onClick={(e) => onShareLink(e, customer)}
             title="Generate & Share Link"
           >
             <LinkIcon className="w-4 h-4" />
-          </button>
-          <button 
-            className="p-1 hover:bg-emerald-50 text-emerald-600 rounded-lg transition-colors"
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.1, backgroundColor: 'rgba(16, 185, 129, 0.1)' }}
+            whileTap={{ scale: 0.9 }}
+            className="p-2 neu-flat-sm text-emerald-600 rounded-xl transition-all"
             onClick={(e) => onMessage(e, customer)}
             title="Message Customer"
           >
             <Send className="w-4 h-4" />
-          </button>
-          <button 
-            className="p-1 hover:bg-black/10 rounded-lg transition-colors"
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.1 }}
+            whileTap={{ scale: 0.9 }}
+            className="p-2 neu-flat-sm rounded-xl transition-all"
             onClick={(e) => {
               e.stopPropagation();
               onRowClick(customer);
             }}
           >
             <MoreVertical className="w-4 h-4 neu-text-muted" />
-          </button>
+          </motion.button>
         </div>
       </td>
     </motion.tr>
@@ -126,62 +137,61 @@ const CustomerMobileCard = React.memo(({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.05, 0.5) }}
       onClick={() => onRowClick(customer)}
-      className="neu-flat p-4 flex flex-col gap-3 relative cursor-pointer border border-[var(--shadow-dark)]"
+      className="neu-flat p-5 flex flex-col gap-4 relative cursor-pointer border-none border-t border-white/5 active:neu-pressed transition-all"
     >
       <div className="flex justify-between items-start">
          <div className="flex gap-4">
-            <div className="pt-0.5">
+            <div className="pt-0.5" onClick={e => e.stopPropagation()}>
               <input 
                 type="checkbox"
                 checked={isSelected}
-                onClick={(e) => e.stopPropagation()}
                 onChange={(e) => onToggleSelect(customer.id, e.target.checked)}
-                className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                className="w-5 h-5 rounded border-[var(--shadow-dark)] text-[var(--accent)] focus:ring-[var(--accent)]"
               />
             </div>
             <div>
-              <h4 className="font-bold text-base leading-tight tracking-tight">{customer.name}</h4>
-              <p className="text-[10px] neu-text-muted font-mono mt-0.5 opacity-70">{customer.id}</p>
+              <h4 className="font-black text-base uppercase tracking-tight leading-tight">{customer.name}</h4>
+              <p className="text-[10px] neu-text-muted font-bold mt-1 opacity-60 uppercase tracking-widest">{customer.id}</p>
             </div>
          </div>
-         <span className={`px-2 py-1 rounded-full text-[9px] font-black tracking-wider uppercase flex items-center gap-1 flex-shrink-0 ${
-           customer.status === 'Active' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+         <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 flex-shrink-0 ${
+           customer.status === 'Active' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-red-500/10 text-red-600 border border-red-500/20'
          }`}>
+           <span className={`w-1.5 h-1.5 rounded-full ${customer.status === 'Active' ? 'bg-emerald-500' : 'bg-red-50'}`} />
            {customer.status}
-           {customer.status === 'Faulty' && <AlertTriangle className="w-3 h-3" />}
          </span>
       </div>
       {customer.status === 'Faulty' && (
-        <div className="text-[11px] text-red-500 font-bold mt-1 bg-red-50 px-3 py-1.5 rounded-lg flex items-start gap-1">
-          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
-          <span>Data conflict detected. Click to edit and correct.</span>
+        <div className="text-[10px] text-red-500 font-black uppercase tracking-widest mt-1 bg-red-500/10 px-3 py-2 rounded-xl flex items-center gap-2 animate-pulse border border-red-500/20">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+          <span>Sync Failure: Fix Required</span>
         </div>
       )}
-      <div className="flex justify-between items-end mt-1 pl-8">
-        <span className="text-xs neu-text-muted font-medium opacity-80">{customer.mobileNumber}</span>
-        <span className="text-lg font-black tracking-tight">{formatCurrency(customer.balance)}</span>
+      <div className="flex justify-between items-center bg-black/5 p-3 rounded-xl">
+        <span className="text-xs neu-text font-black tracking-tighter opacity-80">{customer.mobileNumber}</span>
+        <span className="text-xl font-black tracking-tighter text-[var(--accent)]">{formatCurrency(customer.balance)}</span>
       </div>
-      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-[var(--shadow-dark)] overflow-x-auto pb-1">
+      <div className="flex justify-end gap-2 mt-2">
          <motion.button
            whileTap={{ scale: 0.95 }}
            onClick={(e) => onShareLink(e, customer)}
-           className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+           className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
          >
-           <LinkIcon className="w-3.5 h-3.5" /> Link
+           <LinkIcon className="w-3.5 h-3.5" /> Portal
          </motion.button>
          <motion.button
            whileTap={{ scale: 0.95 }}
            onClick={(e) => onMessage(e, customer)}
-           className="px-4 py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold flex items-center gap-2 whitespace-nowrap"
+           className="flex-1 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
          >
-           <Send className="w-3.5 h-3.5" /> Message
+           <Send className="w-3.5 h-3.5" /> Notify
          </motion.button>
          <motion.button
            whileTap={{ scale: 0.95 }}
            onClick={() => onRowClick(customer)}
-           className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold flex items-center gap-2"
+           className="p-3 neu-flat rounded-xl text-slate-600 flex items-center justify-center"
          >
-           <MoreVertical className="w-3.5 h-3.5" /> Details
+           <MoreVertical className="w-4 h-4" />
          </motion.button>
       </div>
     </motion.div>
@@ -190,7 +200,7 @@ const CustomerMobileCard = React.memo(({
 
 export function CustomersView() {
   const { t } = useTranslation();
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const { customers, settings } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -205,8 +215,8 @@ export function CustomersView() {
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [showFaultyOnly, setShowFaultyOnly] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Suspended'>('all');
   const [isImporting, setIsImporting] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
   const [customAttachment, setCustomAttachment] = useState<File | null>(null);
@@ -219,13 +229,15 @@ export function CustomersView() {
       const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
       const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
       
+      const matchesStatus = filterStatus === 'all' || c.status === filterStatus;
+      
       if (showFaultyOnly) {
         return matchesSearch && c.status === 'Faulty';
       } else {
-        return matchesSearch && c.status !== 'Faulty';
+        return matchesSearch && matchesStatus && c.status !== 'Faulty';
       }
     });
-  }, [customers, searchQuery, showFaultyOnly]);
+  }, [customers, searchQuery, showFaultyOnly, filterStatus]);
 
   const sortedCustomers = useMemo(() => {
     return [...filteredCustomers].sort((a, b) => {
@@ -297,7 +309,7 @@ export function CustomersView() {
   const confirmBulkUpload = async () => {
     setIsImporting(true);
     try {
-      const batchLimit = 500;
+      const batchLimit = 200;
       for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const batch = writeBatch(db);
         const chunk = stagingCustomers.slice(i, i + batchLimit);
@@ -307,6 +319,9 @@ export function CustomersView() {
         }
         try {
           await batch.commit();
+          if (i + batchLimit < stagingCustomers.length) {
+            await new Promise(r => setTimeout(r, 500));
+          }
         } catch(e: any) {
           if (e.code === 'resource-exhausted') {
             showAlert("Quota Exceeded", "Firebase free limits reached during import.");
@@ -383,25 +398,17 @@ export function CustomersView() {
   });
 
   useEffect(() => {
-    const unsub = subscribeToCustomers(setCustomers);
-    const unsubSettings = subscribeToSettings((s) => {
-      setSettings(s);
-      if (s) {
-        import("../services/whatsappService").then(({ whatsappService }) => {
-          whatsappService.updateConfig(
-            s.metaWhatsAppApiKey || null, 
-            s.metaWhatsAppPhoneNumberId || null, 
-            s.watiAccessToken || null,
-            s.watiApiEndpoint || null
-          );
-        });
-      }
-    });
-    return () => {
-      unsub();
-      unsubSettings();
-    };
-  }, []);
+    if (settings) {
+      import("../services/whatsappService").then(({ whatsappService }) => {
+        whatsappService.updateConfig(
+          settings.metaWhatsAppApiKey || null, 
+          settings.metaWhatsAppPhoneNumberId || null, 
+          settings.watiAccessToken || null,
+          settings.watiApiEndpoint || null
+        );
+      });
+    }
+  }, [settings]);
 
   // Reset to first page when search query changes
   useEffect(() => {
@@ -435,20 +442,17 @@ export function CustomersView() {
     }
 
     setIsSavingUser(true);
-    try {
-      await addCustomer({ ...newCustomer, status: finalStatus });
-      setIsAddModalOpen(false);
-      setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
-      setCurrentPage(1);
-    } catch (err: any) {
+    addCustomer({ ...newCustomer, status: finalStatus }).catch((err: any) => {
       if (err.message && err.message.includes('Quota')) {
         showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
       } else {
-        showAlert("Error", err.message || "Failed to add customer. Check database quota.");
+        console.error("Failed to add customer to remote server:", err);
       }
-    } finally {
-      setIsSavingUser(false);
-    }
+    });
+    setIsAddModalOpen(false);
+    setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
+    setCurrentPage(1);
+    setIsSavingUser(false);
   };
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
@@ -473,25 +477,22 @@ export function CustomersView() {
         return;
       }
       setIsSavingUser(true);
-      try {
-        await updateCustomer({...editingCustomer, status: finalStatus});
-        
-        if (statusChanged && settings && settings.automation && finalStatus !== 'Suspended') {
-           let message = `Dear ${editingCustomer.name}, your account status has been updated to ${finalStatus}.`;
-           sendWhatsAppNotification({...editingCustomer, status: finalStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify status error:", err));
-        }
-
-        setIsEditModalOpen(false);
-        setEditingCustomer(null);
-      } catch (err: any) {
+      updateCustomer({...editingCustomer, status: finalStatus}).catch((err: any) => {
         if (err.message && err.message.includes('Quota')) {
           showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
         } else {
-          showAlert("Error", err.message || "Failed to update customer. Check database quota.");
+          console.error("Failed to update customer to remote server:", err);
         }
-      } finally {
-        setIsSavingUser(false);
+      });
+      
+      if (statusChanged && settings && settings.automation && finalStatus !== 'Suspended') {
+         let message = `Dear ${editingCustomer.name}, your account status has been updated to ${finalStatus}.`;
+         sendWhatsAppNotification({...editingCustomer, status: finalStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify status error:", err));
       }
+
+      setIsEditModalOpen(false);
+      setEditingCustomer(null);
+      setIsSavingUser(false);
     }
   };
 
@@ -505,18 +506,16 @@ export function CustomersView() {
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        try {
-          await updateCustomer({...customer, status: newStatus});
-          if (settings && settings.automation) {
-             let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
-             if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
-             sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, true).catch(err => console.error("Auto notify isolate error:", err));
-          }
-          setIsEditModalOpen(false);
-          setEditingCustomer(null);
-        } catch (err: any) {
-          showAlert("Error", "Failed to change status. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+        updateCustomer({...customer, status: newStatus}).catch(err => {
+          showAlert("Error", "Failed to change status on remote server. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+        });
+        if (settings && settings.automation) {
+           let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
+           if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
+           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify isolate error:", err));
         }
+        setIsEditModalOpen(false);
+        setEditingCustomer(null);
       }
     });
   };
@@ -528,7 +527,7 @@ export function CustomersView() {
       return;
     }
     const message = `Your payment details for your water bill have been confirmed. Thank you for your payment.`;
-    await sendWhatsAppNotification(customer, message, settings);
+    await sendWhatsAppNotification(customer, message, settings, undefined, undefined, false, true, 'receipt');
     showAlert("Success", "Notification resent successfully.");
     setIsEditModalOpen(false);
   };
@@ -568,6 +567,24 @@ export function CustomersView() {
           setSelectedIds([]);
         } catch (err: any) {
           showAlert("Error", "Failed to delete customers. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+        }
+      }
+    });
+  };
+
+  const handleUpdateStatusBatch = (status: 'Active' | 'Suspended') => {
+    setConfirmConfig({
+      isOpen: true,
+      title: `${status === 'Active' ? 'Activate' : 'Suspend'} Selected Customers`,
+      message: `Are you sure you want to mark ${selectedIds.length} customers as ${status}?`,
+      isDestructive: status === 'Suspended',
+      showCancel: true,
+      onConfirm: async () => {
+        try {
+          await updateCustomersBatchStatus(selectedIds, status);
+          setSelectedIds([]);
+        } catch (err: any) {
+          showAlert("Error", `Failed to ${status === 'Active' ? 'activate' : 'suspend'} customers. ` + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
         }
       }
     });
@@ -655,7 +672,7 @@ export function CustomersView() {
       try {
         const tempSettings = { ...settings, preferredNotificationMethod: preferredMethod };
         const message = notifyMessage;
-        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, false);
+        const result = await sendWhatsAppNotification(individualNotifyCustomer, message, tempSettings, individualAttachment || undefined, individualAttachment?.name, false, true, 'broadcast');
         
         if (result.success) {
           showAlert("Success", `Message sent to ${individualNotifyCustomer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
@@ -714,9 +731,15 @@ export function CustomersView() {
   const deliveryModeRef = useRef("api");
 
   const handleNotifyActive = async () => {
-    const activeCustomers = customers.filter(c => c.status === 'Active');
-    if (activeCustomers.length === 0) {
-      showAlert("No Active Customers", "There are no active customers to notify.");
+    let targetCustomers = customers.filter(c => c.status === 'Active');
+    
+    // If user has manually checked boxes, only notify them
+    if (selectedIds.length > 0) {
+      targetCustomers = customers.filter(c => selectedIds.includes(c.id!));
+    }
+
+    if (targetCustomers.length === 0) {
+      showAlert("No Targets", "There are no valid customers to notify based on your selection.");
       return;
     }
 
@@ -739,7 +762,7 @@ export function CustomersView() {
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk Notification",
-      message: `Send custom message to all ${activeCustomers.length} active customers?`,
+      message: `Send custom message to ${targetCustomers.length} target(s)?`,
       isDestructive: false,
       showCancel: true,
       children: (
@@ -798,8 +821,8 @@ export function CustomersView() {
 
         let combinedMessage = notifyMessage;
 
-        for (let i = 0; i < activeCustomers.length; i++) {
-          const customer = activeCustomers[i];
+        for (let i = 0; i < targetCustomers.length; i++) {
+          const customer = targetCustomers[i];
           const finalMsg = `Dear ${customer.name}, ${combinedMessage}`;
           
           let attachment: Blob | undefined = undefined;
@@ -809,12 +832,12 @@ export function CustomersView() {
             fileName = customAttachment.name;
           }
 
-          const result = await sendWhatsAppNotification(customer, finalMsg, tempSettings, attachment, fileName, isApiMode, false);
+          const result = await sendWhatsAppNotification(customer, finalMsg, tempSettings, attachment, fileName, false, true, 'broadcast');
           if (!result.success) {
             errors.push(`${customer.name}: ${result.error}`);
           }
 
-          setNotifyProgress(Math.floor(((i + 1) / activeCustomers.length) * 100));
+          setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
           await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
         }
 
@@ -841,7 +864,7 @@ export function CustomersView() {
             showAlert("Completed with Errors", `Notifications finished with some errors:\n\n${errors.join('\n')}`);
           }
         } else {
-          showAlert("Success", "All active customers notified successfully!");
+          showAlert("Success", "All selected customers notified successfully!");
         }
       }
     });
@@ -874,7 +897,7 @@ export function CustomersView() {
       const customer = activeCustomers[i];
       const message = `Dear ${customer.name}, ${notifyMessage}`;
       
-      const result = await sendWhatsAppNotification(customer, message, settings as AppSettings, undefined, undefined, true, false);
+      const result = await sendWhatsAppNotification(customer, message, settings as AppSettings, undefined, undefined, true, true, 'broadcast');
       if (!result.success) {
         errors.push(`${customer.name}: ${result.error}`);
       }
@@ -932,45 +955,50 @@ export function CustomersView() {
       transition={{ duration: 0.5 }}
       className="space-y-6 relative"
     >
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">{t('Customers')}</h2>
-          <p className="neu-text-muted">{t('Manage Accounts')}</p>
+          <h2 className="text-3xl font-black tracking-tight uppercase">{t('Customers')}</h2>
+          <p className="neu-text-muted flex items-center gap-2 text-sm font-bold uppercase tracking-[0.2em] mt-1">
+            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+            {t('Manage Accounts')}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
           {selectedIds.length > 0 && (
-            <motion.button 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleDeleteBatch}
-              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-red-500/30"
+            <motion.div 
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="flex flex-wrap items-center gap-2 pr-4 border-r border-[var(--shadow-dark)]"
             >
-              Delete Selected ({selectedIds.length})
-            </motion.button>
+              <button 
+                onClick={() => handleUpdateStatusBatch('Active')}
+                className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 hover:bg-emerald-600 transition-colors"
+              >
+                Activate
+              </button>
+              <button 
+                onClick={() => handleUpdateStatusBatch('Suspended')}
+                className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-amber-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-amber-500/20 hover:bg-amber-600 transition-colors"
+              >
+                Suspend
+              </button>
+              <button 
+                onClick={() => setIsNotifyModalOpen(true)}
+                className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-blue-500/20 hover:bg-blue-700 transition-colors"
+              >
+                <Send className="w-4 h-4" />
+                Broadcast
+              </button>
+              <button 
+                onClick={handleDeleteBatch}
+                className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-red-500/20 hover:bg-red-700 transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Kill ({selectedIds.length})
+              </button>
+            </motion.div>
           )}
-          {customers.length > 0 && (
-            <motion.button 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={() => setIsNotifyModalOpen(true)}
-              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30"
-            >
-              <Bell className="w-4 h-4" /> Notify
-            </motion.button>
-          )}
-          {customers.length > 0 && (
-            <motion.button 
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleDeleteAll}
-              disabled={isDeletingAll}
-              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold shadow-lg shadow-rose-500/10 disabled:opacity-70"
-            >
-              <Trash2 className="w-4 h-4" />
-              {isDeletingAll ? "Deleting..." : "Delete All"}
-            </motion.button>
-          )}
-          <div className="flex flex-wrap w-full sm:w-auto gap-2">
+          <div className="flex flex-wrap w-full sm:w-auto gap-3">
             <input 
               type="file" 
               accept=".xlsx,.xls,.csv" 
@@ -978,106 +1006,144 @@ export function CustomersView() {
               ref={fileInputRef} 
               onChange={handleFileUpload} 
             />
+            <div className="p-1.5 neu-pressed rounded-2xl flex gap-1.5">
+              <motion.button 
+                whileHover={{ scale: 1.05, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleExport}
+                className="p-2.5 neu-flat-sm text-indigo-700 rounded-xl"
+                title="Export Catalog"
+              >
+                <Download className="w-4 h-4" />
+              </motion.button>
+              <motion.button 
+                whileHover={{ scale: 1.05, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                whileTap={{ scale: 0.95 }}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isImporting}
+                className="p-2.5 neu-flat-sm text-emerald-700 rounded-xl disabled:opacity-50"
+                title="Import Catalog"
+              >
+                <Upload className="w-4 h-4" />
+              </motion.button>
+            </div>
+
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={handleExport}
-              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold shadow-lg shadow-indigo-500/10"
+              onClick={() => setIsNotifyModalOpen(true)}
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-blue-500/20"
             >
-              <Download className="w-4 h-4" /> Export
+              <Bell className="w-4 h-4" /> Bulk Notify
             </motion.button>
+
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isImporting}
-              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-2 bg-emerald-100 text-emerald-700 rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/10 disabled:opacity-70"
+              onClick={handleDeleteAll}
+              disabled={isDeletingAll || customers.length === 0}
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-red-500/20 disabled:opacity-50"
             >
-              <Upload className="w-4 h-4" /> {isImporting ? 'Importing...' : 'Import'}
+              <Trash2 className="w-4 h-4" /> Delete All
             </motion.button>
 
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
               onClick={() => setIsAddModalOpen(true)}
-              className="w-full sm:w-auto flex justify-center items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30"
+              className="flex-1 sm:flex-none flex justify-center items-center gap-3 px-8 py-3 bg-[var(--accent)] text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] shadow-xl shadow-[var(--accent)]/30"
             >
-              <Plus className="w-4 h-4" /> {t('Add Customer')}
+              <Plus className="w-5 h-5" /> {t('Add Customer')}
             </motion.button>
           </div>
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-col sm:flex-row items-start sm:items-center justify-between space-y-4 sm:space-y-0 pb-4">
-          <div className="flex flex-1 flex-col sm:flex-row items-start sm:items-center gap-4 w-full">
-            <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
-              <Search className="w-4 h-4 neu-text-muted" />
+      <Card className="border-none border-t border-white/5">
+        <CardHeader className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4">
+          <div className="flex flex-1 flex-col md:flex-row items-center gap-4 w-full">
+            <div className="flex items-center gap-3 px-4 py-3 neu-pressed rounded-2xl w-full max-w-md group group-focus-within:ring-2 ring-[var(--accent)]/50 transition-all">
+              <Search className="w-5 h-5 neu-text-muted group-focus-within:text-[var(--accent)]" />
               <input 
                 type="text" 
-                placeholder={t('Search')} 
+                placeholder={t('Search Catalog...')} 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none outline-none text-sm w-full neu-text"
+                className="bg-transparent border-none outline-none text-sm w-full neu-text font-bold placeholder:opacity-50"
               />
             </div>
             
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => setShowFaultyOnly(!showFaultyOnly)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all duration-300 ${
-                showFaultyOnly 
-                  ? 'bg-amber-100 text-amber-700 shadow-lg shadow-amber-500/20' 
-                  : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              <AlertTriangle className={`w-4 h-4 ${showFaultyOnly ? 'animate-pulse' : ''}`} />
-              <span>{showFaultyOnly ? 'Showing Faulty' : 'Show Faulty'}</span>
-              <div className={`w-8 h-4 rounded-full relative transition-colors duration-300 ${showFaultyOnly ? 'bg-amber-500' : 'bg-slate-300'}`}>
-                <motion.div 
-                  animate={{ x: showFaultyOnly ? 16 : 2 }}
-                  className="absolute top-1 w-2 h-2 bg-white rounded-full"
-                />
+            <div className="flex gap-2 w-full md:w-auto">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setShowFaultyOnly(!showFaultyOnly)}
+                className={`flex-1 md:flex-none flex items-center justify-center gap-3 px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 ${
+                  showFaultyOnly 
+                    ? 'neu-flat bg-amber-500 text-white shadow-lg shadow-amber-500/30' 
+                    : 'neu-flat-sm neu-text-muted opacity-80'
+                }`}
+              >
+                <AlertTriangle className={`w-4 h-4 ${showFaultyOnly ? 'animate-bounce' : ''}`} />
+                <span>{showFaultyOnly ? 'Conflict View' : 'All Valid'}</span>
+              </motion.button>
+
+              <div className="flex p-1 neu-pressed rounded-2xl">
+                <motion.button 
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setFilterStatus('all')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'all' && !showFaultyOnly ? 'neu-flat bg-[var(--accent)] text-white' : 'neu-text-muted opacity-60'}`}
+                >
+                  All
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setFilterStatus('Active')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'Active' ? 'neu-flat bg-emerald-500 text-white' : 'neu-text-muted opacity-60'}`}
+                >
+                  Active
+                </motion.button>
               </div>
-            </motion.button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs uppercase neu-text-muted border-b border-[var(--shadow-dark)]">
+            <table className="w-full text-sm text-left border-collapse">
+              <thead className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted border-b border-[var(--shadow-dark)] bg-black/5">
                 <tr>
-                  <th className="px-4 py-3">
-                    <input 
-                      type="checkbox"
-                      checked={selectedIds.length === paginatedCustomers.length && paginatedCustomers.length > 0}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setSelectedIds(paginatedCustomers.map(c => c.id));
-                        } else {
-                          setSelectedIds([]);
-                        }
-                      }}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
+                  <th className="px-4 py-5 text-center">
+                    <div className="flex items-center justify-center">
+                      <input 
+                        type="checkbox"
+                        checked={selectedIds.length === paginatedCustomers.length && paginatedCustomers.length > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedIds(paginatedCustomers.map(c => c.id));
+                          } else {
+                            setSelectedIds([]);
+                          }
+                        }}
+                        className="w-4 h-4 rounded border-[var(--shadow-dark)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                      />
+                    </div>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('id')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('id')}>
                     ID <SortIcon column="id" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('name')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('name')}>
                     {t('Name')} <SortIcon column="name" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('mobileNumber')}>
-                    {t('Mobile Number')} <SortIcon column="mobileNumber" />
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('mobileNumber')}>
+                    {t('Phone')} <SortIcon column="mobileNumber" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('status')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('status')}>
                     {t('Status')} <SortIcon column="status" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('balance')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('balance')}>
                     {t('Balance')} <SortIcon column="balance" />
                   </th>
-                  <th className="px-4 py-3"></th>
+                  <th className="px-4 py-5"></th>
                 </tr>
               </thead>
               <tbody>
@@ -1633,7 +1699,7 @@ export function CustomersView() {
 
                 <div className="flex items-center justify-between pt-4 border-t border-[var(--shadow-dark)]">
                   <div className="text-xs neu-text-muted">
-                    Sending to <span className="font-bold text-blue-600">{customers.filter(c => c.status === 'Active').length}</span> active customers
+                    Sending to <span className="font-bold text-blue-600">{selectedIds.length > 0 ? selectedIds.length : customers.filter(c => c.status === 'Active').length}</span> target customers
                   </div>
                   <div className="flex gap-3">
                     <button 

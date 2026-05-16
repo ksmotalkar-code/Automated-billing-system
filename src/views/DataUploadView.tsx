@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Upload, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2 } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2, X } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import * as XLSX from 'xlsx';
@@ -91,12 +91,20 @@ export function DataUploadView() {
       let balance = parseFloat(balanceStr) || 0;
       let status = String(row['Status'] || row['status'] || "Active").trim();
       
+      const cleanMobile = mobile.replace(/\D/g, '');
+      const isMissingMobile = !cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000';
+
+      if (status.toLowerCase().includes('suspend') || isMissingMobile) {
+        status = 'Suspended';
+        mobile = '0000000000';
+      }
+
       return {
         id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
         name: name,
         mobileNumber: mobile,
         balance: balance,
-        status: status === 'Inactive' ? 'Inactive' : 'Active',
+        status: status as any,
         ownerId: auth.currentUser?.uid,
         createdAt: new Date().toISOString()
       };
@@ -187,12 +195,16 @@ export function DataUploadView() {
 
     const finalRecords = records.map(r => {
       const isMissingMobile = !r.mobileNumber || r.mobileNumber.replace(/\D/g, '').length < 10;
+      let status: any = (isMissingMobile || r._rawClose) ? "Suspended" : "Active";
+      let mobile = r.mobileNumber || "";
+      if (status === "Suspended") mobile = "0000000000";
+      
       return {
         id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
         name: r.name,
-        mobileNumber: r.mobileNumber || "",
+        mobileNumber: mobile,
         balance: 0,
-        status: (isMissingMobile || r._rawClose) ? "Suspended" : "Active" as any,
+        status: status,
         ownerId: auth.currentUser?.uid,
         createdAt: new Date().toISOString()
       };
@@ -206,7 +218,7 @@ export function DataUploadView() {
   const confirmBulkUpload = async () => {
     setIsUploading(true);
     try {
-      const batchLimit = 400; // Safer batch limit for free-tier quotas
+      const batchLimit = 200; // Lowered batch limit to prevent Firestore timeouts
       for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const chunk = stagingCustomers.slice(i, i + batchLimit);
         const batch = writeBatch(db);
@@ -215,6 +227,10 @@ export function DataUploadView() {
           batch.set(docRef, customer);
         }
         await batch.commit();
+        // Add a small delay between batches to allow network to flush
+        if (i + batchLimit < stagingCustomers.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
       setStatus({ type: 'success', message: `Successfully imported ${stagingCustomers.length} customers.` });
       setIsStagingModalOpen(false);
@@ -240,17 +256,30 @@ export function DataUploadView() {
     }
   };
 
-  const handleSaveData = async (applyToCustomers: boolean) => {
+  const handleSaveData = async (applyToCustomers: boolean, directImport: boolean = false) => {
     if (!file || parsedData.length === 0) return;
     setIsUploading(true);
     setStatus({ type: 'info', message: 'Saving raw data...' });
 
     try {
-      await saveUploadedData(file.name, parsedData);
+      try {
+        await saveUploadedData(file.name, parsedData.slice(0, 200));
+      } catch (uploadErr) {
+        console.warn("Could not save raw uploaded data, proceeding to staging:", uploadErr);
+      }
 
       if (applyToCustomers && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls') || file.name.endsWith('.json') || file.name.endsWith('.csv') || file.name.endsWith('.pdf'))) {
         setIsUploading(false);
-        openStagingFromParsedData();
+        if (directImport) {
+          openStagingFromParsedData();
+          // We can immediately call confirmBulkUpload after a short timeout so state applies
+          setTimeout(() => {
+            const btn = document.getElementById('btn-confirm-upload');
+            if (btn) btn.click();
+          }, 500);
+        } else {
+          openStagingFromParsedData();
+        }
       } else {
         setStatus({ type: 'success', message: 'Data saved successfully for future use.' });
         setIsUploading(false);
@@ -326,22 +355,30 @@ export function DataUploadView() {
                   </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-4 pt-4">
+                <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <button 
-                    onClick={() => handleSaveData(true)}
+                    onClick={() => handleSaveData(true, true)}
                     disabled={isUploading}
                     className="flex-1 py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-                    {isUploading ? "Applying..." : "Review and Add to Database"}
+                    {isUploading ? "Importing..." : "Direct Import (No Review)"}
                   </button>
                   <button 
-                    onClick={() => handleSaveData(false)}
+                    onClick={() => handleSaveData(true, false)}
                     disabled={isUploading}
                     className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
-                    {isUploading ? "Saving..." : "Save for Future Use Only"}
+                    {isUploading ? "Applying..." : "Review Extracted Data"}
+                  </button>
+                  <button 
+                    onClick={() => handleSaveData(false, false)}
+                    disabled={isUploading}
+                    className="flex-1 py-3 bg-slate-600 text-white rounded-xl font-bold shadow-lg shadow-slate-500/30 hover:bg-slate-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : null}
+                    {isUploading ? "Saving..." : "Save Log Only"}
                   </button>
                 </div>
               </div>
@@ -394,9 +431,14 @@ export function DataUploadView() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="neu-bg p-6 rounded-2xl w-full max-w-4xl shadow-2xl border border-white/20 max-h-[90vh] flex flex-col"
           >
-            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-               Review Extracted Data ({stagingCustomers.length} records)
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold flex items-center gap-2 m-0">
+                 Review Extracted Data ({stagingCustomers.length} records)
+              </h3>
+              <button onClick={() => { setIsStagingModalOpen(false); setIsUploading(false); }} className="p-2 hover:bg-black/5 rounded-full transition-colors text-slate-500 hover:text-rose-500">
+                 <X className="w-5 h-5" />
+              </button>
+            </div>
             <p className="text-xs neu-text-muted mb-4">Edit the parsed details below directly if needed before confirming.</p>
             <div className="flex-1 overflow-auto rounded-xl border border-black/5">
               <table className="w-full text-sm text-left">
@@ -463,8 +505,8 @@ export function DataUploadView() {
                   <button onClick={() => setStagingPage(p=>Math.min(Math.ceil(stagingCustomers.length/stagingLimit), p+1))} className="neu-flat px-3 py-1.5 rounded-lg text-sm font-bold">Next</button>
                </div>
                <div className="flex gap-4 w-full sm:w-auto">
-                  <button onClick={() => setIsStagingModalOpen(false)} disabled={isUploading} className="flex-1 sm:flex-none px-6 py-2 neu-flat rounded-xl font-medium">Cancel</button>
-                  <button onClick={confirmBulkUpload} disabled={isUploading} className="flex-1 sm:flex-none px-6 py-2 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 flex justify-center items-center gap-2">
+                  <button onClick={() => { setIsStagingModalOpen(false); setIsUploading(false); }} className="flex-1 sm:flex-none px-6 py-2 neu-flat rounded-xl font-medium">Cancel</button>
+                  <button id="btn-confirm-upload" onClick={confirmBulkUpload} disabled={isUploading} className="flex-1 sm:flex-none px-6 py-2 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-500/30 flex justify-center items-center gap-2">
                      {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                      Confirm Upload
                   </button>

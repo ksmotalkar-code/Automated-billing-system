@@ -3,26 +3,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, subscribeToTransactions, subscribeToComplaints, subscribeToSettings, subscribeToAutomationErrors, resolveAutomationError, Customer, Transaction, Complaint, AppSettings, AutomationError } from "../lib/db";
+import { resolveAutomationError } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 
 export function DashboardView() {
   const { t } = useTranslation();
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [complaints, setComplaints] = useState<Complaint[]>([]);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [automationErrors, setAutomationErrors] = useState<AutomationError[]>([]);
+  const { customers, transactions, complaints, settings, automationErrors } = useData();
 
   const [whatsappWebStatus, setWhatsappWebStatus] = useState<any>(null);
 
   useEffect(() => {
-    const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubTransactions = subscribeToTransactions(setTransactions);
-    const unsubComplaints = subscribeToComplaints(setComplaints);
-    const unsubSettings = subscribeToSettings(setSettings);
-    const unsubErrors = subscribeToAutomationErrors(setAutomationErrors);
-    
     // Fetch WhatsApp Web Status
     const fetchWaStatus = async () => {
       try {
@@ -40,11 +31,6 @@ export function DashboardView() {
     const interval = setInterval(fetchWaStatus, 15000); // Check every 15s
     
     return () => {
-      unsubCustomers();
-      unsubTransactions();
-      unsubComplaints();
-      unsubSettings();
-      unsubErrors();
       clearInterval(interval);
     };
   }, []);
@@ -133,27 +119,29 @@ export function DashboardView() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-6 md:grid-cols-3 lg:grid-cols-5">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.1 }}
-          whileHover={{ scale: 1.05, y: -5 }} 
+          whileHover={{ scale: 1.02, y: -5 }} 
           className="group"
         >
-          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md">
-            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
-              <DollarSign className="h-12 w-12 text-emerald-500 rotate-12" />
+          <Card className="overflow-hidden relative border-none border-t border-white/10">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+              <DollarSign className="h-12 w-12 text-[var(--accent)] rotate-12" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">{t('Total Revenue')}</CardTitle>
-              <DollarSign className="h-4 w-4 text-emerald-500" />
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">{t('Total Revenue')}</CardTitle>
+              <div className="p-2 neu-pressed-sm rounded-lg">
+                <DollarSign className="h-4 w-4 text-[var(--accent)]" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter">{formatCurrency(totalRevenue)}</div>
-              <p className="text-xs text-emerald-500 font-bold mt-1 flex items-center gap-1">
+              <div className="text-3xl font-black tracking-tighter mt-1">{formatCurrency(totalRevenue)}</div>
+              <p className="text-[10px] text-emerald-500 font-black mt-2 flex items-center gap-1 uppercase tracking-wider">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                +12% from last month
+                Trending Up +12%
               </p>
             </CardContent>
           </Card>
@@ -163,21 +151,23 @@ export function DashboardView() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.2 }}
-          whileHover={{ scale: 1.05, y: -5 }}
+          whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
-          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md">
-            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
+          <Card className="overflow-hidden relative border-none border-t border-white/10">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <Users className="h-12 w-12 text-blue-500 -rotate-12" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">{t('Active Customers')}</CardTitle>
-              <Users className="h-4 w-4 text-blue-500" />
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">{t('Active Customers')}</CardTitle>
+              <div className="p-2 neu-pressed-sm rounded-lg">
+                <Users className="h-4 w-4 text-blue-500" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter">{activeCustomersCount.toLocaleString('en-IN')}</div>
-              <p className="text-xs neu-text-muted font-medium mt-1">
-                {suspendedCustomersCount} {t('Suspended')} ({customers.length} total)
+              <div className="text-3xl font-black tracking-tighter mt-1">{activeCustomersCount.toLocaleString('en-IN')}</div>
+              <p className="text-[10px] neu-text-muted font-bold mt-2 uppercase tracking-wider">
+                {suspendedCustomersCount} {t('Suspended')}
               </p>
             </CardContent>
           </Card>
@@ -187,20 +177,22 @@ export function DashboardView() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3 }}
-          whileHover={{ scale: 1.05, y: -5 }}
+          whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
-          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md">
-            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
+          <Card className="overflow-hidden relative border-none border-t border-white/10">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <FileText className="h-12 w-12 text-amber-500 rotate-45" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">{t('Pending Payments')}</CardTitle>
-              <FileText className="h-4 w-4 text-amber-500" />
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">{t('Pending Payments')}</CardTitle>
+              <div className="p-2 neu-pressed-sm rounded-lg">
+                <FileText className="h-4 w-4 text-amber-500" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter">{pendingInvoices.toLocaleString('en-IN')}</div>
-              <p className="text-xs text-amber-500 font-bold mt-1">Totaling {formatCurrency(pendingAmount)}</p>
+              <div className="text-3xl font-black tracking-tighter mt-1">{pendingInvoices.toLocaleString('en-IN')}</div>
+              <p className="text-[10px] text-amber-500 font-bold mt-2 uppercase tracking-wider">{formatCurrency(pendingAmount)} DUE</p>
             </CardContent>
           </Card>
         </motion.div>
@@ -209,20 +201,22 @@ export function DashboardView() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.4 }}
-          whileHover={{ scale: 1.05, y: -5 }}
+          whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
-          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md">
-            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
+          <Card className="overflow-hidden relative border-none border-t border-white/10">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <AlertTriangle className="h-12 w-12 text-red-500 -rotate-12" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">Overdue</CardTitle>
-              <AlertTriangle className="h-4 w-4 text-red-500" />
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">Overdue</CardTitle>
+              <div className="p-2 neu-pressed-sm rounded-lg">
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter">{overdueAccounts.toLocaleString('en-IN')}</div>
-              <p className="text-xs text-red-500 font-bold mt-1">Requires follow-up</p>
+              <div className="text-3xl font-black tracking-tighter mt-1">{overdueAccounts.toLocaleString('en-IN')}</div>
+              <p className="text-[10px] text-red-500 font-black mt-2 uppercase tracking-wider">ACTION REQUIRED</p>
             </CardContent>
           </Card>
         </motion.div>
@@ -231,35 +225,37 @@ export function DashboardView() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.5 }}
-          whileHover={{ scale: 1.05, y: -5 }}
+          whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
-          <Card className="overflow-hidden relative border-white/5 bg-white/5 backdrop-blur-md border-indigo-500/20 shadow-indigo-500/5">
-            <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-30 transition-opacity">
+          <Card className="overflow-hidden relative border-none border-t border-white/10 shadow-lg shadow-[var(--accent)]/5">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
               <Bell className="h-12 w-12 text-indigo-500 rotate-12" />
             </div>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-bold uppercase tracking-wider opacity-70">Next Billing</CardTitle>
-              <Bell className="h-4 w-4 text-indigo-500" />
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">Next Billing</CardTitle>
+              <div className="p-2 neu-pressed-sm rounded-lg">
+                <Bell className="h-4 w-4 text-indigo-500" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-black tracking-tighter">
+              <div className="text-2xl font-black tracking-tighter mt-1">
                 {settings?.nextBillingDate 
                   ? new Date(settings.nextBillingDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short' })
                   : `Day ${settings?.defaultBillingDate || '1'}`
                 }
               </div>
-              <p className="text-xs text-indigo-500 font-bold mt-1">View Settings to change</p>
+              <p className="text-[10px] text-indigo-500 font-bold mt-2 uppercase tracking-wider">STATUS: SCHEDULED</p>
             </CardContent>
           </Card>
         </motion.div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">
         <motion.div className="col-span-full lg:col-span-4" whileHover={{ scale: 1.01 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className="h-full">
+          <Card className="h-full border-none border-t border-white/5">
             <CardHeader>
-              <CardTitle>Revenue vs Expected</CardTitle>
+              <CardTitle className="text-xs font-black uppercase tracking-[0.2em] neu-text-muted">Revenue vs Expected Flow</CardTitle>
             </CardHeader>
             <CardContent className="pl-2">
               <div className="h-[300px] w-full min-h-[300px]">
@@ -267,20 +263,24 @@ export function DashboardView() {
                   <AreaChart data={displayData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                     <defs>
                       <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                        <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="var(--accent)" stopOpacity={0}/>
                       </linearGradient>
                       <linearGradient id="colorExpected" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#94a3b8" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#94a3b8" stopOpacity={0}/>
+                        <stop offset="5%" stopColor="var(--text-muted)" stopOpacity={0.2}/>
+                        <stop offset="95%" stopColor="var(--text-muted)" stopOpacity={0}/>
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="month" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `₹${value}`} />
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <Tooltip formatter={(value) => `₹${value}`} />
-                    <Area type="monotone" dataKey="revenue" stroke="#10b981" fillOpacity={1} fill="url(#colorRevenue)" name="Actual Revenue" />
-                    <Area type="monotone" dataKey="expected" stroke="#94a3b8" fillOpacity={1} fill="url(#colorExpected)" name="Expected Revenue" />
+                    <XAxis dataKey="month" stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} />
+                    <YAxis stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => `₹${value}`} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--shadow-dark)" opacity={0.3} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: 'var(--bg-color)', border: '1px solid var(--shadow-dark)', borderRadius: '12px', fontSize: '12px', fontWeight: 'bold' }}
+                      itemStyle={{ color: 'var(--text-main)' }}
+                      formatter={(value: any) => [`₹${value}`, ""]} 
+                    />
+                    <Area type="monotone" dataKey="revenue" stroke="var(--accent)" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" name="Actual Revenue" />
+                    <Area type="monotone" dataKey="expected" stroke="var(--text-muted)" strokeWidth={1} strokeDasharray="5 5" fillOpacity={1} fill="url(#colorExpected)" name="Expected" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -288,9 +288,9 @@ export function DashboardView() {
           </Card>
         </motion.div>
         <motion.div className="col-span-full lg:col-span-3" whileHover={{ scale: 1.01 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className="h-full">
+          <Card className="h-full border-none border-t border-white/5">
             <CardHeader>
-              <CardTitle>Account Status Distribution</CardTitle>
+              <CardTitle className="text-xs font-black uppercase tracking-[0.2em] neu-text-muted">Account Distribution</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-[200px] w-full min-h-[200px]">
@@ -302,21 +302,24 @@ export function DashboardView() {
                       cy="50%"
                       innerRadius={60}
                       outerRadius={80}
-                      paddingAngle={5}
+                      paddingAngle={8}
                       dataKey="value"
+                      stroke="none"
                     >
                       {pieData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={pieColors[index % pieColors.length]} />
                       ))}
                     </Pie>
-                    <Tooltip />
+                    <Tooltip 
+                       contentStyle={{ backgroundColor: 'var(--bg-color)', border: '1px solid var(--shadow-dark)', borderRadius: '12px', fontSize: '12px' }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
-              <div className="flex justify-center gap-4 mt-2">
+              <div className="flex flex-wrap justify-center gap-3 mt-4">
                 {pieData.map((entry, index) => (
-                  <div key={entry.name} className="flex items-center gap-1.5 text-xs font-medium neu-text-muted">
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: pieColors[index % pieColors.length] }}></span>
+                  <div key={entry.name} className="flex items-center gap-2 p-2 neu-pressed-sm rounded-xl text-[10px] font-black uppercase tracking-wider neu-text-muted">
+                    <span className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: pieColors[index % pieColors.length] }}></span>
                     {entry.name}
                   </div>
                 ))}
@@ -373,11 +376,12 @@ export function DashboardView() {
         </div>
       )}
 
-      <div className="grid gap-4 grid-cols-1">
-        <motion.div className="col-span-1" whileHover={{ scale: 1.01 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className="h-full">
-            <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
+      <div className="grid gap-6 grid-cols-1">
+        <motion.div className="col-span-1" whileHover={{ scale: 1.005 }} transition={{ type: "spring", stiffness: 300 }}>
+          <Card className="h-full border-none border-t border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-xs font-black uppercase tracking-[0.2em] neu-text-muted">Recent Activity Log</CardTitle>
+              <Inbox className="w-5 h-5 neu-text-muted" />
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -385,17 +389,17 @@ export function DashboardView() {
                    <motion.div 
                      initial={{ opacity: 0, x: 20 }}
                      animate={{ opacity: 1, x: 0 }}
-                     className="flex items-start gap-4 border-b border-red-500/20 pb-4 bg-red-500/5 p-4 rounded-xl"
+                     className="flex items-start gap-4 p-5 neu-pressed rounded-2xl border-l-4 border-red-500 bg-red-500/5"
                    >
                      <AlertTriangle className="mt-0.5 w-6 h-6 shrink-0 text-red-500" />
                      <div className="space-y-2">
-                       <p className="text-sm font-bold text-red-600 leading-none">WhatsApp Web Integration Issue</p>
-                       <p className="text-sm text-red-500/80">{whatsappWebStatus.error}</p>
-                       <div className="mt-2 p-3 bg-white/50 dark:bg-black/20 rounded-lg border border-red-500/20">
-                         <span className="text-xs font-bold uppercase text-red-500/70 block mb-1">Solution</span>
-                         <span className="text-xs text-red-600/90">{whatsappWebStatus.solution}</span>
+                       <p className="text-sm font-black text-red-600 leading-none uppercase tracking-wider">WhatsApp Integration Blocked</p>
+                       <p className="text-xs text-red-500/80 font-medium">{whatsappWebStatus.error}</p>
+                       <div className="mt-3 p-4 neu-flat-sm rounded-xl bg-white/30 dark:bg-black/10 border border-red-500/20 shadow-sm">
+                         <span className="text-[10px] font-black uppercase text-red-500 block mb-1 tracking-widest">Recommended Action</span>
+                         <span className="text-xs text-red-600/90 font-bold">{whatsappWebStatus.solution}</span>
                        </div>
-                       <p className="text-xs font-medium opacity-70 mt-2">Note: This only affects the "WhatsApp Web Scan" feature. All other app functions (Billing, Invoices, Manual Web Links) continue to work perfectly fine.</p>
+                       <p className="text-[10px] uppercase font-black opacity-40 mt-3 tracking-widest">System Note: Manual links remain active.</p>
                      </div>
                    </motion.div>
                 )}
@@ -403,14 +407,18 @@ export function DashboardView() {
                    <motion.div 
                      initial={{ opacity: 0, x: 20 }}
                      animate={{ opacity: 1, x: 0 }}
-                     className="flex items-center gap-4 border-b border-blue-500/20 pb-4 bg-blue-500/5 p-4 rounded-xl"
+                     className="flex items-center gap-6 p-5 neu-pressed rounded-2xl border-l-4 border-[var(--accent)] bg-[var(--accent)]/5"
                    >
-                     <div className="p-2 bg-white rounded-lg shadow-sm">
+                     <div className="p-3 bg-white rounded-2xl shadow-xl border-4 border-white">
                        {whatsappWebStatus.qr && <img src={whatsappWebStatus.qr} alt="Scan QR" className="w-24 h-24 object-contain" />}
                      </div>
                      <div className="space-y-2">
-                       <p className="text-sm font-bold text-blue-600 leading-none">Link WhatsApp Device</p>
-                       <p className="text-sm text-blue-500/80">Scan this QR code with your WhatsApp mobile app to enable "WhatsApp Web Scan" automated sending natively.</p>
+                       <p className="text-sm font-black text-[var(--accent)] leading-none uppercase tracking-wider">Device Synchronization Required</p>
+                       <p className="text-xs neu-text font-bold leading-relaxed">Scan this QR with your WhatsApp mobile app to enable native automated message dispatching.</p>
+                       <div className="flex items-center gap-2 mt-2">
+                          <span className="w-2 h-2 rounded-full bg-[var(--accent)] animate-ping" />
+                          <span className="text-[10px] font-black uppercase tracking-tighter text-[var(--accent)]">Waiting for handshake...</span>
+                       </div>
                      </div>
                    </motion.div>
                 )}
@@ -422,20 +430,29 @@ export function DashboardView() {
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.1 }}
-                      whileHover={{ x: -5 }}
-                      className="flex items-start gap-4 border-b border-[var(--shadow-dark)] pb-4 last:border-0 last:pb-0 cursor-default"
+                      whileHover={{ x: 10, backgroundColor: 'rgba(var(--accent-rgb), 0.05)' }}
+                      className="group flex items-center gap-5 p-4 neu-flat rounded-2xl transition-all cursor-default border border-transparent hover:border-[var(--accent)]/20"
                     >
-                      <div className="mt-0.5 w-2 h-2 rounded-full shrink-0 bg-emerald-500" />
-                      <div className="space-y-1">
-                        <p className="text-sm font-medium leading-none">Payment Received</p>
-                        <p className="text-sm neu-text-muted">₹{txn.amount} from {customer ? customer.name : 'Unknown'}</p>
-                        <p className="text-xs neu-text-muted opacity-70">{new Date(txn.date).toLocaleDateString()}</p>
+                      <div className="w-12 h-12 shrink-0 rounded-2xl neu-pressed flex items-center justify-center text-[var(--accent)] group-hover:scale-110 transition-transform">
+                        <DollarSign className="w-6 h-6" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-start mb-1">
+                          <p className="text-sm font-black uppercase tracking-tight truncate">Payment Received</p>
+                          <span className="text-[10px] font-black neu-text-muted uppercase tracking-widest">{new Date(txn.date).toLocaleDateString()}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                           <p className="text-xs neu-text-muted font-bold truncate">From: {customer ? customer.name : 'Secured Payer'}</p>
+                           <span className="text-sm font-black text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/20">₹{txn.amount}</span>
+                        </div>
                       </div>
                     </motion.div>
                   );
                 })}
                 {transactions.length === 0 && (
-                  <div className="text-center py-8 neu-text-muted">No recent transactions</div>
+                  <div className="text-center py-12 neu-pressed rounded-3xl border border-dashed border-[var(--shadow-dark)]">
+                    <p className="text-xs font-black uppercase tracking-widest neu-text-muted opacity-50 italic">Buffer Empty: Waiting for transaction events...</p>
+                  </div>
                 )}
               </div>
             </CardContent>

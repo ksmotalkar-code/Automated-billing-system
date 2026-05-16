@@ -2,155 +2,173 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: customers
-    // Fields:
-    //   - id: string (required)
-    //   - name: string (required)
-    //   - mobileNumber: string (required)
-    //   - status: string (Active/Suspended)
-    //   - balance: number
-    //   - ownerId: string (required, UID of the creator)
-    //
-    // Collection: transactions
-    // Fields:
-    //   - id: string (required)
-    //   - customerId: string (required, reference to customer)
-    //   - amount: number
-    //   - transactionId: string
-    //   - date: string (ISO 8601)
-    //   - ownerId: string (required, UID of the creator)
-    //
-    // Collection: settings
-    // Document ID: User UID
-    // Fields:
-    //   - upiQrCodeImage: string (optional)
-    //   - billingAmount: number
-    //   - billingCycleMonths: number
-    //   - penaltyAmount: number
-    //   - penaltyDays: number
-    //   - ownerId: string (required, UID of the creator)
-    //
-    // Collection: uploadedData
-    // Fields:
-    //   - id: string (required)
-    //   - fileName: string
-    //   - data: string (JSON)
-    //   - uploadedAt: string (ISO 8601)
-    //   - ownerId: string (required, UID of the creator)
-    //
-    // ===============================================================
-
-    // Helper Functions
-    function isAuthenticated() {
-      return request.auth != null;
+    // =========================================================================
+    // GLOBAL HELPERS & CONSTANTS
+    // =========================================================================
+    
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(data) { return isSignedIn() && data.ownerId == request.auth.uid; }
+    function isAdmin() { 
+      return isSignedIn() && (
+        ('email' in request.auth.token && request.auth.token.email == 'ksmotalkar@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
     
-    function isAdmin() {
-      return isAuthenticated() && 
-        (request.auth.token.email == "ksmotalkar@gmail.com" && request.auth.token.email_verified == true);
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
     }
 
-    function isBot() {
-      return isAuthenticated() && (request.auth.token.email_verified == true) && (
-        request.auth.token.email == "bot@smartbilling.app"
-      );
+    // =========================================================================
+    // ENTITY VALIDATORS
+    // =========================================================================
+
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['id', 'name', 'mobileNumber', 'status', 'balance', 'ownerId']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.mobileNumber is string && data.mobileNumber.size() <= 20 &&
+             data.status in ['Active', 'Suspended', 'Faulty'] &&
+             data.balance is number &&
+             data.ownerId == request.auth.uid;
     }
 
-    function isDocOwner() {
-      return isAuthenticated() && (
-        isAdmin() || 
-        isBot() ||
-        (resource.data != null && 'ownerId' in resource.data && request.auth.uid == resource.data.ownerId)
-      );
+    function isValidTransaction(data) {
+      return data.keys().hasAll(['id', 'customerId', 'amount', 'transactionId', 'date', 'ownerId']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.customerId is string && data.customerId.size() <= 64 &&
+             data.amount is number &&
+             data.transactionId is string && data.transactionId.size() <= 100 &&
+             data.date is string &&
+             data.ownerId == request.auth.uid;
     }
 
-    function ownerUnchanged() {
-      return !('ownerId' in request.resource.data) || request.resource.data.ownerId == resource.data.ownerId;
+    function isValidComplaint(data) {
+      return data.keys().hasAll(['id', 'customerId', 'customerName', 'message', 'status', 'createdAt', 'ownerId']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.message is string && data.message.size() <= 2000 &&
+             data.status in ['Pending', 'Resolved'] &&
+             data.ownerId is string;
     }
+
+    // =========================================================================
+    // COLLECTION RULES
+    // =========================================================================
 
     match /customers/{customerId} {
-      allow read: if isDocOwner();
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
-
-      match /chat_history/{chatId} {
-        allow read, write: if true;
-      }
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && isValidCustomer(incoming());
+      allow update: if (isOwner(existing()) || isAdmin()) && 
+                    isValidCustomer(incoming()) && 
+                    incoming().ownerId == existing().ownerId &&
+                    incoming().id == existing().id;
+      allow delete: if isOwner(existing()) || isAdmin();
     }
 
     match /transactions/{transactionId} {
-      allow read: if isDocOwner();
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if (isOwner(existing()) || isAdmin()) && 
+                    isValidTransaction(incoming()) && 
+                    incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing()) || isAdmin();
     }
 
-    // ... settings and others
-
-    match /settings/{settingId} {
-      allow read: if isAuthenticated() && (settingId == request.auth.uid || isAdmin() || isBot());
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin()) && (settingId == request.auth.uid || isAdmin());
-      allow update: if isAuthenticated() && (settingId == request.auth.uid || isAdmin()); // Removed ownerUnchanged because user can add verification keys
-      allow delete: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
+    match /settings/{userId} {
+      allow read: if (isSignedIn() && userId == request.auth.uid) || isAdmin();
+      allow create: if isSignedIn() && userId == request.auth.uid;
+      allow update: if (isSignedIn() && userId == request.auth.uid) || isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /uploadedData/{uploadId} {
-      allow read: if isDocOwner();
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if isOwner(existing()) && incoming().ownerId == existing().ownerId;
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+
+    match /whatsapp_messages/{messageId} {
+      allow get: if (isSignedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && (incoming().ownerId == request.auth.uid || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /payment_receipts/{receiptId} {
+      allow get: if (isSignedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if true; // Portal users can create
+      allow update: if (isSignedIn() && resource.data.ownerId == request.auth.uid) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /complaints/{complaintId} {
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if true; 
+      allow update: if isOwner(existing()) || isAdmin();
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+
+    match /complaints_archive/{complaintId} {
+      allow read: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isOwner(incoming()) || isAdmin();
+      allow update: if isOwner(existing()) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /reports/{reportId} {
+      allow read: if true; // Public viewable via portal (get and list)
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if isOwner(existing()) || isAdmin();
+      allow delete: if isOwner(existing()) || isAdmin();
+    }
+
+    match /chatbotSettings/{userId} {
+      allow read: if true; // Webhook needs access
+      allow write: if isSignedIn() && (userId == request.auth.uid || isAdmin());
+    }
+
+    match /providers/{providerId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /automation_errors/{errorId} {
+      allow read: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      allow create: if true; // Server logs these
+      allow update: if isOwner(existing()) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /reportFolders/{folderId} {
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && ((resource.data.ownerId == request.auth.uid) || isAdmin());
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if isOwner(existing()) || isAdmin();
+      allow delete: if isOwner(existing()) || isAdmin();
     }
 
     match /public_portals/{portalId} {
       allow read: if true;
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if (isSignedIn() && existing().ownerId == request.auth.uid) || isAdmin();
+      allow delete: if (isSignedIn() && existing().ownerId == request.auth.uid) || isAdmin();
     }
 
-    match /payment_receipts/{receiptId} {
-      allow read: if isDocOwner(); // Only admin can read their receipts
-      allow create: if true; // Public customers can upload
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
-    }
-
-    match /complaints/{complaintId} {
-      allow read: if isDocOwner();
-      allow create: if true; // Public or authenticated users can register complaints (also server webhook)
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
-    }
-
-    match /reports/{reportId} {
-      allow read: if true; // Shared reports are public via portal
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
-    }
-
-    match /chatbotSettings/{settingId} {
-      allow read: if true;
-      allow create: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
-      allow update: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (settingId == request.auth.uid || isAdmin());
-    }
-
-    match /providers/{providerId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-    
-    match /automation_errors/{errorId} {
-      allow read: if isDocOwner();
-      allow create: if isAuthenticated() && (request.resource.data.ownerId == request.auth.uid || isAdmin());
-      allow update: if isDocOwner() && ownerUnchanged();
-      allow delete: if isDocOwner();
+    match /test/{docId} {
+      allow read, write: if true;
     }
   }
 }

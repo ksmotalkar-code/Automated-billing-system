@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send, Camera, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { subscribeToCustomers, Customer, subscribeToSettings, saveSettings, AppSettings, updateCustomer } from "../lib/db";
+import { Customer, saveSettings, AppSettings, updateCustomer } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { generateInvoicePDF, sendWhatsAppNotification, generateEscalationPDF, runAutomationCycle } from "../lib/automation";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -13,7 +14,7 @@ import { db, auth } from "../firebase";
 
 export function BillingView() {
   const { t } = useTranslation();
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const { customers, settings } = useData();
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
@@ -21,13 +22,6 @@ export function BillingView() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanningForCustomer, setScanningForCustomer] = useState<Customer | null>(null);
 
-  const [settings, setSettings] = useState<AppSettings>({ 
-    upiQrCodeImage: null,
-    billingAmount: 200,
-    billingCycleMonths: 2,
-    penaltyAmount: 40,
-    penaltyDays: 10
-  });
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -77,17 +71,6 @@ export function BillingView() {
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    const unsubCustomers = subscribeToCustomers(setCustomers);
-    const unsubSettings = subscribeToSettings((s) => {
-      if (s) setSettings(s);
-    });
-    return () => {
-      unsubCustomers();
-      unsubSettings();
-    };
-  }, []);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -178,8 +161,7 @@ export function BillingView() {
       const reader = new FileReader();
       reader.onloadend = () => {
         const base64String = reader.result as string;
-        const newSettings = { ...settings, upiQrCodeImage: base64String };
-        setSettings(newSettings);
+        const newSettings = { ...settings, upiQrCodeImage: base64String } as AppSettings;
         saveSettings(newSettings);
       };
       reader.readAsDataURL(file);

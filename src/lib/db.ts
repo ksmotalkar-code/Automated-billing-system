@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 
 export enum OperationType {
   CREATE = 'create',
@@ -57,6 +58,11 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     // Dispatch a custom event so the UI can show a notification
     window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
     return; // Do NOT throw, so we don't crash the app or trigger Vite's error overlay for quota limits
+  }
+
+  if (errorMessage.includes('client is offline')) {
+    console.warn(`\n[WARNING] Firestore Connection Failed (Client is Offline). Request to ${path || 'unknown path'} failed. Ensure your connection is stable and Firestore is provisioned.\n`, errInfo);
+    return; // Do NOT throw, so we can fall back to null/default and not break the UI
   }
 
   console.error('Firestore Error: ', JSON.stringify(errInfo));
@@ -156,9 +162,14 @@ export interface WhatsAppProvider {
 
 export const getProviders = async (): Promise<WhatsAppProvider[]> => {
   if (!auth.currentUser) return [];
-  const providersCol = collection(db, 'providers');
-  const snapshot = await getDocs(providersCol);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppProvider));
+  try {
+    const providersCol = collection(db, 'providers');
+    const snapshot = await getDocs(providersCol);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppProvider));
+  } catch (error: any) {
+    handleFirestoreError(error, OperationType.GET, 'providers');
+    return [];
+  }
 };
 
 export const addProvider = async (provider: WhatsAppProvider) => {
@@ -217,6 +228,8 @@ export interface AppSettings {
   paymentGatewaySecret?: string;
   automation?: AutomationSettings;
   chatbotCommands?: ChatbotCommand[];
+  appTheme?: string;
+  appUiStyle?: string;
 }
 
 export interface UploadedData {
@@ -273,12 +286,15 @@ export const cleanupOldData = async () => {
     if (dataSnap.size > 0 || confSnap.size > 0) {
       const docsToDelete = [...dataSnap.docs, ...confSnap.docs];
       // Use deleteInBatches helper
-      const batchLimit = 400;
+      const batchLimit = 200;
       for (let i = 0; i < docsToDelete.length; i += batchLimit) {
         const batch = writeBatch(db);
         const chunk = docsToDelete.slice(i, i + batchLimit);
         chunk.forEach(doc => batch.delete(doc.ref));
         await batch.commit();
+        if (i + batchLimit < docsToDelete.length) {
+          await new Promise(r => setTimeout(r, 500));
+        }
       }
       console.log(`Cleaned up ${docsToDelete.length} old records.`);
     }
@@ -390,13 +406,14 @@ export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateChe
 };
 
 const deleteInBatches = async (querySnapshot: any) => {
-  const batchLimit = 500;
+  const batchLimit = 200;
   const docs = querySnapshot.docs;
   for (let i = 0; i < docs.length; i += batchLimit) {
     const batch = writeBatch(db);
     const chunk = docs.slice(i, i + batchLimit);
     chunk.forEach((doc: any) => batch.delete(doc.ref));
     await batch.commit();
+    if (i + batchLimit < docs.length) await new Promise(r => setTimeout(r, 500));
   }
 };
 
@@ -426,12 +443,13 @@ export const deleteCustomer = async (id: string) => {
 export const deleteCustomersBatch = async (ids: string[]) => {
   if (!auth.currentUser) throw new Error("Not authenticated");
   try {
-    // Delete customers in chunks of 500
-    for (let i = 0; i < ids.length; i += 500) {
+    // Delete customers in chunks of 200
+    for (let i = 0; i < ids.length; i += 200) {
       const batch = writeBatch(db);
-      const chunk = ids.slice(i, i + 500);
+      const chunk = ids.slice(i, i + 200);
       chunk.forEach(id => batch.delete(doc(db, 'customers', id)));
       await batch.commit();
+      if (i + 200 < ids.length) await new Promise(r => setTimeout(r, 500));
     }
 
     // Delete associated transactions for these customers
@@ -448,6 +466,24 @@ export const deleteCustomersBatch = async (ids: string[]) => {
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'customers_batch');
+  }
+};
+
+export const updateCustomersBatchStatus = async (ids: string[], status: 'Active' | 'Suspended') => {
+  if (!auth.currentUser) throw new Error("Not authenticated");
+  try {
+    for (let i = 0; i < ids.length; i += 200) {
+      const batch = writeBatch(db);
+      const chunk = ids.slice(i, i + 200);
+      chunk.forEach(id => {
+        const ref = doc(db, 'customers', id);
+        batch.update(ref, { status, updatedAt: new Date().toISOString() });
+      });
+      await batch.commit();
+      if (i + 200 < ids.length) await new Promise(r => setTimeout(r, 500));
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'customers_batch_status');
   }
 };
 
@@ -516,7 +552,7 @@ export const saveUploadedData = async (fileName: string, data: any[]) => {
 export const resetAllBalances = async (customers: Customer[]) => {
   if (!auth.currentUser) return;
   checkQuotaBeforeWrite("Reset Balances");
-  const batchLimit = 400;
+  const batchLimit = 200;
   for (let i = 0; i < customers.length; i += batchLimit) {
     const chunk = customers.slice(i, i + batchLimit);
     const batch = writeBatch(db);
@@ -524,6 +560,9 @@ export const resetAllBalances = async (customers: Customer[]) => {
       batch.update(doc(db, 'customers', c.id), { balance: 0 });
     }
     await batch.commit();
+    if (i + batchLimit < customers.length) {
+      await new Promise(r => setTimeout(r, 500));
+    }
   }
 };
 
@@ -591,8 +630,8 @@ export const importCustomersFromText = async (text: string) => {
   }
   if (currentCustomer) customers.push(currentCustomer);
 
-  // Add in batches of 500
-  const batchLimit = 500;
+  // Add in batches of 200
+  const batchLimit = 200;
   for (let i = 0; i < customers.length; i += batchLimit) {
     const batch = writeBatch(db);
     const chunk = customers.slice(i, i + batchLimit);
@@ -607,13 +646,19 @@ export const importCustomersFromText = async (text: string) => {
       });
     }
     await batch.commit();
+    if (i + batchLimit < customers.length) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
   }
   return customers.length;
 };
 
 export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {
   if (!auth.currentUser) return () => {};
-  const q = query(collection(db, 'customers'), where('ownerId', '==', auth.currentUser.uid));
+  const q = query(
+    collection(db, 'customers'), 
+    where('ownerId', '==', auth.currentUser.uid)
+  );
   return onSnapshot(q, (snapshot) => {
     const customers = snapshot.docs.map(doc => {
       const data = doc.data() as Customer;
@@ -634,7 +679,12 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
 
 export const subscribeToTransactions = (callback: (transactions: Transaction[]) => void) => {
   if (!auth.currentUser) return () => {};
-  const q = query(collection(db, 'transactions'), where('ownerId', '==', auth.currentUser.uid));
+  const q = query(
+    collection(db, 'transactions'), 
+    where('ownerId', '==', auth.currentUser.uid),
+    orderBy('date', 'desc'),
+    limit(500)
+  );
   return onSnapshot(q, (snapshot) => {
     const transactions = snapshot.docs.map(doc => doc.data() as Transaction);
     callback(transactions);
@@ -708,7 +758,9 @@ export const subscribeToComplaints = (callback: (complaints: Complaint[]) => voi
   if (!auth.currentUser) return () => {};
   const q = query(
     collection(db, 'complaints'), 
-    where('ownerId', '==', auth.currentUser.uid)
+    where('ownerId', '==', auth.currentUser.uid),
+    orderBy('createdAt', 'desc'),
+    limit(200)
   );
   return onSnapshot(q, (snapshot) => {
     const complaints = snapshot.docs.map(doc => doc.data() as Complaint);
@@ -922,10 +974,13 @@ export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) 
   const q = query(
     collection(db, 'whatsapp_messages'), 
     where('ownerId', '==', auth.currentUser.uid),
-    orderBy('timestamp', 'asc')
+    orderBy('timestamp', 'desc'),
+    limit(100)
   );
   return onSnapshot(q, (snapshot) => {
-    callback(snapshot.docs.map(doc => doc.data() as WhatsappMessage));
+    // Sort back to asc for the UI if needed
+    const messages = snapshot.docs.map(doc => doc.data() as WhatsappMessage);
+    callback(messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'whatsapp_messages');
   });

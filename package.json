@@ -55,6 +55,7 @@
     "@types/papaparse": "^5.5.2",
     "@types/uuid": "^10.0.0",
     "autoprefixer": "^10.5.0",
+    "firebase-tools": "^15.18.0",
     "tailwindcss": "^4.2.4",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",

@@ -6,7 +6,8 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const dbId = (firebaseConfig.firestoreDatabaseId === '(default)' || firebaseConfig.firestoreDatabaseId === 'default') ? undefined : firebaseConfig.firestoreDatabaseId;
+export const db = getFirestore(app, dbId);
 export const storage = getStorage(app);
 
 // Enable offline persistence
