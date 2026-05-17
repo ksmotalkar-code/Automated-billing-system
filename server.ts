@@ -590,7 +590,8 @@ async function startServer() {
     }
 
 
-    if (message && message.toLowerCase().trim() === "hello world") {
+    if (message && message.toLowerCase().trim() === "hello world" && !templateCategory && !customTemplateName) {
+      // isTestMessage is only inferred if no explicit template info is given, meaning it comes from a generic ping.
       isTestMessage = true;
     }
 
@@ -639,10 +640,26 @@ async function startServer() {
        }
 
        if (templateParams && templateParams.length > 0) {
-         components.push({
-           type: "body",
-           parameters: templateParams.map(p => ({ type: "text", text: String(p) }))
-         });
+         let bodyParams = templateParams.filter((_, i) => !templateParams[i]?.isButtonParam);
+         let btnParams = templateParams.filter((_, i) => templateParams[i]?.isButtonParam);
+         
+         if (bodyParams.length > 0) {
+             components.push({
+               type: "body",
+               parameters: bodyParams.map(p => ({ type: "text", text: String(p.value || p) }))
+             });
+         }
+         
+         if (btnParams.length > 0) {
+             btnParams.forEach((bp, i) => {
+                 components.push({
+                     type: "button",
+                     sub_type: "url", // Most common parameter requirement
+                     index: String(i),
+                     parameters: [{ type: "text", text: String(bp.value) }]
+                 });
+             });
+         }
        } else if (isTestMessage && customTemplateName) {
           // generic fallback param when test template is used
        }
@@ -1245,27 +1262,45 @@ async function startServer() {
         const errLower = err.message.toLowerCase();
         let needsFallback = false;
 
-        if (errLower.includes('132000') || errLower.includes('expected number of params')) {
+        if (errLower.includes('132000') || errLower.includes('expected number of params') || errLower.includes('131008') || errLower.includes('parameter is missing')) {
+           let numParams = 1;
            const match = err.message.match(/expected number of params \((\d+)\)/);
-           if (match && match[1]) {
-               const numParams = parseInt(match[1]);
-               const paramsArr = Array(numParams).fill("Test");
-               paramsArr[0] = "Test Data"; // First param gets short test string instead of long message
-               try {
-                  const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
-                  const tName = (templateToTest && templateToTest !== 'hello_world') ? (templateToTest === 'billing' ? settings.metaTemplateBilling : (templateToTest === 'receipt' ? settings.metaTemplateReceipt : (templateToTest === 'broadcast' ? settings.metaTemplateBroadcast : templateToTest))) : undefined;
-                  await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, paramsArr, tName);
-                  return res.json({ status: "success", info: `Message sent! Auto-filled ${numParams} parameter(s).` });
-               } catch (err2: any) {
-                  const err2Lower = err2.message.toLowerCase();
-                  if (err2Lower.includes('131058') || err2Lower.includes('hello_world') || err2Lower.includes('hello world') || err2Lower.includes('test number') || err2Lower.includes('does not exist')) {
-                      needsFallback = true;
-                  } else {
-                      throw err2;
+           if (match && match[1]) numParams = parseInt(match[1]);
+           else if (errLower.includes('button')) numParams = 6; // Just add some params to body and assume 1 button param needed
+           
+           const paramsArr: any[] = Array(numParams).fill("Test");
+           paramsArr[0] = "Test Data"; // First param gets short test string instead of long message
+           
+           if (errLower.includes('button') || errLower.includes('131008')) {
+               paramsArr.push({ isButtonParam: true, value: 'test' });
+           }
+
+           try {
+              const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
+              const tName = (templateToTest && templateToTest !== 'hello_world') ? (templateToTest === 'billing' ? settings.metaTemplateBilling : (templateToTest === 'receipt' ? settings.metaTemplateReceipt : (templateToTest === 'broadcast' ? settings.metaTemplateBroadcast : templateToTest))) : undefined;
+              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, paramsArr, tName);
+              return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s).` });
+           } catch (err2: any) {
+              const err2Lower = err2.message.toLowerCase();
+              
+              // If it still wants button params and we haven't satisfied it, or vice versa
+              if (err2Lower.includes('expected number of params') && !errLower.includes('expected number of params')) {
+                  const match2 = err2.message.match(/expected number of params \((\d+)\)/);
+                  if (match2 && match2[1]) {
+                      const newParams: any[] = Array(parseInt(match2[1])).fill("Test");
+                      newParams.push({ isButtonParam: true, value: 'test' });
+                      try {
+                          await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, newParams, tName);
+                          return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s).` });
+                      } catch(e) {}
                   }
-               }
-           } else {
-               needsFallback = true;
+              }
+              
+              if (err2Lower.includes('131058') || err2Lower.includes('hello_world') || err2Lower.includes('hello world') || err2Lower.includes('test number') || err2Lower.includes('does not exist')) {
+                  needsFallback = true;
+              } else {
+                  throw err2;
+              }
            }
         } else if (errLower.includes('hello_world') || errLower.includes('hello world') || errLower.includes('test number') || errLower.includes('does not exist') || errLower.includes('131058')) {
             needsFallback = true;
@@ -1281,18 +1316,24 @@ async function startServer() {
               const fbLower = fallbackErr.message.toLowerCase();
               let finalErrFallback = fallbackErr;
 
-              if (fbLower.includes('132000') || fbLower.includes('expected number of params')) {
+              if (fbLower.includes('132000') || fbLower.includes('expected number of params') || fbLower.includes('131008') || fbLower.includes('parameter is missing')) {
+                 let numParams = 1;
                  const match2 = fallbackErr.message.match(/expected number of params \((\d+)\)/);
                  if (match2 && match2[1]) {
-                     const numParams = parseInt(match2[1]);
-                     const paramsArr = Array(numParams).fill("Test");
-                     paramsArr[0] = "Test Data";
-                     try {
-                         await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', paramsArr);
-                         return res.json({ status: "success", info: `Message sent! Auto-filled ${numParams} parameter(s) for Broadcast.` });
-                     } catch (err3) {
-                         finalErrFallback = err3;
-                     }
+                     numParams = parseInt(match2[1]);
+                 } else if (fbLower.includes('button') || fbLower.includes('131008')) {
+                     numParams = 6;
+                 }
+                 const paramsArr: any[] = Array(numParams).fill("Test");
+                 paramsArr[0] = "Test Data";
+                 if (fbLower.includes('button') || fbLower.includes('131008')) {
+                     paramsArr.push({ isButtonParam: true, value: 'test' });
+                 }
+                 try {
+                     await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', paramsArr);
+                     return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s) for Broadcast.` });
+                 } catch (err3) {
+                     finalErrFallback = err3;
                  }
               }
 
@@ -1570,174 +1611,208 @@ async function startServer() {
   });
 
   // Meta Incoming Message Receipt
+  const processedMessageIds: string[] = [];
   app.post("/api/whatsapp-webhook/:ownerId", async (req, res) => {
     try {
       const { ownerId } = req.params;
       
-      // Fast acknowledge to Meta
-      res.sendStatus(200);
-
       const body = req.body;
-      if (!body.object) return;
+      if (!body.object) {
+         return res.sendStatus(200);
+      }
+
+      // Note: On Render, background processing works perfectly.
+      // Note: On Google Cloud Run free tier, background processing might pause unless "CPU is always allocated".
+      // Therefore, we process synchronously.
+      // We use a safety timeout to ensure Meta gets a 200 OK within its 15s window
+      // even if the database or API calls are slow.
+      const safetyTimeout = setTimeout(() => {
+         if (!res.headersSent) {
+             console.warn("[Webhook] Safety timeout reached (12s). Sending 200 to Meta early.");
+             res.sendStatus(200);
+         }
+      }, 12000);
 
       const entries = body.entry || [];
-      for (const entry of entries) {
-        const changes = entry.changes || [];
-        for (const change of changes) {
-          const messages = change.value?.messages || [];
-          for (const messageObj of messages) {
-            const fromMobile = messageObj.from;
-            const msgBody = messageObj.text?.body;
-            
-            console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
+      
+      try {
+        for (const entry of entries) {
+          const changes = entry.changes || [];
+          for (const change of changes) {
+            const messages = change.value?.messages || [];
+            for (const messageObj of messages) {
+              const msgId = messageObj.id;
+              if (msgId) {
+                  if (processedMessageIds.includes(msgId)) {
+                      console.log(`[Webhook] Ignoring duplicate message: ${msgId}`);
+                      continue;
+                  }
+                  processedMessageIds.push(msgId);
+                  if (processedMessageIds.length > 2000) processedMessageIds.shift();
+              }
+              
+              const fromMobile = messageObj.from;
+              const msgBody = messageObj.text?.body;
+              
+              console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
 
-            if (msgBody) {
-              try {
-                const cleanMobile = fromMobile.replace(/\D/g, '');
-                let matchedCustomer = await getCustomerByMobile(ownerId, cleanMobile);
+              if (msgBody) {
+                try {
+                  const cleanMobile = fromMobile.replace(/\D/g, '');
+                  let matchedCustomer = await getCustomerByMobile(ownerId, cleanMobile);
 
-                if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
-                     const settings = await getSettings(ownerId);
-                     
-                     const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
-                     if (dbInstance) {
-                        try {
-                           await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
-                             role: 'user',
-                             content: msgBody,
-                             source: 'whatsapp',
-                             timestamp: FieldValue.serverTimestamp()
-                           });
-                        } catch (e) {}
-                     }
-
-                     const chatbotSettings = await getChatbotSettings(ownerId) as any;
-                     let handled = false;
-                     const msgLower = msgBody.toLowerCase().trim();
-                     let responseText = "I'm sorry, I don't understand that command.";
-                     let sysTrigger = "";
-                     let hasCustomCommandMatched = false;
-
-                     if (chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
-                       for (const cmd of chatbotSettings.commands) {
-                          if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
-                            console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
-                            responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
-                            sysTrigger = cmd.triggerWord;
-                            hasCustomCommandMatched = true;
-                            break;
-                          }
-                       }
-                     }
-
-                     if (!hasCustomCommandMatched) {
-                        sysTrigger = msgLower;
-                     }
-
-                     const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "");
-                     
-                     let attachmentsToPass: any[] = [];
-                     if (intentRes.matched) {
-                         responseText = intentRes.replyText;
-                         if (intentRes.attachments && intentRes.attachments.length > 0) {
-                            attachmentsToPass = intentRes.attachments;
-                         }
-                         handled = true;
-                     } else if (hasCustomCommandMatched) {
-                         handled = true;
-                     } else if (msgLower.startsWith("complaint:")) {
-                        const complaintText = msgBody.substring(10).trim();
-                        if (complaintText.length > 5) {
-                           const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
-                           await saveComplaintData(complaintId, {
-                               id: complaintId,
-                               customerId: matchedCustomer.id,
-                               ownerId: ownerId,
-                               customerName: matchedCustomer.name,
-                               mobileNumber: matchedCustomer.mobileNumber || '',
-                               category: "Service Request",
-                               message: "WhatsApp Complaint",
-                               description: complaintText,
-                               billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
-                               status: "Pending",
-                               priority: "Medium",
-                               createdAt: new Date().toISOString(),
-                               expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString() // 6 months
-                           });
-                           responseText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
-                        } else {
-                           responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
-                        }
-                        handled = true;
-                     }
-
-                     if (handled && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
-                         try {
-                             if (attachmentsToPass.length > 0) {
-                               await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText, attachmentsToPass[0].data, attachmentsToPass[0].name);
-                             } else {
-                               await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
-                             }
-                             const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
-                             if (dbInstance) {
-                                try {
-                                   await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
-                                     role: 'assistant',
-                                     content: responseText,
-                                     source: 'whatsapp',
-                                     timestamp: FieldValue.serverTimestamp()
-                                   });
-                                } catch (e) {}
-                             }
-                         } catch (e) {
-                             console.error("[Webhook] Failed to send chatbot reply:", e);
-                         }
-                     }
-
-                     const isComplaint = msgBody.toLowerCase().includes('complaint') || msgBody.toLowerCase().includes('complain');
-                     if (!handled && isComplaint && settings?.automation?.autoCreateComplaints !== false) {
-                        const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
-                        await saveComplaintData(complaintId, {
-                           id: complaintId,
-                           customerId: matchedCustomer.id,
-                           customerName: matchedCustomer.name,
-                           message: "Automated Log",
-                           description: msgBody,
-                           billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
-                           status: 'Pending',
-                           createdAt: new Date().toISOString(),
-                           ownerId: ownerId
-                        });
-                        console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
-
-                         // Auto-reply
-                        if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
+                  if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
+                       const settings = await getSettings(ownerId);
+                       
+                       const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
+                       if (dbInstance) {
                           try {
-                            await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
-                          } catch (e) {
-                            console.error("[Webhook] Failed to send auto-reply:", e);
-                          }
-                        }
-                        handled = true;
-                     }
+                             await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                               role: 'user',
+                               content: msgBody,
+                               source: 'whatsapp',
+                               timestamp: FieldValue.serverTimestamp()
+                             });
+                          } catch (e) {}
+                       }
 
-                     if (!handled) {
-                        // All messages were handled either by exact keyword matches or complaints.
-                        // For messages unmatched by previous logic, we could potentially have a fallback message
-                        // but user hasn't requested it. OpenRouter AI logic removed.
-                     }
-                } else {
-                   console.log("[Webhook] Message received from unknown number. Ignored.");
+                       const chatbotSettings = await getChatbotSettings(ownerId) as any;
+                       let handled = false;
+                       const msgLower = msgBody.toLowerCase().trim();
+                       let responseText = "I'm sorry, I don't understand that command.";
+                       let sysTrigger = "";
+                       let hasCustomCommandMatched = false;
+
+                       if (chatbotSettings && chatbotSettings.isActive && Array.isArray(chatbotSettings.commands)) {
+                         for (const cmd of chatbotSettings.commands) {
+                            if (cmd.isActive && testChatbotCommand(msgBody, cmd.triggerWord, cmd.buttonLabel)) {
+                              console.log(`[Webhook] Matched chatbot command: ${cmd.triggerWord} for ${matchedCustomer.name}`);
+                              responseText = processDynamicResponse(cmd.response || '', matchedCustomer);
+                              sysTrigger = cmd.triggerWord;
+                              hasCustomCommandMatched = true;
+                              break;
+                            }
+                         }
+                       }
+
+                       if (!hasCustomCommandMatched) {
+                          sysTrigger = msgLower;
+                       }
+
+                       const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "");
+                       
+                       let attachmentsToPass: any[] = [];
+                       if (intentRes.matched) {
+                           responseText = intentRes.replyText;
+                           if (intentRes.attachments && intentRes.attachments.length > 0) {
+                              attachmentsToPass = intentRes.attachments;
+                           }
+                           handled = true;
+                       } else if (hasCustomCommandMatched) {
+                           handled = true;
+                       } else if (msgLower.startsWith("complaint:")) {
+                          const complaintText = msgBody.substring(10).trim();
+                          if (complaintText.length > 5) {
+                             const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+                             await saveComplaintData(complaintId, {
+                                 id: complaintId,
+                                 customerId: matchedCustomer.id,
+                                 ownerId: ownerId,
+                                 customerName: matchedCustomer.name,
+                                 mobileNumber: matchedCustomer.mobileNumber || '',
+                                 category: "Service Request",
+                                 message: "WhatsApp Complaint",
+                                 description: complaintText,
+                                 billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
+                                 status: "Pending",
+                                 priority: "Medium",
+                                 createdAt: new Date().toISOString(),
+                                 expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString() // 6 months
+                             });
+                             responseText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
+                          } else {
+                             responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
+                          }
+                          handled = true;
+                       }
+
+                       if (handled && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
+                           try {
+                               if (attachmentsToPass.length > 0) {
+                                 await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText, attachmentsToPass[0].data, attachmentsToPass[0].name);
+                               } else {
+                                 await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, responseText);
+                               }
+                               const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
+                               if (dbInstance) {
+                                  try {
+                                     await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                                       role: 'assistant',
+                                       content: responseText,
+                                       source: 'whatsapp',
+                                       timestamp: FieldValue.serverTimestamp()
+                                     });
+                                  } catch (e) {}
+                               }
+                           } catch (e) {
+                               console.error("[Webhook] Failed to send chatbot reply:", e);
+                           }
+                       }
+
+                       const isComplaint = msgBody.toLowerCase().includes('complaint') || msgBody.toLowerCase().includes('complain');
+                       if (!handled && isComplaint && settings?.automation?.autoCreateComplaints !== false) {
+                          const complaintId = `COMP-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+                          await saveComplaintData(complaintId, {
+                             id: complaintId,
+                             customerId: matchedCustomer.id,
+                             customerName: matchedCustomer.name,
+                             message: "Automated Log",
+                             description: msgBody,
+                             billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
+                             status: 'Pending',
+                             createdAt: new Date().toISOString(),
+                             ownerId: ownerId
+                          });
+                          console.log(`[Webhook] Logged complaint for ${matchedCustomer.name}`);
+
+                           // Auto-reply
+                          if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
+                            try {
+                              await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, `Dear ${matchedCustomer.name}, we have received your complaint (ID: ${complaintId}). We will look into it soon.`);
+                            } catch (e) {
+                              console.error("[Webhook] Failed to send auto-reply:", e);
+                            }
+                          }
+                          handled = true;
+                       }
+
+                       if (!handled) {
+                          // All messages were handled either by exact keyword matches or complaints.
+                       }
+                  } else {
+                     console.log("[Webhook] Message received from unknown number. Ignored.");
+                  }
+                } catch (innerErr) {
+                  console.error("[Webhook] Processing error:", innerErr);
                 }
-              } catch (innerErr) {
-                console.error("[Webhook] Processing error:", innerErr);
               }
             }
           }
         }
+      } catch (botErr) {
+         console.error("Bot execution error", botErr);
+      } finally {
+         clearTimeout(safetyTimeout);
+         if (!res.headersSent) {
+            res.sendStatus(200);
+         }
       }
+      
     } catch (err) {
       console.error("[Webhook] Handler error:", err);
+      if (!res.headersSent) {
+          res.sendStatus(200); // Always return 200 so Meta doesn't retry failed webhooks infinitely
+      }
     }
   });
 
