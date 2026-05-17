@@ -4,6 +4,7 @@ import { MessageSquare, Save, Settings, Activity, RefreshCw, Plus, Trash2, Bot, 
 import { ChatbotSettings, getChatbotSettings, saveChatbotSettings, ChatbotCommand } from "../lib/db";
 import { motion, AnimatePresence } from "motion/react";
 import { v4 as uuidv4 } from 'uuid';
+import { CommandManagerWrapper } from "../components/CommandManager";
 
 export function ChatbotView() {
   const [settings, setSettings] = useState<ChatbotSettings>({
@@ -224,111 +225,123 @@ export function ChatbotView() {
         <div className="lg:col-span-8 space-y-6">
           <div className="flex items-center justify-between px-2">
             <h2 className="text-[12px] font-black uppercase tracking-[0.2em] text-blue-600/80">Command Registry</h2>
-            <motion.button 
-              whileHover={{ scale: 1.05, y: -2 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={handleAddCommand}
-              className="px-5 py-2.5 neu-flat bg-white rounded-xl text-[10px] font-black uppercase tracking-widest text-blue-600 flex items-center gap-2 border border-blue-500/10"
-            >
-              <Plus className="w-4 h-4" /> New Sequence
-            </motion.button>
+            <p className="text-[10px] neu-text-muted font-bold uppercase">Configure your automated bot responses here.</p>
           </div>
 
           <div className="space-y-6">
-            <AnimatePresence mode="popLayout">
-              {settings.commands.length === 0 ? (
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="py-32 neu-pressed rounded-3xl border-4 border-dashed border-black/[0.02] flex flex-col items-center justify-center text-center px-10"
-                >
-                   <MessageSquare className="w-12 h-12 text-neutral-200 mb-4" />
-                   <p className="text-[11px] font-black uppercase tracking-widest text-neutral-300">No Cogntive Patterns Defined</p>
-                   <p className="text-[9px] font-bold text-neutral-400 mt-2 max-w-[240px]">Create your first command to start automating customer interactions.</p>
-                </motion.div>
-              ) : (
-                settings.commands.map((cmd, index) => (
-                  <motion.div 
-                    layout
-                    key={cmd.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.9 }}
-                    transition={{ delay: index * 0.05 }}
-                    className={`group p-6 neu-flat rounded-3xl border border-white/5 transition-all ${!cmd.isActive ? 'opacity-50 grayscale' : 'hover:shadow-2xl hover:shadow-blue-500/[0.03]'}`}
-                  >
-                    <div className="flex flex-col md:flex-row gap-6">
-                      <div className="flex-1 space-y-5">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                           <div className="space-y-2">
-                              <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Interface Label</label>
-                              <div className="relative">
-                                <input 
-                                  type="text" 
-                                  value={cmd.buttonLabel} 
-                                  onChange={(e) => handleUpdateCommand(cmd.id, { buttonLabel: e.target.value })}
-                                  className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-black uppercase tracking-wider focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
-                                  placeholder="e.g. GET BILL"
-                                />
-                                <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">⚡</div>
+             <CommandManagerWrapper 
+               settings={settings}
+               onUpdate={setSettings}
+               isCompact={false}
+               fallbackUI={
+                <>
+                  <div className="flex items-center justify-end px-2 mb-4">
+                    <motion.button 
+                      whileHover={{ scale: 1.05, y: -2 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={handleAddCommand}
+                      className="px-5 py-2.5 neu-flat bg-white rounded-xl text-[10px] font-black uppercase tracking-widest text-blue-600 flex items-center gap-2 border border-blue-500/10"
+                    >
+                      <Plus className="w-4 h-4" /> New Sequence
+                    </motion.button>
+                  </div>
+                  <AnimatePresence mode="popLayout">
+                    {settings.commands.length === 0 ? (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        className="py-32 neu-pressed rounded-3xl border-4 border-dashed border-black/[0.02] flex flex-col items-center justify-center text-center px-10"
+                      >
+                         <MessageSquare className="w-12 h-12 text-neutral-200 mb-4" />
+                         <p className="text-[11px] font-black uppercase tracking-widest text-neutral-300">No Cogntive Patterns Defined</p>
+                         <p className="text-[9px] font-bold text-neutral-400 mt-2 max-w-[240px]">Create your first command to start automating customer interactions.</p>
+                      </motion.div>
+                    ) : (
+                      settings.commands.map((cmd, index) => (
+                        <motion.div 
+                          layout
+                          key={cmd.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          transition={{ delay: index * 0.05 }}
+                          className={`group p-6 neu-flat rounded-3xl border border-white/5 transition-all mb-4 ${!cmd.isActive ? 'opacity-50 grayscale' : 'hover:shadow-2xl hover:shadow-blue-500/[0.03]'}`}
+                        >
+                          <div className="flex flex-col md:flex-row gap-6">
+                            <div className="flex-1 space-y-5">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                 <div className="space-y-2">
+                                    <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Interface Label</label>
+                                    <div className="relative">
+                                      <input 
+                                        type="text" 
+                                        value={cmd.buttonLabel} 
+                                        onChange={(e) => handleUpdateCommand(cmd.id, { buttonLabel: e.target.value })}
+                                        className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-black uppercase tracking-wider focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
+                                        placeholder="e.g. GET BILL"
+                                      />
+                                      <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20">⚡</div>
+                                    </div>
+                                 </div>
+                                 <div className="space-y-2">
+                                    <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Pattern Trigger</label>
+                                    <input 
+                                      type="text" 
+                                      value={cmd.triggerWord} 
+                                      onChange={(e) => handleUpdateCommand(cmd.id, { triggerWord: e.target.value })}
+                                      className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-[10px] font-mono font-bold text-neutral-500 focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
+                                      placeholder="regex: /bill/i"
+                                    />
+                                 </div>
                               </div>
-                           </div>
-                           <div className="space-y-2">
-                              <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Pattern Trigger</label>
-                              <input 
-                                type="text" 
-                                value={cmd.triggerWord} 
-                                onChange={(e) => handleUpdateCommand(cmd.id, { triggerWord: e.target.value })}
-                                className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-[10px] font-mono font-bold text-neutral-500 focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
-                                placeholder="regex: /bill/i"
-                              />
-                           </div>
-                        </div>
 
-                        <div className="space-y-2">
-                          <div className="flex justify-between items-center px-1">
-                             <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted">Automated Response Logic</label>
-                             <span className="text-[8px] font-bold neu-text-muted opacity-40 uppercase">{cmd.response.length} characters</span>
-                          </div>
-                          <textarea 
-                            value={cmd.response} 
-                            onChange={(e) => handleUpdateCommand(cmd.id, { response: e.target.value })}
-                            className="w-full h-24 px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-bold leading-relaxed resize-none focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
-                            placeholder="Determine the bot's reaction..."
-                          />
-                        </div>
-                      </div>
-
-                      <div className="flex flex-row md:flex-col justify-between md:justify-center items-center gap-4 md:w-20 pl-0 md:pl-4 border-l-0 md:border-l border-black/[0.03]">
-                         <label className="flex flex-col items-center gap-2 cursor-pointer group/toggle">
-                            <input 
-                              type="checkbox" 
-                              checked={cmd.isActive}
-                              onChange={(e) => handleUpdateCommand(cmd.id, { isActive: e.target.checked })}
-                              className="sr-only"
-                            />
-                            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${cmd.isActive ? 'neu-flat text-emerald-500 bg-emerald-500/5' : 'neu-pressed text-neutral-300'}`}>
-                               <Activity className="w-5 h-5" />
+                              <div className="space-y-2">
+                                <div className="flex justify-between items-center px-1">
+                                   <label className="text-[9px] font-black uppercase tracking-[0.2em] neu-text-muted">Automated Response Logic</label>
+                                   <span className="text-[8px] font-bold neu-text-muted opacity-40 uppercase">{cmd.response.length} characters</span>
+                                </div>
+                                <textarea 
+                                  value={cmd.response} 
+                                  onChange={(e) => handleUpdateCommand(cmd.id, { response: e.target.value })}
+                                  className="w-full h-24 px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-bold leading-relaxed resize-none focus:ring-2 focus:ring-blue-500/20 transition-all shadow-inner"
+                                  placeholder="Determine the bot's reaction..."
+                                />
+                              </div>
                             </div>
-                            <span className="text-[8px] font-black uppercase tracking-widest opacity-40 group-hover/toggle:opacity-100 transition-opacity">
-                              {cmd.isActive ? 'Online' : 'Muted'}
-                            </span>
-                         </label>
 
-                         <motion.button 
-                           whileHover={{ scale: 1.1, rotate: 5 }}
-                           whileTap={{ scale: 0.9 }}
-                           onClick={() => handleRemoveCommand(cmd.id)}
-                           className="w-10 h-10 neu-pressed rounded-2xl text-rose-500 hover:bg-rose-500/10 flex items-center justify-center transition-colors"
-                         >
-                           <Trash2 className="w-5 h-5" />
-                         </motion.button>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))
-              )}
-            </AnimatePresence>
+                            <div className="flex flex-row md:flex-col justify-between md:justify-center items-center gap-4 md:w-20 pl-0 md:pl-4 border-l-0 md:border-l border-black/[0.03]">
+                               <label className="flex flex-col items-center gap-2 cursor-pointer group/toggle">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={cmd.isActive}
+                                    onChange={(e) => handleUpdateCommand(cmd.id, { isActive: e.target.checked })}
+                                    className="sr-only"
+                                  />
+                                  <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${cmd.isActive ? 'neu-flat text-emerald-500 bg-emerald-500/5' : 'neu-pressed text-neutral-300'}`}>
+                                     <Activity className="w-5 h-5" />
+                                  </div>
+                                  <span className="text-[8px] font-black uppercase tracking-widest opacity-40 group-hover/toggle:opacity-100 transition-opacity">
+                                    {cmd.isActive ? 'Online' : 'Muted'}
+                                  </span>
+                               </label>
+
+                               <motion.button 
+                                 whileHover={{ scale: 1.1, rotate: 5 }}
+                                 whileTap={{ scale: 0.9 }}
+                                 onClick={() => handleRemoveCommand(cmd.id)}
+                                 className="w-10 h-10 neu-pressed rounded-2xl text-rose-500 hover:bg-rose-500/10 flex items-center justify-center transition-colors"
+                               >
+                                 <Trash2 className="w-5 h-5" />
+                               </motion.button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      ))
+                    )}
+                  </AnimatePresence>
+                </>
+               }
+             />
           </div>
         </div>
       </div>

@@ -10,6 +10,7 @@ import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
 import { getLogs, clearLogs, LogEntry } from '../lib/logger';
+import { CommandManagerWrapper } from '../components/CommandManager';
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -43,6 +44,7 @@ export function SettingsView() {
   const [logsPage, setLogsPage] = useState(1);
   const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
   const [botSettings, setBotSettings] = useState<ChatbotSettings | null>(null);
+  const [legacyMode, setLegacyMode] = useState(false);
   const isAdmin = auth.currentUser?.email === 'ksmotalkar@gmail.com';
   const [newProvider, setNewProvider] = useState<Partial<WhatsAppProvider>>({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
 
@@ -764,23 +766,33 @@ export function SettingsView() {
 
                   <div className="grid gap-4">
                      <p className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Loaded Bot Commands</p>
-                     <div className="flex flex-wrap gap-2">
-                        {botSettings?.commands?.filter(c => c.isActive).map((cmd) => (
-                          <div key={cmd.id} className="group px-4 py-3 neu-pressed rounded-xl flex items-center gap-3 hover:bg-emerald-500/5 transition-all">
-                             <div className="px-2 py-1 bg-emerald-500/10 text-emerald-600 text-[10px] font-black rounded-lg group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-                               /{cmd.triggerWord}
-                             </div>
-                             <span className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter truncate max-w-[150px]">
-                               {cmd.response}
-                             </span>
-                          </div>
-                        ))}
-                        {(!botSettings || !botSettings.commands || botSettings.commands.filter(c => c.isActive).length === 0) && (
-                          <div className="w-full py-8 neu-pressed rounded-3xl border-2 border-dashed border-black/5 flex items-center justify-center text-[10px] font-bold neu-text-muted uppercase tracking-widest opacity-40">
-                             No Passive Chatbot Commands Active
-                          </div>
-                        )}
-                     </div>
+                     
+                     {botSettings && (
+                       <CommandManagerWrapper 
+                         settings={botSettings} 
+                         onUpdate={(newSettings) => setBotSettings(newSettings)}
+                         isCompact={true}
+                         fallbackUI={
+                           <div className="flex flex-wrap gap-2">
+                              {botSettings?.commands?.filter(c => c.isActive).map((cmd) => (
+                                <div key={cmd.id} className="group px-4 py-3 neu-pressed rounded-xl flex items-center gap-3 hover:bg-emerald-500/5 transition-all">
+                                   <div className="px-2 py-1 bg-emerald-500/10 text-emerald-600 text-[10px] font-black rounded-lg group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                                     /{cmd.triggerWord}
+                                   </div>
+                                   <span className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter truncate max-w-[150px]">
+                                     {cmd.response}
+                                   </span>
+                                </div>
+                              ))}
+                              {(!botSettings.commands || botSettings.commands.filter(c => c.isActive).length === 0) && (
+                                <div className="w-full py-8 neu-pressed rounded-3xl border-2 border-dashed border-black/5 flex items-center justify-center text-[10px] font-bold neu-text-muted uppercase tracking-widest opacity-40">
+                                   No Passive Chatbot Commands Active
+                                </div>
+                              )}
+                           </div>
+                         }
+                       />
+                     )}
                   </div>
                 </div>
               </div>
