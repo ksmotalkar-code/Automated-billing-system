@@ -127,7 +127,13 @@ export function ComplaintsView() {
                       <MessageCircle className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="font-bold text-md text-slate-800">{c.customerName}</h4>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                        <h4 className="font-bold text-md text-slate-800">{c.customerName}</h4>
+                        <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+                          {c.customerId && <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">ID: {c.customerId}</span>}
+                          {c.mobileNumber && <span className="bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">{c.mobileNumber}</span>}
+                        </div>
+                      </div>
                       <div className="flex flex-wrap items-center gap-1 sm:gap-2 mt-0.5">
                         <span className="text-[10px] uppercase font-bold text-emerald-600 tracking-wider">Via Customer Channel</span>
                         <span className="text-xs text-slate-400">• {new Date(c.createdAt).toLocaleString()}</span>

@@ -105,6 +105,7 @@ export interface Complaint {
   expiresAt?: string;
   billStatus?: string;
   description?: string;
+  mobileNumber?: string;
 }
 
 export interface ReportFile {

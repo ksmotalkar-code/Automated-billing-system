@@ -49,6 +49,21 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
 const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
+const DEFAULT_SYSTEM_COMMANDS = [
+  { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
+  { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
+  { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
+  { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
+  { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
+  { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
+  { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
+  { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
+  { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "Contact the Panchayat office at 1800-123-4567.", isActive: true },
+  { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in your portal dashboard.", isActive: true },
+  { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Check the portal dashboard for your usage history.", isActive: true },
+  { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
+];
+
 function getAdminDb() {
   if (!admin.apps.length) return null;
   try {
@@ -253,18 +268,30 @@ interface AppSettings {
      return r;
   }
 
-  async function generateInvoicePdf(name: string, balance: number): Promise<string> {
+  async function generateInvoicePdf(name: string, balance: number, amountPaid?: number): Promise<string> {
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([600, 400]);
-    page.drawText(`INVOICE / BILL DETAILS`, { x: 50, y: 350, size: 20 });
-    page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
-    page.drawText(`Outstanding Balance: Rs. ${balance}`, { x: 50, y: 270, size: 14, color: rgb(0.8, 0.1, 0.1) });
-    page.drawText(`Date: ${new Date().toLocaleDateString()}`, { x: 50, y: 240, size: 12 });
-    page.drawText(`Thank you for using Panchayat Waterworks.`, { x: 50, y: 150, size: 12 });
+    
+    if (amountPaid !== undefined && balance === 0) {
+      page.drawText(`PAYMENT RECEIPT`, { x: 50, y: 350, size: 20, color: rgb(0.1, 0.6, 0.2) });
+      page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
+      page.drawText(`Amount Paid: Rs. ${amountPaid}`, { x: 50, y: 270, size: 14, color: rgb(0.1, 0.6, 0.2) });
+      page.drawText(`Outstanding Balance: Rs. 0`, { x: 50, y: 240, size: 14 });
+    } else {
+      page.drawText(`INVOICE / BILL DETAILS`, { x: 50, y: 350, size: 20 });
+      page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
+      page.drawText(`Outstanding Balance: Rs. ${balance}`, { x: 50, y: 270, size: 14, color: rgb(0.8, 0.1, 0.1) });
+      if (amountPaid) {
+          page.drawText(`Amount Paid: Rs. ${amountPaid}`, { x: 50, y: 240, size: 12, color: rgb(0.1, 0.6, 0.2) });
+      }
+    }
+    
+    page.drawText(`Date: ${new Date().toLocaleDateString()}`, { x: 50, y: 200, size: 12 });
+    page.drawText(`Thank you for using SmartBilling.`, { x: 50, y: 150, size: 12 });
     return await pdfDoc.saveAsBase64({ dataUri: true });
   }
 
-  async function routeSystemIntent(msgLower: string, custData: any, ownerId: string, adminSettings: any, baseText: string = "") {
+  async function routeSystemIntent(msgLower: string, custData: any, ownerId: string, adminSettings: any, baseText: string = "", chatbotSettings?: any) {
     let replyText = baseText;
     let matched = false;
     let attachments: any[] = [];
@@ -289,15 +316,35 @@ interface AppSettings {
        }
        matched = true;
     } else if (msgLower === "hi" || msgLower === "hello" || msgLower === "menu" || msgLower === "help") {
+       const userCommands = chatbotSettings?.commands || [];
+       const activeCommands = [...userCommands];
+
+       for (const sys of DEFAULT_SYSTEM_COMMANDS) {
+           if (!activeCommands.find((c: any) => c.triggerWord === sys.triggerWord)) {
+               if (sys.isActive) activeCommands.push(sys);
+           }
+       }
+
+       const activeFiltered = activeCommands.filter((c: any) => c.isActive);
+
+       let cmdListText = activeFiltered.map((cmd, idx) => {
+           let emoji = "🔹";
+           switch(idx % 6) {
+               case 0: emoji = "1️⃣"; break;
+               case 1: emoji = "2️⃣"; break;
+               case 2: emoji = "3️⃣"; break;
+               case 3: emoji = "4️⃣"; break;
+               case 4: emoji = "5️⃣"; break;
+               case 5: emoji = "6️⃣"; break;
+           }
+           // Use trigger word as instruction if description is too long, we keep it simple here
+           return `${emoji} *${cmd.triggerWord}* - ${cmd.buttonLabel}`;
+       }).join("\n");
+
        replyText = `Hello ${custData.name}! I am your Smart Billing Assistant. How can I help you today?
        
 Available Commands:
-1️⃣ *Balance* - Check current outstanding
-2️⃣ *Bill* - Download latest invoice
-3️⃣ *Pay* - Get UPI QR code for payment
-4️⃣ *Complaint* - Register a service issue
-5️⃣ *Status* - Check supply timings
-6️⃣ *Quality* - Check water quality report`;
+${cmdListText}`;
        matched = true;
     } else if (msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
        const amt = custData.balance || 0;
@@ -506,7 +553,12 @@ async function startServer() {
                    const mobile = customer?.mobileNumber?.replace(/\D/g, '');
                    if (mobile && mobile.length >= 10) {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
-                     await sendWhatsAppMessage(settings, mobile, message, undefined, undefined, false, 'receipt', [customer?.name || "Customer", amountPaid]).catch(e => console.error("Webhook Auto-Receipt failed", e));
+                     try {
+                         const generatedPdf = await generateInvoicePdf(customer?.name || "Customer", 0, amountPaid);
+                         await sendWhatsAppMessage(settings, mobile, message, generatedPdf, "Payment_Receipt.pdf", false, 'receipt', [customer?.name || "Customer", amountPaid, { isButtonParam: true, value: finalCustomerId }]);
+                     } catch(e) {
+                         console.error("Webhook Auto-Receipt failed", e);
+                     }
                      await custRef.update({ paymentNotified: true });
                    }
                  }
@@ -953,7 +1005,7 @@ async function startServer() {
 
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
-                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'billing', [customer.name, settings.billingAmount, newBalance]);
+                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'billing', [customer.name, settings.billingAmount, newBalance, { isButtonParam: true, value: customer.id }]);
                 } catch (e: any) {
                   console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
                 }
@@ -1239,6 +1291,26 @@ async function startServer() {
         return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }
 
+      let testCustName = "Customer";
+      let testCustBalance = 0;
+      let testCustId = "CUST-" + Math.random().toString(36).substr(2, 6).toUpperCase();
+
+      if (admin.apps.length) {
+         try {
+             // Try to fetch at least one real customer to make test data genuine
+             const db = getAdminDb();
+             const custSnap = await db?.collection("customers").where("ownerId", "==", ownerId).limit(1).get();
+             if (custSnap && !custSnap.empty) {
+                 const custData = custSnap.docs[0].data();
+                 testCustName = custData.name || "Customer";
+                 testCustBalance = custData.balance || 0;
+                 testCustId = custData.id || testCustId;
+             }
+         } catch(e) {}
+      }
+
+      const generatedTestPdfBase64 = await generateInvoicePdf(testCustName, testCustBalance);
+
       const message = "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
       
       try {
@@ -1252,54 +1324,67 @@ async function startServer() {
 
            if (!templateName) throw new Error(`The '${templateToTest}' template name is not configured in your settings.`);
            
-           await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, 'custom', ["Test Data"], templateName);
+           await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", true, 'custom', [testCustName], templateName);
         } else {
            // Default test (hello_world)
-           await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true);
+           await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", true);
         }
       } catch (err: any) {
         // If meta throws template not found (meaning it's a live number which lacks hello_world)
         const errLower = err.message.toLowerCase();
         let needsFallback = false;
 
-        if (errLower.includes('132000') || errLower.includes('expected number of params') || errLower.includes('131008') || errLower.includes('parameter is missing')) {
+        if (errLower.includes('132012') || errLower.includes('132000') || errLower.includes('expected number of params') || errLower.includes('131008') || errLower.includes('parameter is missing') || errLower.includes('format mismatch')) {
            let numParams = 1;
            const match = err.message.match(/expected number of params \((\d+)\)/);
            if (match && match[1]) numParams = parseInt(match[1]);
            else if (errLower.includes('button')) numParams = 6; // Just add some params to body and assume 1 button param needed
            
-           const paramsArr: any[] = Array(numParams).fill("Test");
-           paramsArr[0] = "Test Data"; // First param gets short test string instead of long message
+           const paramsArr: any[] = Array(numParams).fill(testCustName);
+           paramsArr[0] = testCustName; 
            
            if (errLower.includes('button') || errLower.includes('131008')) {
-               paramsArr.push({ isButtonParam: true, value: 'test' });
+               paramsArr.push({ isButtonParam: true, value: testCustId }); // Provide real ID for the portal link
            }
 
+           const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
+           const tName = (templateToTest && templateToTest !== 'hello_world') ? (templateToTest === 'billing' ? settings.metaTemplateBilling : (templateToTest === 'receipt' ? settings.metaTemplateReceipt : (templateToTest === 'broadcast' ? settings.metaTemplateBroadcast : templateToTest))) : undefined;
            try {
-              const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
-              const tName = (templateToTest && templateToTest !== 'hello_world') ? (templateToTest === 'billing' ? settings.metaTemplateBilling : (templateToTest === 'receipt' ? settings.metaTemplateReceipt : (templateToTest === 'broadcast' ? settings.metaTemplateBroadcast : templateToTest))) : undefined;
-              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, paramsArr, tName);
-              return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s).` });
+              // We will always try to pass the generated PDF so that if it expects a DOCUMENT, it succeeds
+              await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", true, tCat as any, paramsArr, tName);
+              return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s) using customer: ${testCustName}` });
            } catch (err2: any) {
               const err2Lower = err2.message.toLowerCase();
+              let handled = false;
               
               // If it still wants button params and we haven't satisfied it, or vice versa
               if (err2Lower.includes('expected number of params') && !errLower.includes('expected number of params')) {
                   const match2 = err2.message.match(/expected number of params \((\d+)\)/);
                   if (match2 && match2[1]) {
-                      const newParams: any[] = Array(parseInt(match2[1])).fill("Test");
-                      newParams.push({ isButtonParam: true, value: 'test' });
+                      const newParams: any[] = Array(parseInt(match2[1])).fill(testCustName);
+                      newParams.push({ isButtonParam: true, value: testCustId });
                       try {
-                          await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, newParams, tName);
-                          return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s).` });
+                          await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", true, tCat as any, newParams, tName);
+                          handled = true;
+                          return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s) using: ${testCustName}.` });
                       } catch(e) {}
                   }
               }
+              if (!handled && (err2Lower.includes('132012') || err2Lower.includes('format mismatch'))) {
+                  // Attempt without document
+                  try {
+                      await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, true, tCat as any, paramsArr, tName);
+                      handled = true;
+                      return res.json({ status: "success", info: `Message sent! Adjusted header format.` });
+                  } catch(e) {}
+              }
               
-              if (err2Lower.includes('131058') || err2Lower.includes('hello_world') || err2Lower.includes('hello world') || err2Lower.includes('test number') || err2Lower.includes('does not exist')) {
-                  needsFallback = true;
-              } else {
-                  throw err2;
+              if (!handled) {
+                if (err2Lower.includes('131058') || err2Lower.includes('hello_world') || err2Lower.includes('hello world') || err2Lower.includes('test number') || err2Lower.includes('does not exist')) {
+                    needsFallback = true;
+                } else {
+                    throw err2;
+                }
               }
            }
         } else if (errLower.includes('hello_world') || errLower.includes('hello world') || errLower.includes('test number') || errLower.includes('does not exist') || errLower.includes('131058')) {
@@ -1311,7 +1396,7 @@ async function startServer() {
         if (needsFallback) {
            try {
               // Try sending as a broadcast template first (useful for live numbers without 24h window)
-              await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', ["Test Data"]);
+              await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", false, 'broadcast', [testCustName]);
            } catch (fallbackErr: any) {
               const fbLower = fallbackErr.message.toLowerCase();
               let finalErrFallback = fallbackErr;
@@ -1324,13 +1409,13 @@ async function startServer() {
                  } else if (fbLower.includes('button') || fbLower.includes('131008')) {
                      numParams = 6;
                  }
-                 const paramsArr: any[] = Array(numParams).fill("Test");
-                 paramsArr[0] = "Test Data";
+                 const paramsArr: any[] = Array(numParams).fill(testCustName);
+                 paramsArr[0] = testCustName;
                  if (fbLower.includes('button') || fbLower.includes('131008')) {
-                     paramsArr.push({ isButtonParam: true, value: 'test' });
+                     paramsArr.push({ isButtonParam: true, value: testCustId });
                  }
                  try {
-                     await sendWhatsAppMessage(settings, testMobile, message, undefined, undefined, false, 'broadcast', paramsArr);
+                     await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", false, 'broadcast', paramsArr);
                      return res.json({ status: "success", info: `Message sent! Auto-filled parameter(s) for Broadcast.` });
                  } catch (err3) {
                      finalErrFallback = err3;
@@ -1394,24 +1479,9 @@ async function startServer() {
          history = history.map(h => ({ role: h.role, content: h.content, attachments: h.attachments }));
       }
 
-      const systemCommands = [
-        { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
-        { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
-        { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
-        { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
-        { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
-        { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
-        { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
-        { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
-        { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "Contact the Panchayat office at 1800-123-4567.", isActive: true },
-        { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in your portal dashboard.", isActive: true },
-        { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Check the portal dashboard for your usage history.", isActive: true },
-        { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
-      ];
-
-      // Merge systemCommands into user commands if not present
+      // Merge DEFAULT_SYSTEM_COMMANDS into user commands if not present
       const activeCommands = [...commands];
-      for (const sys of systemCommands) {
+      for (const sys of DEFAULT_SYSTEM_COMMANDS) {
         if (!activeCommands.find((c: any) => c.triggerWord === sys.triggerWord)) {
           if (sys.isActive) activeCommands.push(sys);
         }
@@ -1491,7 +1561,7 @@ async function startServer() {
           sysTrigger = msgLower;
       }
 
-      const intentRes = await routeSystemIntent(sysTrigger, custData, ownerId, adminSettings, hasCustomCommandMatched ? replyText : "");
+      const intentRes = await routeSystemIntent(sysTrigger, custData, ownerId, adminSettings, hasCustomCommandMatched ? replyText : "", chatbotSettings);
       if (intentRes.matched) {
          replyText = intentRes.replyText;
          attachments = intentRes.attachments;
@@ -1653,16 +1723,68 @@ async function startServer() {
               
               const fromMobile = messageObj.from;
               const msgBody = messageObj.text?.body;
+              const msgType = messageObj.type;
               
-              console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody}`);
+              console.log(`[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody || msgType}`);
 
-              if (msgBody) {
-                try {
-                  const cleanMobile = fromMobile.replace(/\D/g, '');
-                  let matchedCustomer = await getCustomerByMobile(ownerId, cleanMobile);
+              try {
+                const cleanMobile = fromMobile.replace(/\D/g, '');
+                let matchedCustomer = await getCustomerByMobile(ownerId, cleanMobile);
 
-                  if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
-                       const settings = await getSettings(ownerId);
+                if (matchedCustomer && matchedCustomer.status !== 'Suspended') {
+                     const settings = await getSettings(ownerId);
+                     
+                     if (msgType === 'image') {
+                        const imageId = messageObj.image?.id;
+                        if (imageId && settings && settings.metaWhatsAppApiKey) {
+                            try {
+                               // Fetch media URL
+                               const mediaRes = await fetch(`https://graph.facebook.com/v17.0/${imageId}`, {
+                                   headers: { 'Authorization': `Bearer ${settings.metaWhatsAppApiKey}` }
+                               });
+                               const mediaData = await mediaRes.json();
+                               
+                               if (mediaData.url) {
+                                   // Fetch image binary
+                                   const imgRes = await fetch(mediaData.url, {
+                                       headers: { 'Authorization': `Bearer ${settings.metaWhatsAppApiKey}` }
+                                   });
+                                   const arrayBuf = await imgRes.arrayBuffer();
+                                   const buffer = Buffer.from(arrayBuf);
+                                   const base64Image = `data:${imgRes.headers.get('content-type') || 'image/jpeg'};base64,${buffer.toString('base64')}`;
+                                   
+                                   // Save to payment_receipts
+                                   const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
+                                   if (dbInstance) {
+                                       const receiptId = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+                                       await dbInstance.collection("payment_receipts").doc(receiptId).set({
+                                          id: receiptId,
+                                          customerId: matchedCustomer.id,
+                                          customerName: matchedCustomer.name,
+                                          ownerId: ownerId,
+                                          amount: matchedCustomer.balance || 0, // Default to their full balance
+                                          base64Image: base64Image,
+                                          status: 'Pending',
+                                          submittedAt: new Date().toISOString()
+                                       });
+                                       
+                                       // Send Acknowledgment
+                                       await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, "Thank you! We have received your payment screenshot. It is currently under verification. We will notify you once your payment is approved.");
+                                       
+                                       // Log in chat history
+                                       await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                                           role: 'user',
+                                           content: 'Uploaded payment screenshot.',
+                                           source: 'whatsapp',
+                                           timestamp: FieldValue.serverTimestamp()
+                                       });
+                                   }
+                               }
+                            } catch (e) {
+                               console.error("Failed to process image receipt:", e);
+                            }
+                        }
+                     } else if (msgBody) {
                        
                        const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                        if (dbInstance) {
@@ -1699,7 +1821,7 @@ async function startServer() {
                           sysTrigger = msgLower;
                        }
 
-                       const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "");
+                       const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "", chatbotSettings);
                        
                        let attachmentsToPass: any[] = [];
                        if (intentRes.matched) {
@@ -1734,6 +1856,10 @@ async function startServer() {
                              responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
                           }
                           handled = true;
+                       } else {
+                          // Unrecognized command
+                          // The user requested that we do not reply at all to unrecognized commands to prevent spam.
+                          handled = false;
                        }
 
                        if (handled && settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
@@ -1789,13 +1915,13 @@ async function startServer() {
                        if (!handled) {
                           // All messages were handled either by exact keyword matches or complaints.
                        }
+                     } // End of else if (msgBody)
                   } else {
                      console.log("[Webhook] Message received from unknown number. Ignored.");
                   }
                 } catch (innerErr) {
                   console.error("[Webhook] Processing error:", innerErr);
                 }
-              }
             }
           }
         }
