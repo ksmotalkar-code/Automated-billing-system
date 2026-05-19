@@ -49,15 +49,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
 
   if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
-    // Set quota exceeded flag for 24 hours (until next UTC reset roughly)
-    const nextReset = new Date();
-    nextReset.setHours(24, 0, 0, 0); 
-    localStorage.setItem('firestore_quota_expiry', nextReset.getTime().toString());
-    console.warn('Firestore Quota Exceeded. Actions might be blocked.', errInfo);
-    
-    // Dispatch a custom event so the UI can show a notification
-    window.dispatchEvent(new CustomEvent('firestore-quota-exceeded'));
-    return; // Do NOT throw, so we don't crash the app or trigger Vite's error overlay for quota limits
+    console.warn('Firestore Quota Exceeded.', errInfo);
+    throw new Error('resource-exhausted: Your database quota has been exceeded. Please review usage or billing.');
   }
 
   if (errorMessage.includes('client is offline')) {
@@ -70,13 +63,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 export const isQuotaExceeded = () => {
-  const expiry = localStorage.getItem('firestore_quota_expiry');
-  if (!expiry) return false;
-  const isExcluded = Date.now() < parseInt(expiry);
-  if (!isExcluded) {
-    localStorage.removeItem('firestore_quota_expiry');
-  }
-  return isExcluded;
+  return false; // User has activated pay-as-you-go, no longer lock them out artificially.
 };
 
 export interface Customer {
