@@ -28,6 +28,7 @@ export function SettingsView() {
     metaWhatsAppVerifyToken: '',
     paymentGatewayKey: '',
     paymentGatewaySecret: '',
+    enableAutosave: false,
     automation: {
       billingLifecycle: true,
       ruleBased: true,
@@ -96,7 +97,7 @@ export function SettingsView() {
   }, [contextSettings]);
 
   useEffect(() => {
-    if (!contextSettings) return;
+    if (!contextSettings || !settings.enableAutosave) return;
     const isDifferent = JSON.stringify(settings) !== JSON.stringify(contextSettings);
     if (!isDifferent) return;
     
@@ -413,10 +414,17 @@ export function SettingsView() {
             {isSaving ? "Saving..." : "Save Now"}
           </motion.button>
           
-          <div className="flex justify-center items-center gap-2 px-6 py-3 bg-[var(--accent)]/10 text-[var(--accent)] rounded-2xl text-[10px] font-black uppercase tracking-widest border border-[var(--accent)]/20 w-full sm:w-auto mt-4 sm:mt-0">
-            <Zap className="w-4 h-4" />
-            Auto-saving active
-          </div>
+          {settings.enableAutosave ? (
+            <div className="flex justify-center items-center gap-2 px-6 py-3 bg-emerald-500/10 text-emerald-600 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-emerald-500/20 w-full sm:w-auto mt-4 sm:mt-0">
+              <Zap className="w-4 h-4 animate-pulse" />
+              Auto-saving active
+            </div>
+          ) : (
+            <div className="flex justify-center items-center gap-2 px-6 py-3 bg-slate-500/10 text-slate-500 rounded-2xl text-[10px] font-black uppercase tracking-widest border border-slate-500/20 w-full sm:w-auto mt-4 sm:mt-0">
+              <Zap className="w-4 h-4" />
+              Auto-save Disabled
+            </div>
+          )}
         </div>
       </div>
 
@@ -1080,6 +1088,30 @@ export function SettingsView() {
             </CardHeader>
             <CardContent className="pt-6 space-y-12">
               <div className="space-y-6">
+                <div className="flex items-center gap-3">
+                   <Cpu className="w-5 h-5 text-rose-600" />
+                   <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-rose-600 leading-none">System Preferences</h4>
+                </div>
+
+                <label className="flex items-center justify-between p-6 neu-pressed rounded-2xl cursor-pointer hover:bg-black/5 transition-all">
+                  <div className="flex flex-col pr-8">
+                    <span className="text-[11px] font-black uppercase tracking-widest text-[#1e1e2d]">Enable Auto-save Settings</span>
+                    <p className="text-[10px] neu-text-muted font-bold block mt-1 uppercase tracking-tighter opacity-60">Automatically commit configuration changes to the database as you type</p>
+                  </div>
+                  <div className="relative inline-block w-14 h-7 shrink-0">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer" 
+                      checked={settings.enableAutosave || false} 
+                      onChange={(e) => setSettings({ ...settings, enableAutosave: e.target.checked })} 
+                    />
+                    <div className="w-full h-full rounded-full bg-[var(--shadow-dark)] peer-checked:bg-emerald-600 transition-colors duration-300 shadow-inner" />
+                    <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-300 ${settings.enableAutosave ? 'translate-x-7' : 'translate-x-0'}`} />
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
                 <div className="flex items-center gap-3">
                    <AlertCircle className="w-5 h-5 text-rose-600" />
                    <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-rose-600 leading-none">Danger Zone</h4>

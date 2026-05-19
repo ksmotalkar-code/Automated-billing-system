@@ -229,6 +229,7 @@ export interface AppSettings {
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
+  enableAutosave?: boolean;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
   automation?: AutomationSettings;
@@ -1046,19 +1047,9 @@ export interface AutomationError {
 }
 
 export const logAutomationError = async (errorInfo: Omit<AutomationError, 'id' | 'timestamp' | 'resolved' | 'ownerId'>) => {
-  if (isQuotaExceeded()) return;
-  try {
-    const docRef = doc(collection(db, 'automation_errors'));
-    await setDoc(docRef, {
-      ...errorInfo,
-      id: docRef.id,
-      timestamp: new Date().toISOString(),
-      resolved: false,
-      ownerId: auth.currentUser?.uid || 'sys'
-    });
-  } catch (error) {
-    console.error("Failed to log automation error", error);
-  }
+  // Use simple logs method to prevent DB writes
+  const msg = `[AutomationError] Type: ${errorInfo.type}, Customer: ${errorInfo.customerName} (${errorInfo.customerId}) - ${errorInfo.errorMessage}`;
+  console.error(msg);
 };
 
 export const subscribeToAutomationErrors = (callback: (errors: AutomationError[]) => void) => {

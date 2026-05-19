@@ -99,9 +99,22 @@ export function ReportsView() {
          const report = reports.find(r => r.id === reportId);
          const existingFiles = report?.files || [];
          
+         let fileUrl = base64data;
+         try {
+             // We dynamically import storage specific things here if not already at top, wait import at top is better
+             const { ref, uploadString, getDownloadURL } = await import('firebase/storage');
+             const { storage, auth } = await import('../firebase');
+             const { v4: uuidv4 } = await import('uuid');
+             const storageRef = ref(storage, `reports/${auth.currentUser?.uid || 'anon'}/${uuidv4()}_${file.name}`);
+             await uploadString(storageRef, base64data, 'data_url');
+             fileUrl = await getDownloadURL(storageRef);
+         } catch(e) {
+             console.error("Storage upload failed", e);
+         }
+         
          const updatedReport = {
             ...report!,
-            files: [...existingFiles, { name: file.name, type: file.type, data: base64data }]
+            files: [...existingFiles, { name: file.name, type: file.type, data: fileUrl }]
          };
 
          await updateDoc(reportRef, {

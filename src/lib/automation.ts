@@ -90,7 +90,9 @@ export const sendWhatsAppNotification = async (
   attachmentName?: string,
   isBulkMode?: boolean,
   includePortalLink: boolean = true,
-  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom'
+  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom',
+  templateParams?: any[],
+  customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   if (customer.status === 'Suspended') {
     return { success: false, error: "Customer is suspended. Notifications are disabled for suspended accounts." };
@@ -124,6 +126,13 @@ export const sendWhatsAppNotification = async (
     try {
       const portalUrl = await createPortalLink(customer, settings);
       finalMessage = `${message}\n\n📄 View Invoice & Pay Securely:\n${portalUrl}`;
+      
+      // Pass the customer.id to support Meta's dynamic URL button {1} parameter if it expects it
+      templateParams = templateParams || [];
+      if (templateParams.length === 0) {
+        templateParams.push(customer.name);
+        templateParams.push({ isButtonParam: true, value: customer.id, index: '0' });
+      }
       
       // If we use a portal link, we strip out the binary attachments since manual links can't use them anyway
       attachment = undefined;

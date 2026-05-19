@@ -108,6 +108,47 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
     commitChanges(commands);
   };
 
+  const handleClearAll = () => {
+    if (confirm("Are you sure you want to delete all bot commands?")) {
+      setCommands([]);
+      commitChanges([]);
+    }
+  };
+
+  const handleAddDefaults = () => {
+    const defaults: ChatbotCommand[] = [
+      { id: 'sysdlbill', buttonLabel: '📄 Download Bill PDF', triggerWord: 'Download Bill', response: 'Here is your PDF bill.', isActive: true },
+      { id: 'sysqrpay', buttonLabel: '💰 QR For Payment', triggerWord: 'Pay Bill', response: 'Scan this UPI QR code to make your payment.', isActive: true },
+      { id: 'sysbill', buttonLabel: '📄 See My Bill', triggerWord: 'My Bill', response: 'Your current bill status is computed live.', isActive: true },
+      { id: 'sysbalance', buttonLabel: '💳 View Balance', triggerWord: 'Check Balance', response: 'Your total remaining balance is Rs. {{balance}}.', isActive: true },
+      { id: 'syscomplaint', buttonLabel: '🛠️ Register Complaint', triggerWord: 'Complaint', response: 'Please describe your complaint in the next message.', isActive: true },
+      { id: 'sysreport', buttonLabel: '📊 Deep Detail Report', triggerWord: 'Deep Report', response: 'Let me find your deep detail report.', isActive: true },
+      { id: 'syswater', buttonLabel: '💧 Water Quality Status', triggerWord: 'Water Quality', response: 'Our water quality currently meets all regulatory standards. Safe for drinking!', isActive: true },
+      { id: 'syssupply', buttonLabel: '🕒 Supply Timings', triggerWord: 'Supply Timings', response: 'Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.', isActive: true },
+      { id: 'syscontact', buttonLabel: '📞 Contact Us', triggerWord: 'Contact', response: 'You can contact the Panchayat office at 1800-123-4567.', isActive: true },
+      { id: 'sysnotify', buttonLabel: '🔔 Notify History', triggerWord: 'Notifications', response: 'Your recent notifications are available in the portal dashboard.', isActive: true },
+      { id: 'sysusage', buttonLabel: '📝 Usage History', triggerWord: 'Usage', response: 'Your usage history is currently being computed.', isActive: true },
+      { id: 'sysmaint', buttonLabel: '⚠️ Maintenance Alerts', triggerWord: 'Maintenance', response: 'No scheduled maintenance for your zone currently.', isActive: true },
+      { id: 'syslink', buttonLabel: '🔗 Portal Link', triggerWord: 'Link', response: 'Here is your portal link.', isActive: true },
+    ];
+    
+    // Update existing system commands by ID, add others
+    let newCommands = [...commands];
+    defaults.forEach(defCmd => {
+       const existingIndex = newCommands.findIndex(c => c.id === defCmd.id);
+       if (existingIndex !== -1) {
+           // Update only if it hasn't been significantly customized? 
+           // For simplicity, we update the triggers/labels of system commands to match new defaults
+           newCommands[existingIndex] = { ...newCommands[existingIndex], ...defCmd };
+       } else {
+           newCommands.push(defCmd);
+       }
+    });
+
+    setCommands(newCommands);
+    commitChanges(newCommands);
+  };
+
   return (
     <div className={`space-y-4 ${isCompact ? '' : 'p-4 border border-[var(--accent)]/10 rounded-3xl bg-[var(--accent)]/[0.01]'}`}>
       <div className="flex items-center justify-between">
@@ -116,14 +157,36 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
            <span className="text-[11px] font-black uppercase tracking-[0.2em] text-[var(--accent)]">Robust Command Manager</span>
            {saving && <RefreshCw className="w-3 h-3 text-[var(--accent)] animate-spin ml-2" />}
         </div>
-        <motion.button 
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={handleAddCommand}
-          className="px-4 py-2 bg-[var(--accent)] text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 flex items-center gap-2"
-        >
-          <Plus className="w-3 h-3" /> Add Rule
-        </motion.button>
+        <div className="flex gap-2 items-center">
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleAddDefaults}
+            className="px-3 py-2 bg-[var(--accent)]/10 text-[var(--accent)] rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-[var(--accent)]/20 transition-colors flex items-center gap-2"
+          >
+            Bulk Defaults
+          </motion.button>
+          
+          {commands.length > 0 && (
+              <motion.button 
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+                onClick={handleClearAll}
+                className="px-3 py-2 bg-rose-500/10 text-rose-500 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-rose-500/20 transition-colors flex items-center gap-1"
+              >
+                Clear All
+              </motion.button>
+          )}
+
+          <motion.button 
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleAddCommand}
+            className="px-4 py-2 bg-[var(--accent)] text-white rounded-xl text-[9px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 flex items-center gap-2"
+          >
+            <Plus className="w-3 h-3" /> Add Rule
+          </motion.button>
+        </div>
       </div>
 
       <div className="space-y-3">

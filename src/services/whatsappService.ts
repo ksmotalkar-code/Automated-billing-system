@@ -11,6 +11,8 @@ export interface WhatsAppMessage {
   attachmentName?: string;
   attachmentType?: string;
   templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
+  templateParams?: any[];
+  customTemplateName?: string;
 }
 
 class WhatsAppService {
@@ -99,6 +101,8 @@ class WhatsAppService {
           mediaBase64,
           mediaName,
           templateCategory: params.templateCategory,
+          templateParams: params.templateParams,
+          customTemplateName: params.customTemplateName,
           apiKey: this.apiKey,
           phoneId: this.phoneNumberId,
           watiAccessToken: this.watiAccessToken,

@@ -50,18 +50,19 @@ const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
 const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
 const DEFAULT_SYSTEM_COMMANDS = [
-  { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
-  { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
-  { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
-  { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
-  { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
-  { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
-  { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
-  { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
-  { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "Contact the Panchayat office at 1800-123-4567.", isActive: true },
-  { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in your portal dashboard.", isActive: true },
-  { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Check the portal dashboard for your usage history.", isActive: true },
-  { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
+  { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "Download Bill", response: "Here is your PDF bill.", isActive: true },
+  { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "Pay Bill", response: "Scan this UPI QR code to make your payment.", isActive: true },
+  { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "My Bill", response: "Your current bill status is computed live.", isActive: true },
+  { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "Check Balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
+  { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "Complaint", response: "Please describe your complaint in the next message.", isActive: true },
+  { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "Deep Report", response: "Let me find your deep detail report.", isActive: true },
+  { id: "syswater", buttonLabel: "💧 Water Quality", triggerWord: "Water Quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
+  { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "Supply Timings", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
+  { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "Contact", response: "Contact the Panchayat office at 1800-123-4567.", isActive: true },
+  { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "Notifications", response: "Your recent notifications are available in your portal dashboard.", isActive: true },
+  { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "Usage", response: "Check the portal dashboard for your usage history.", isActive: true },
+  { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "Maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true },
+  { id: "syslink", buttonLabel: "🔗 Portal Link", triggerWord: "Link", response: "Here is your portal link.", isActive: true }
 ];
 
 function getAdminDb() {
@@ -191,7 +192,8 @@ interface AppSettings {
 
       if (!admin.apps.length) {
         admin.initializeApp({
-          credential: admin.credential.cert(serviceAccount)
+          credential: admin.credential.cert(serviceAccount),
+          storageBucket: firebaseConfig.storageBucket
         });
         console.log("Firebase Admin Initialized Successfully.");
       }
@@ -206,7 +208,8 @@ interface AppSettings {
       if (!admin.apps.length) {
         admin.initializeApp({
           credential: admin.credential.applicationDefault(),
-          projectId: firebaseConfig.projectId
+          projectId: firebaseConfig.projectId,
+          storageBucket: firebaseConfig.storageBucket
         });
         console.log("Firebase Admin Initialized using Application Default Credentials (ADC).");
       }
@@ -238,7 +241,14 @@ interface AppSettings {
      const msgLower = msgBody.toLowerCase().trim();
      if (!triggerWord && !btnBase) return false;
      
-     if (btnBase && msgLower === btnBase.toLowerCase().trim()) return true;
+     if (btnBase) {
+        const btnLower = btnBase.toLowerCase().trim();
+        if (msgLower === btnLower) return true;
+        
+        // Strip emojis and check again (human-friendly matching)
+        const btnNoEmoji = btnBase.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E6}-\u{1F1FF}]/gu, '').trim().toLowerCase();
+        if (msgLower === btnNoEmoji && btnNoEmoji.length > 3) return true;
+     }
      if (!triggerWord) return false;
 
      if (triggerWord.startsWith('/') && triggerWord.endsWith('/')) {
@@ -291,12 +301,12 @@ interface AppSettings {
     return await pdfDoc.saveAsBase64({ dataUri: true });
   }
 
-  async function routeSystemIntent(msgLower: string, custData: any, ownerId: string, adminSettings: any, baseText: string = "", chatbotSettings?: any) {
+  async function routeSystemIntent(msgLower: string, custData: any, ownerId: string, adminSettings: any, baseText: string = "", chatbotSettings?: any, reqHost: string = "your-app-url") {
     let replyText = baseText;
     let matched = false;
     let attachments: any[] = [];
     
-    if (msgLower === "system_dl_bill" || msgLower.includes("download bill") || msgLower.includes("invoice")) {
+    if (msgLower === "download bill" || msgLower === "system_dl_bill" || msgLower.includes("invoice")) {
        const amt = custData.balance || 0;
        replyText = replyText || `Here is your invoice. Your outstanding balance is Rs. ${amt}.`;
        try {
@@ -306,7 +316,7 @@ interface AppSettings {
           console.error("PDF generation failed:", e);
        }
        matched = true;
-    } else if (msgLower === "system_qr_pay" || msgLower.includes("qr for pay") || msgLower.includes("pay bill") || msgLower.includes("upi")) {
+    } else if (msgLower === "pay bill" || msgLower === "system_qr_pay" || msgLower.includes("qr for pay") || msgLower.includes("upi")) {
        replyText = replyText || "Scan the attached UPI QR code to pay your bill.";
        const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
        if (qrImage) {
@@ -346,17 +356,17 @@ interface AppSettings {
 Available Commands:
 ${cmdListText}`;
        matched = true;
-    } else if (msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
+    } else if (msgLower === "my bill" || msgLower === "system_bill" || msgLower.includes("see my bill") || msgLower === "bill") {
        const amt = custData.balance || 0;
        replyText = replyText || `Your current bill status is: ${amt > 0 ? 'Pending (Rs. ' + amt + ')' : 'Paid'}.`;
        matched = true;
-    } else if (msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("balance")) {
+    } else if (msgLower === "check balance" || msgLower === "system_balance" || msgLower.includes("view balance") || msgLower.includes("balance")) {
        replyText = replyText || `You have a total remaining balance of Rs. ${custData.balance || 0}.`;
        matched = true;
-    } else if (msgLower === "system_complaint" || msgLower.includes("register complaint")) {
-       replyText = replyText || `Please enter your complaint directly here starting with the word "COMPLAINT:".\n\nFor example:\nCOMPLAINT: My water pipe is leaking.`;
+    } else if (msgLower === "complaint" || msgLower === "system_complaint" || msgLower.includes("register complaint") || msgLower === "issue") {
+       replyText = replyText || `Please describe your complaint in the next message. Just type "Complaint" followed by your issue in " " quotes.\n\nFor example:\nComplaint "My water pipe is leaking"`;
        matched = true;
-    } else if (msgLower === "system_report" || msgLower.includes("deep detail report") || msgLower === "report") {
+    } else if (msgLower === "deep report" || msgLower === "system_report" || msgLower.includes("deep detail report") || msgLower === "report") {
        let hasReport = false;
        let reportName = "";
        let reportFiles: any[] = [];
@@ -388,23 +398,27 @@ ${cmdListText}`;
          replyText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
        }
        matched = true;
-    } else if (msgLower === "system_water_quality" || msgLower.includes("water quality")) {
+    } else if (msgLower === "water quality" || msgLower === "system_water_quality" || msgLower.includes("water quality")) {
        replyText = replyText || "Our water quality currently meets all regulatory standards. Safe for drinking!";
        matched = true;
-    } else if (msgLower === "system_supply_time" || msgLower.includes("supply timing")) {
+    } else if (msgLower === "supply timings" || msgLower === "system_supply_time" || msgLower.includes("supply timing")) {
        replyText = replyText || "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.";
        matched = true;
-    } else if (msgLower === "system_contact" || msgLower.includes("contact us")) {
+    } else if (msgLower === "contact" || msgLower === "system_contact" || msgLower.includes("contact us")) {
        replyText = replyText || "You can contact the Panchayat office at 1800-123-4567.";
        matched = true;
-    } else if (msgLower === "system_notify" || msgLower.includes("notify history") || msgLower.includes("notification")) {
+    } else if (msgLower === "notifications" || msgLower === "system_notify" || msgLower.includes("notify history") || msgLower.includes("notification")) {
        replyText = replyText || "Your recent notifications are available in the portal dashboard.";
        matched = true;
-    } else if (msgLower === "system_usage" || msgLower.includes("usage history")) {
+    } else if (msgLower === "usage" || msgLower === "system_usage" || msgLower.includes("usage history")) {
        replyText = replyText || "Check the portal dashboard for your usage history.";
        matched = true;
-    } else if (msgLower === "system_maintenance" || msgLower.includes("maintenance alert")) {
+    } else if (msgLower === "maintenance" || msgLower === "system_maintenance" || msgLower.includes("maintenance alert")) {
        replyText = replyText || "There are no scheduled maintenance activities affecting your connection at the moment.";
+       matched = true;
+    } else if (msgLower === "link" || msgLower === "system_link" || msgLower.includes("portal link")) {
+       const protocol = reqHost.includes('localhost') ? 'http' : 'https';
+       replyText = replyText || `Here is your personal portal link:\n${protocol}://${reqHost}/?portal=true&customerId=${custData.id}`;
        matched = true;
     }
     return { matched, replyText, attachments };
@@ -488,6 +502,41 @@ async function startServer() {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
   });
 
+  // Webhook for Web Portal Uploads (bypass storage rules)
+  app.post("/api/upload-receipt", async (req, res) => {
+    try {
+       const { ownerId, base64Image, receiptId } = req.body;
+       if (!ownerId || !base64Image || !receiptId) {
+          return res.status(400).json({ error: "Missing required fields" });
+       }
+       
+       const bucket = admin.storage().bucket();
+       const file = bucket.file(`receipts/${ownerId}/${receiptId}`);
+       
+       const base64Data = base64Image.split(';base64,').pop() || base64Image;
+       let contentType = 'image/jpeg';
+       if (base64Image.startsWith('data:')) {
+           contentType = base64Image.split(';')[0].split(':')[1];
+       }
+       
+       const buffer = Buffer.from(base64Data, 'base64');
+       
+       await file.save(buffer, {
+           metadata: { contentType }
+       });
+       
+       const signedUrls = await file.getSignedUrl({
+           action: 'read',
+           expires: '01-01-2499'
+       });
+       
+       res.json({ imageUrl: signedUrls[0] });
+    } catch (err: any) {
+       console.error("Failed to upload via API", err);
+       res.status(500).json({ error: err.message });
+    }
+  });
+
   // 1. Payment Webhook Endpoint (e.g. WhatsApp Pay, Cashfree)
   // The bank sends a POST request here when someone scans your dynamic QR and pays
   app.post("/api/payment-webhook/:ownerId", async (req, res) => {
@@ -555,7 +604,7 @@ async function startServer() {
                      const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
                      try {
                          const generatedPdf = await generateInvoicePdf(customer?.name || "Customer", 0, amountPaid);
-                         await sendWhatsAppMessage(settings, mobile, message, generatedPdf, "Payment_Receipt.pdf", false, 'receipt', [customer?.name || "Customer", amountPaid, { isButtonParam: true, value: finalCustomerId }]);
+                         await sendWhatsAppMessage(settings, mobile, message, generatedPdf, "Payment_Receipt.pdf", false, 'receipt', [customer?.name || "Customer", amountPaid, { isButtonParam: true, value: finalCustomerId, index: '0' }]);
                      } catch(e) {
                          console.error("Webhook Auto-Receipt failed", e);
                      }
@@ -707,7 +756,7 @@ async function startServer() {
                  components.push({
                      type: "button",
                      sub_type: "url", // Most common parameter requirement
-                     index: String(i),
+                     index: String(bp.index !== undefined ? bp.index : i),
                      parameters: [{ type: "text", text: String(bp.value) }]
                  });
              });
@@ -1005,7 +1054,7 @@ async function startServer() {
 
                 const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
                 try {
-                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'billing', [customer.name, settings.billingAmount, newBalance, { isButtonParam: true, value: customer.id }]);
+                  await sendWhatsAppMessage(settings, customer.mobileNumber, message, mediaBase64, mediaName, false, 'billing', [customer.name, settings.billingAmount, newBalance, { isButtonParam: true, value: customer.id, index: '0' }]);
                 } catch (e: any) {
                   console.error(`[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`);
                 }
@@ -1081,6 +1130,7 @@ async function startServer() {
       const oldComplaintsSnap = await db.collection('complaints')
         .where('status', '==', 'Resolved')
         .where('createdAt', '<', sixMonthsAgo.toISOString())
+        .limit(50)
         .get();
         
       if (!oldComplaintsSnap.empty) {
@@ -1091,9 +1141,45 @@ async function startServer() {
         await batch.commit();
         console.log(`Auto-deleted ${oldComplaintsSnap.size} old complaints.`);
       }
+
+      // Auto-Delete old payment_receipts (e.g. approved/rejected > 6 months) to save Cloud Storage space
+      const oldReceiptsSnap = await db.collection('payment_receipts')
+        .where('submittedAt', '<', sixMonthsAgo.toISOString())
+        .limit(50)
+        .get();
+      
+      if (!oldReceiptsSnap.empty) {
+        const batch = db.batch();
+        const bucket = admin.storage().bucket();
+        for(const docSnap of oldReceiptsSnap.docs) {
+           const receipt = docSnap.data();
+           batch.delete(docSnap.ref);
+           
+           // If the base64Image is a URL, there's a good chance it's in our storage bucket
+           if (receipt.base64Image && receipt.base64Image.includes('firebasestorage')) {
+               try {
+                   // Extacting path from generated signed URLs or standard URLs is tricky securely
+                   // but we know the path we uploaded to: `receipts/${ownerId}/${id}`
+                   const filePath = `receipts/${receipt.ownerId}/${receipt.id}`;
+                   const file = bucket.file(filePath);
+                   await file.delete();
+               } catch (e: any) {
+                   // File might already be deleted or missing
+                   if (e.code !== 404) {
+                       console.error("Failed to delete old receipt image from storage", e);
+                   }
+               }
+           }
+        }
+        await batch.commit();
+        console.log(`Auto-deleted ${oldReceiptsSnap.size} old payment receipts & freed storage.`);
+      }
+
     } catch (err: any) {
       if (err.code === 5 || (err.message && err.message.includes('NOT_FOUND'))) {
         // Warning already logged by getAdminDb
+      } else if (err.code === 8 || (err.message && err.message.includes('Quota exceeded'))) {
+        console.warn("Auto-delete skipped: Quota exceeded (Free tier limit reached)");
       } else {
         console.error("Failed to auto-delete old complaints", err);
       }
@@ -1130,7 +1216,7 @@ async function startServer() {
   // Send Individual Message API (Proxied for CORS safety)
   app.post("/api/wa/send", async (req, res) => {
     try {
-      const { ownerId, to, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, mediaBase64, mediaName, templateCategory } = req.body;
+      const { ownerId, to, message, apiKey, phoneId, watiAccessToken, watiApiEndpoint, method, mediaBase64, mediaName, templateCategory, templateParams, customTemplateName } = req.body;
       if (!to || !message) return res.status(400).json({ error: "Missing required fields" });
       
       let settings: any = { 
@@ -1167,7 +1253,7 @@ async function startServer() {
         return res.status(400).json({ error: "WhatsApp API not configured in settings" });
       }
       
-      const data = await sendWhatsAppMessage(settings, to, message, mediaBase64, mediaName, false, templateCategory);
+      const data = await sendWhatsAppMessage(settings, to, message, mediaBase64, mediaName, false, templateCategory, templateParams, customTemplateName);
       res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1344,7 +1430,7 @@ async function startServer() {
            paramsArr[0] = testCustName; 
            
            if (errLower.includes('button') || errLower.includes('131008')) {
-               paramsArr.push({ isButtonParam: true, value: testCustId }); // Provide real ID for the portal link
+               paramsArr.push({ isButtonParam: true, value: testCustId, index: '0' }); // Provide real ID for the portal link
            }
 
            const tCat = (templateToTest && templateToTest !== 'hello_world') ? 'custom' : undefined;
@@ -1362,7 +1448,7 @@ async function startServer() {
                   const match2 = err2.message.match(/expected number of params \((\d+)\)/);
                   if (match2 && match2[1]) {
                       const newParams: any[] = Array(parseInt(match2[1])).fill(testCustName);
-                      newParams.push({ isButtonParam: true, value: testCustId });
+                      newParams.push({ isButtonParam: true, value: testCustId, index: '0' });
                       try {
                           await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", true, tCat as any, newParams, tName);
                           handled = true;
@@ -1412,7 +1498,7 @@ async function startServer() {
                  const paramsArr: any[] = Array(numParams).fill(testCustName);
                  paramsArr[0] = testCustName;
                  if (fbLower.includes('button') || fbLower.includes('131008')) {
-                     paramsArr.push({ isButtonParam: true, value: testCustId });
+                     paramsArr.push({ isButtonParam: true, value: testCustId, index: '0' });
                  }
                  try {
                      await sendWhatsAppMessage(settings, testMobile, message, generatedTestPdfBase64, "Test_Invoice.pdf", false, 'broadcast', paramsArr);
@@ -1561,7 +1647,7 @@ async function startServer() {
           sysTrigger = msgLower;
       }
 
-      const intentRes = await routeSystemIntent(sysTrigger, custData, ownerId, adminSettings, hasCustomCommandMatched ? replyText : "", chatbotSettings);
+      const intentRes = await routeSystemIntent(sysTrigger, custData, ownerId, adminSettings, hasCustomCommandMatched ? replyText : "", chatbotSettings, req.get('host'));
       if (intentRes.matched) {
          replyText = intentRes.replyText;
          attachments = intentRes.attachments;
@@ -1749,21 +1835,38 @@ async function startServer() {
                                    const imgRes = await fetch(mediaData.url, {
                                        headers: { 'Authorization': `Bearer ${settings.metaWhatsAppApiKey}` }
                                    });
+                                   const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
                                    const arrayBuf = await imgRes.arrayBuffer();
                                    const buffer = Buffer.from(arrayBuf);
-                                   const base64Image = `data:${imgRes.headers.get('content-type') || 'image/jpeg'};base64,${buffer.toString('base64')}`;
                                    
-                                   // Save to payment_receipts
                                    const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                                    if (dbInstance) {
                                        const receiptId = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+                                       let imageUrl = '';
+                                       
+                                       try {
+                                           const bucket = admin.storage().bucket();
+                                           const file = bucket.file(`receipts/${ownerId}/${receiptId}`);
+                                           await file.save(buffer, {
+                                               metadata: { contentType }
+                                           });
+                                           const signedUrls = await file.getSignedUrl({
+                                               action: 'read',
+                                               expires: '01-01-2499'
+                                           });
+                                           imageUrl = signedUrls[0];
+                                       } catch (e: any) {
+                                           console.error("Storage upload failed, fallback to base64", e);
+                                           imageUrl = `data:${contentType};base64,${buffer.toString('base64')}`;
+                                       }
+                                       
                                        await dbInstance.collection("payment_receipts").doc(receiptId).set({
                                           id: receiptId,
                                           customerId: matchedCustomer.id,
                                           customerName: matchedCustomer.name,
                                           ownerId: ownerId,
                                           amount: matchedCustomer.balance || 0, // Default to their full balance
-                                          base64Image: base64Image,
+                                          base64Image: imageUrl,
                                           status: 'Pending',
                                           submittedAt: new Date().toISOString()
                                        });
@@ -1821,7 +1924,7 @@ async function startServer() {
                           sysTrigger = msgLower;
                        }
 
-                       const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "", chatbotSettings);
+                       const intentRes = await routeSystemIntent(sysTrigger, matchedCustomer, ownerId, settings, hasCustomCommandMatched ? responseText : "", chatbotSettings, req.get('host'));
                        
                        let attachmentsToPass: any[] = [];
                        if (intentRes.matched) {
@@ -1832,9 +1935,27 @@ async function startServer() {
                            handled = true;
                        } else if (hasCustomCommandMatched) {
                            handled = true;
-                       } else if (msgLower.startsWith("complaint:")) {
-                          const complaintText = msgBody.substring(10).trim();
-                          if (complaintText.length > 5) {
+                       } else if (msgLower.startsWith("complaint") || msgLower.startsWith("issue")) {
+                          // Extract content after "complaint" or "complaint:"
+                          let complaintText = msgBody;
+                          if (msgLower.startsWith("complaint:")) {
+                              complaintText = msgBody.substring(10).trim();
+                          } else if (msgLower.startsWith("complaint ")) {
+                              complaintText = msgBody.substring(10).trim();
+                          } else if (msgLower.startsWith("issue ")) {
+                              complaintText = msgBody.substring(6).trim();
+                          } else if (msgLower.startsWith("issue:")) {
+                              complaintText = msgBody.substring(6).trim();
+                          }
+                          
+                          // Strip quotes if they provided them
+                          if (complaintText.startsWith('"') && complaintText.endsWith('"')) {
+                              complaintText = complaintText.substring(1, complaintText.length - 1);
+                          } else if (complaintText.startsWith("'") && complaintText.endsWith("'")) {
+                              complaintText = complaintText.substring(1, complaintText.length - 1);
+                          }
+                          
+                          if (complaintText.length > 5 && complaintText.toLowerCase() !== "complaint" && complaintText.toLowerCase() !== "issue") {
                              const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
                              await saveComplaintData(complaintId, {
                                  id: complaintId,
@@ -1853,7 +1974,7 @@ async function startServer() {
                              });
                              responseText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
                           } else {
-                             responseText = `Please provide more details for your complaint. Start with "COMPLAINT:"`;
+                             responseText = `Please provide more details. Try typing "Complaint " followed by your issue in quotes. (Example: Complaint "my meter is broken")`;
                           }
                           handled = true;
                        } else {
@@ -1951,6 +2072,11 @@ async function startServer() {
 
   app.post("/api/wweb/send", (req, res) => {
     res.status(400).json({ error: 'WhatsApp Web is disabled on this server. Please use Meta Official API or WATI API.' });
+  });
+
+  // Portal Short Links format redirect
+  app.get("/p/:portalId", (req, res) => {
+    res.redirect(`/?portal=${req.params.portalId}`);
   });
 
   // Vite middleware for development (Serves the App)

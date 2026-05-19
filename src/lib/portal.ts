@@ -1,5 +1,6 @@
 import { collection, doc, setDoc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../firebase';
+import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+import { db, auth, storage } from '../firebase';
 import { Customer, AppSettings } from './db';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -55,7 +56,7 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
   await setDoc(doc(db, 'public_portals', portalId), portalData);
   
   // Return the absolute link to the portal
-  return `${window.location.origin}/?portal=${portalId}`;
+  return `${window.location.origin}/p/${portalId}`;
 };
 
 export const getPortalData = async (portalId: string): Promise<PublicPortalData | null> => {
@@ -68,13 +69,36 @@ export const getPortalData = async (portalId: string): Promise<PublicPortalData 
 
 export const submitPaymentReceipt = async (portalData: PublicPortalData, base64Image: string) => {
   const id = uuidv4();
+  let imageUrl = base64Image;
+
+  try {
+    const isBase64DataUrl = base64Image.startsWith('data:');
+    if (isBase64DataUrl) {
+        const response = await fetch('/api/upload-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ownerId: portalData.ownerId,
+                receiptId: id,
+                base64Image: base64Image
+            })
+        });
+        const data = await response.json();
+        if (data.imageUrl) {
+            imageUrl = data.imageUrl;
+        }
+    }
+  } catch (err) {
+    console.error("Failed to upload via API proxy, saving base64 directly to database.", err);
+  }
+
   await setDoc(doc(db, 'payment_receipts', id), {
     id,
     portalId: portalData.portalId,
     customerId: portalData.customerId,
     ownerId: portalData.ownerId,
     customerName: portalData.customerName,
-    base64Image,
+    base64Image: imageUrl,
     submittedAt: new Date().toISOString(),
     status: 'Pending',
     amount: portalData.balance

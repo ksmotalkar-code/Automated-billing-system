@@ -19,18 +19,18 @@ export function ChatbotView() {
     const fetchSettings = async () => {
       const data = await getChatbotSettings();
       const defaultSystemCommands: ChatbotCommand[] = [
-        { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "system_dl_bill", response: "Here is your PDF bill.", isActive: true },
-        { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "system_qr_pay", response: "Scan this UPI QR code to make your payment.", isActive: true },
-        { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "system_bill", response: "Your current bill status is computed live.", isActive: true },
-        { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "system_balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
-        { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "system_complaint", response: "Please reply with your complaint directly by starting with \"COMPLAINT:\".", isActive: true },
-        { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "system_report", response: "Let me find your deep detail report.", isActive: true },
-        { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "system_water_quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
-        { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "system_supply_time", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
-        { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "system_contact", response: "You can contact the Panchayat office at 1800-123-4567.", isActive: true },
-        { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "system_notify", response: "Your recent notifications are available in the portal dashboard.", isActive: true },
-        { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "system_usage", response: "Your usage history is currently being computed.", isActive: true },
-        { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "system_maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
+        { id: "sysdlbill", buttonLabel: "📄 Download Bill PDF", triggerWord: "Download Bill", response: "Here is your PDF bill.", isActive: true },
+        { id: "sysqrpay", buttonLabel: "💰 QR For Payment", triggerWord: "Pay Bill", response: "Scan this UPI QR code to make your payment.", isActive: true },
+        { id: "sysbill", buttonLabel: "📄 See My Bill", triggerWord: "My Bill", response: "Your current bill status is computed live.", isActive: true },
+        { id: "sysbalance", buttonLabel: "💳 View Balance", triggerWord: "Check Balance", response: "Your total remaining balance is Rs. {{balance}}.", isActive: true },
+        { id: "syscomplaint", buttonLabel: "🛠️ Register Complaint", triggerWord: "Complaint", response: "Please describe your complaint in the next message.", isActive: true },
+        { id: "sysreport", buttonLabel: "📊 Deep Detail Report", triggerWord: "Deep Report", response: "Let me find your deep detail report.", isActive: true },
+        { id: "syswater", buttonLabel: "💧 Water Quality Status", triggerWord: "Water Quality", response: "Our water quality currently meets all regulatory standards. Safe for drinking!", isActive: true },
+        { id: "syssupply", buttonLabel: "🕒 Supply Timings", triggerWord: "Supply Timings", response: "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.", isActive: true },
+        { id: "syscontact", buttonLabel: "📞 Contact Us", triggerWord: "Contact", response: "You can contact the Panchayat office at 1800-123-4567.", isActive: true },
+        { id: "sysnotify", buttonLabel: "🔔 Notify History", triggerWord: "Notifications", response: "Your recent notifications are available in the portal dashboard.", isActive: true },
+        { id: "sysusage", buttonLabel: "📝 Usage History", triggerWord: "Usage", response: "Your usage history is currently being computed.", isActive: true },
+        { id: "sysmaint", buttonLabel: "⚠️ Maintenance Alerts", triggerWord: "Maintenance", response: "No scheduled maintenance for your zone currently.", isActive: true }
       ];
 
       let mergedCommands = [];
@@ -39,9 +39,14 @@ export function ChatbotView() {
       }
       
       for (const sys of defaultSystemCommands) {
-         if (!mergedCommands.find(c => c.triggerWord === sys.triggerWord)) {
-            mergedCommands.push(sys);
-         }
+        const existingIndex = mergedCommands.findIndex(c => c.id === sys.id);
+        if (existingIndex !== -1) {
+          // If it's an old system command (technical trigger), update it to the new friendly one
+          // We only update it if it's the specific system ID
+          mergedCommands[existingIndex] = { ...mergedCommands[existingIndex], triggerWord: sys.triggerWord, buttonLabel: sys.buttonLabel };
+        } else {
+          mergedCommands.push(sys);
+        }
       }
 
       setSettings({
