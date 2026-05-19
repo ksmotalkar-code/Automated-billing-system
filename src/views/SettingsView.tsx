@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List } from "lucide-react";
 import { motion } from "motion/react";
 import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -15,7 +15,7 @@ import { CommandManagerWrapper } from '../components/CommandManager';
 export function SettingsView() {
   const { t } = useTranslation();
   const { settings: contextSettings } = useData();
-  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway' | 'broadcast'>('billing');
+  const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway' | 'broadcast' | 'automation'>('billing');
   const [settings, setSettings] = useState<AppSettings>(contextSettings || {
     upiQrCodeImage: null,
     billingAmount: 200,
@@ -23,6 +23,8 @@ export function SettingsView() {
     penaltyAmount: 40,
     penaltyDays: 10,
     defaultBillingDate: '1',
+    cronSchedule: '0 0 * * *',
+    customAutomationParams: [],
     metaWhatsAppApiKey: '',
     metaWhatsAppPhoneNumberId: '',
     metaWhatsAppVerifyToken: '',
@@ -432,6 +434,7 @@ export function SettingsView() {
       <div className="flex p-1.5 neu-pressed rounded-2xl flex-nowrap overflow-x-auto custom-scrollbar no-scrollbar gap-1">
         {[
           { id: 'billing', icon: DollarSign, label: 'Cycles', color: 'text-blue-600' },
+          { id: 'automation', icon: Cpu, label: 'Automation', color: 'text-amber-600' },
           { id: 'whatsapp', icon: MessageCircle, label: 'WhatsApp', color: 'text-emerald-600' },
           { id: 'gateway', icon: CreditCard, label: 'Payments', color: 'text-indigo-600' },
           { id: 'broadcast', icon: Globe, label: 'Broadcast', color: 'text-purple-600' },
@@ -810,7 +813,7 @@ export function SettingsView() {
         </motion.div>
       )}
 
-      {activeTab === 'billing' && (
+      {activeTab === 'automation' && (
         <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-none border-t border-white/5 overflow-hidden">
             <CardHeader className="flex flex-row items-center gap-4 pb-4 border-b border-[var(--shadow-dark)]">
@@ -888,6 +891,118 @@ export function SettingsView() {
             </CardContent>
           </Card>
           
+          <Card className="border-none border-t border-white/5 overflow-hidden mt-6">
+            <CardHeader className="flex flex-row items-center gap-4 pb-4 border-b border-[var(--shadow-dark)]">
+              <div className="p-3 neu-pressed rounded-2xl text-rose-600">
+                <List className="w-6 h-6" />
+              </div>
+              <div>
+                <CardTitle className="text-sm font-black uppercase tracking-widest text-rose-600">Advanced Automation Parameters</CardTitle>
+                <p className="text-[10px] neu-text-muted font-bold uppercase tracking-tighter opacity-70">Custom Environment Variables & Overrides</p>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-8">
+              <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-xs text-rose-800 shadow-inner flex gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0" />
+                <div>
+                  <strong className="block mb-1">WARNING: Core System Constraints</strong>
+                  Modify these parameters only if you understand the underlying automation behavior. These values override defaults used by automated batch processes, custom workflows, or cron cycles. Invalid parameters securely disable execution.
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Daemon Cron Schedule</label>
+                    <div className="flex bg-white rounded-2xl neu-pressed overflow-hidden shadow-inner px-2 py-1 relative">
+                       <Clock className="w-4 h-4 text-rose-600 absolute left-4 top-1/2 -translate-y-1/2" />
+                       <input
+                         type="text"
+                         value={settings.cronSchedule || '0 0 * * *'}
+                         onChange={(e) => setSettings({ ...settings, cronSchedule: e.target.value })}
+                         placeholder="0 0 * * *"
+                         className="w-full bg-transparent px-8 py-3 outline-none text-xs font-black uppercase tracking-wider text-rose-600 font-mono"
+                       />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 pb-2">
+                  <h4 className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2 mb-4">
+                    Dynamic Parameter Registry
+                    <button 
+                      onClick={() => setSettings({ ...settings, customAutomationParams: [...(settings.customAutomationParams || []), { id: uuidv4(), key: '', value: '', type: 'string' }] })}
+                      className="ml-auto flex items-center gap-1 bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-xl border border-emerald-200 text-[9px] hover:bg-emerald-100 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" /> ADD PARAMETER
+                    </button>
+                  </h4>
+
+                  {(!settings.customAutomationParams || settings.customAutomationParams.length === 0) ? (
+                    <div className="p-8 text-center text-xs neu-text-muted border-2 border-dashed border-[var(--shadow-dark)] rounded-2xl">
+                      No custom parameters defined. Click 'Add Parameter' to inject custom variables.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {settings.customAutomationParams.map((param, index) => (
+                        <div key={param.id} className="flex flex-col sm:flex-row gap-2 items-start sm:items-center bg-white p-3 rounded-2xl shadow-sm border border-[var(--shadow-dark)]">
+                          <input
+                            type="text"
+                            placeholder="KEY_NAME"
+                            value={param.key}
+                            onChange={(e) => {
+                              const newParams = [...settings.customAutomationParams!];
+                              newParams[index].key = e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+                              setSettings({ ...settings, customAutomationParams: newParams });
+                            }}
+                            className="bg-transparent border border-[var(--shadow-dark)] rounded-xl px-3 py-2 text-xs font-mono font-bold w-full sm:w-1/3 outline-none focus:border-rose-300"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Value"
+                            value={param.value}
+                            onChange={(e) => {
+                              const newParams = [...settings.customAutomationParams!];
+                              newParams[index].value = e.target.value;
+                              setSettings({ ...settings, customAutomationParams: newParams });
+                            }}
+                            className="bg-transparent border border-[var(--shadow-dark)] rounded-xl px-3 py-2 text-xs font-medium w-full sm:w-1/2 outline-none focus:border-rose-300"
+                          />
+                          <select
+                            value={param.type}
+                            onChange={(e) => {
+                              const newParams = [...settings.customAutomationParams!];
+                              newParams[index].type = e.target.value;
+                              setSettings({ ...settings, customAutomationParams: newParams });
+                            }}
+                            className="bg-transparent border border-[var(--shadow-dark)] rounded-xl px-2 py-2 text-[10px] uppercase font-black w-full sm:w-auto outline-none"
+                          >
+                            <option value="string">STRING</option>
+                            <option value="number">NUMBER</option>
+                            <option value="boolean">BOOLEAN</option>
+                          </select>
+                          <button
+                            onClick={() => {
+                              const newParams = settings.customAutomationParams!.filter(p => p.id !== param.id);
+                              setSettings({ ...settings, customAutomationParams: newParams });
+                            }}
+                            className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors sm:ml-auto w-full sm:w-auto flex justify-center"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
+      {activeTab === 'billing' && (
+        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="border-none border-t border-white/5 overflow-hidden">
             <CardHeader className="flex flex-row items-center gap-4 pb-4 border-b border-[var(--shadow-dark)]">
               <div className="p-3 neu-pressed rounded-2xl text-emerald-600">

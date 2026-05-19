@@ -61,7 +61,10 @@ export function PortalView() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const portalId = new URLSearchParams(window.location.search).get('portal');
+  let portalId = new URLSearchParams(window.location.search).get('portal');
+  if (portalId === 'true') {
+    portalId = new URLSearchParams(window.location.search).get('customerId');
+  }
 
   useEffect(() => {
     const fetchPortal = async () => {

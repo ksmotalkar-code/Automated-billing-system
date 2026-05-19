@@ -193,6 +193,13 @@ export interface ChatbotCommand {
   isActive: boolean;
 }
 
+export interface CustomAutomationParam {
+  id: string;
+  key: string;
+  value: string;
+  type: string;
+}
+
 export interface AppSettings {
   upiQrCodeImage: string | null;
   billingAmount: number;
@@ -202,6 +209,8 @@ export interface AppSettings {
   escalationDays?: number;
   autoSuspend?: boolean;
   defaultBillingDate?: string;
+  cronSchedule?: string; // e.g. "0 0 * * *"
+  customAutomationParams?: CustomAutomationParam[];
   nextBillingDate?: string;
   lastBillingDate?: string;
   lastPenaltyDate?: string;

@@ -2518,10 +2518,22 @@ async function startServer() {
       const portalSnap = await getDocClient(
         docClient(clientDb, "public_portals", portalId),
       );
-      if (!portalSnap.exists()) {
+      let portalData = portalSnap.exists() ? (portalSnap.data() as any) : null;
+      
+      if (!portalData) {
+          const custSnap = await getDocClient(docClient(clientDb, "customers", portalId));
+          if (custSnap.exists()) {
+              const c = custSnap.data() as any;
+              portalData = {
+                  ownerId: c.ownerId,
+                  customerId: portalId
+              };
+          }
+      }
+
+      if (!portalData) {
         return res.status(404).json({ error: "Portal not found" });
       }
-      const portalData = portalSnap.data() as any;
       const ownerId = portalData.ownerId;
       const customerId = portalData.customerId;
 
