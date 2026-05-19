@@ -239,7 +239,7 @@ export function DataUploadView() {
     } catch (err) {
       console.error(err);
       if (err instanceof Error && (err.message.includes('Quota') || err.message.includes('quota'))) {
-        setStatus({ type: 'error', message: 'Quota limit exceeded. Bulk upload paused to protect your database. Wait for 24 hours or upgrade to a paid plan.' });
+        setStatus({ type: 'error', message: 'Quota limit exceeded. Bulk upload paused to protect your database. Please upgrade your Firebase billing plan.' });
       } else {
         setStatus({ type: 'error', message: 'Failed to save the records. Please check console for details.' });
       }

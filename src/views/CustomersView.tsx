@@ -458,7 +458,7 @@ export function CustomersView() {
       }
     }).catch((err: any) => {
       if (err.message && err.message.includes('Quota')) {
-        showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
+        showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
       } else {
         console.error("Failed to add customer to remote server:", err);
       }
@@ -493,7 +493,7 @@ export function CustomersView() {
       setIsSavingUser(true);
       updateCustomer({...editingCustomer, status: finalStatus}).catch((err: any) => {
         if (err.message && err.message.includes('Quota')) {
-          showAlert("Database Quota Exceeded", "Your Firebase free tier limit has been reached. Please try again tomorrow or upgrade your Firebase plan. Read more: https://console.firebase.google.com");
+          showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
         } else {
           console.error("Failed to update customer to remote server:", err);
         }

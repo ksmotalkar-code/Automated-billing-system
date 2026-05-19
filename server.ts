@@ -1850,7 +1850,7 @@ async function startServer() {
         (err.message && err.message.includes("Quota exceeded"))
       ) {
         console.warn(
-          "Auto-delete skipped: Quota exceeded (Free tier limit reached)",
+          "Auto-delete skipped: Quota exceeded (Database limit reached)",
         );
       } else {
         console.error("Failed to auto-delete old complaints", err);

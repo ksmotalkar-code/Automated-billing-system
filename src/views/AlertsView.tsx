@@ -173,7 +173,7 @@ export function AlertsView() {
                      batch = writeBatch(db); // Create a new batch after commit
                  } catch (e: any) {
                      if (e.code === 'resource-exhausted') {
-                         errors.push("Quota Exceeded: Reached Firebase free limits.");
+                         errors.push("Quota Exceeded: Reached Firebase database limits. Please check billing.");
                          break;
                      }
                  }
@@ -190,7 +190,7 @@ export function AlertsView() {
             try {
                 await batch.commit();
             } catch (e: any) {
-                if (e.code === 'resource-exhausted') errors.push("Quota Exceeded: Reached Firebase free limits.");
+                if (e.code === 'resource-exhausted') errors.push("Quota Exceeded: Reached Firebase database limits. Please check billing.");
             }
         }
         
