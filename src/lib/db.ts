@@ -63,7 +63,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 export const isQuotaExceeded = () => {
-  return false; // User has activated pay-as-you-go, no longer lock them out artificially.
+  const expiry = localStorage.getItem('firestore_quota_expiry');
+  const enableLock = localStorage.getItem('enableFreeTierLock') !== 'false';
+  if (enableLock && expiry && Date.now() < parseInt(expiry)) {
+    return true; // Limit exceeded and lock is enabled
+  }
+  return false;
 };
 
 export interface Customer {
@@ -217,6 +222,7 @@ export interface AppSettings {
   preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
   enableAutosave?: boolean;
+  enableFreeTierLock?: boolean;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
   automation?: AutomationSettings;

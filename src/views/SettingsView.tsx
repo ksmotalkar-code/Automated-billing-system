@@ -29,6 +29,7 @@ export function SettingsView() {
     paymentGatewayKey: '',
     paymentGatewaySecret: '',
     enableAutosave: false,
+    enableFreeTierLock: true,
     automation: {
       billingLifecycle: true,
       ruleBased: true,
@@ -1107,6 +1108,26 @@ export function SettingsView() {
                     />
                     <div className="w-full h-full rounded-full bg-[var(--shadow-dark)] peer-checked:bg-emerald-600 transition-colors duration-300 shadow-inner" />
                     <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-300 ${settings.enableAutosave ? 'translate-x-7' : 'translate-x-0'}`} />
+                  </div>
+                </label>
+
+                <label className="flex items-center justify-between p-6 neu-pressed rounded-2xl cursor-pointer hover:bg-black/5 transition-all mt-4 border border-rose-500/20">
+                  <div className="flex flex-col pr-8">
+                    <span className="text-[11px] font-black uppercase tracking-widest text-[#1e1e2d]">Free Tier Database Lock</span>
+                    <p className="text-[10px] neu-text-muted font-bold block mt-1 uppercase tracking-tighter opacity-60">Prevent background usage if quota is exhausted (lock background events, show warning)</p>
+                  </div>
+                  <div className="relative inline-block w-14 h-7 shrink-0">
+                    <input 
+                      type="checkbox" 
+                      className="sr-only peer" 
+                      checked={settings.enableFreeTierLock !== false} 
+                      onChange={(e) => {
+                        setSettings({ ...settings, enableFreeTierLock: e.target.checked });
+                        localStorage.setItem('enableFreeTierLock', String(e.target.checked));
+                      }} 
+                    />
+                    <div className="w-full h-full rounded-full bg-[var(--shadow-dark)] peer-checked:bg-rose-600 transition-colors duration-300 shadow-inner" />
+                    <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-300 ${settings.enableFreeTierLock !== false ? 'translate-x-7' : 'translate-x-0'}`} />
                   </div>
                 </label>
               </div>

@@ -156,6 +156,17 @@ export default function App() {
     document.documentElement.setAttribute("data-ui", uiStyle);
   }, [theme, uiStyle]);
 
+  const [quotaExceededFlag, setQuotaExceededFlag] = useState(false);
+  useEffect(() => {
+    const checkQuota = async () => {
+      const { isQuotaExceeded } = await import('./lib/db');
+      setQuotaExceededFlag(isQuotaExceeded());
+    };
+    checkQuota();
+    const interval = setInterval(checkQuota, 30000); // Check every 30s
+    return () => clearInterval(interval);
+  }, []);
+
   // Auto-collapse sidebar on smaller screens
   useEffect(() => {
     const handleResize = () => {
@@ -427,6 +438,27 @@ export default function App() {
         </div>
       </div>
       <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full min-w-0">
+        {quotaExceededFlag && (
+          <motion.div 
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4 text-rose-800 shadow-lg shadow-rose-500/10"
+          >
+            <div className="p-2 bg-rose-100 rounded-xl">
+              <AlertTriangle className="w-6 h-6 text-rose-600" />
+            </div>
+            <div className="flex-1 text-center sm:text-left">
+              <p className="font-bold">Database Quota Exceeded & Locked (Free Tier)</p>
+              <p className="text-sm opacity-90 leading-tight mt-1">You've reached your free tier Firebase limit. Background cycles and heavy actions are temporarily locked to protect you. You can turn this lock off in Settings {'>'} Danger Zone.</p>
+            </div>
+            <button 
+              onClick={() => window.open('https://console.firebase.google.com/project/_/firestore/usage', '_blank')}
+              className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700 transition-colors whitespace-nowrap"
+            >
+              Check Usage
+            </button>
+          </motion.div>
+        )}
         <div className="flex justify-between items-center mb-4">
           <button 
             className="md:hidden p-2 neu-flat rounded-xl"
