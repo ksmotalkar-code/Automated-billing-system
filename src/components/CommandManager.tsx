@@ -3,6 +3,7 @@ import { Bot, Plus, Trash2, Activity, Save, RefreshCw } from 'lucide-react';
 import { ChatbotSettings, ChatbotCommand, saveChatbotSettings } from '../lib/db';
 import { v4 as uuidv4 } from 'uuid';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 
 interface CommandManagerProps {
   settings: ChatbotSettings;
@@ -58,6 +59,7 @@ export function CommandManagerWrapper({ settings, onUpdate, isCompact, fallbackU
 function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) {
   const [commands, setCommands] = useState<ChatbotCommand[]>(settings?.commands || []);
   const [saving, setSaving] = useState(false);
+  const { t } = useTranslation();
 
   // Sync prop changes
   React.useEffect(() => {
@@ -117,18 +119,18 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
 
   const handleAddDefaults = () => {
     const defaults: ChatbotCommand[] = [
-      { id: 'sysdlbill', buttonLabel: '📄 Download Bill PDF', triggerWord: 'Download Bill', response: 'Here is your PDF bill.', isActive: true },
-      { id: 'sysqrpay', buttonLabel: '💰 QR For Payment', triggerWord: 'Pay Bill', response: 'Scan this UPI QR code to make your payment.', isActive: true },
-      { id: 'sysbill', buttonLabel: '📄 See My Bill', triggerWord: 'My Bill', response: 'Your current bill status is computed live.', isActive: true },
-      { id: 'sysbalance', buttonLabel: '💳 View Balance', triggerWord: 'Check Balance', response: 'Your total remaining balance is Rs. {{balance}}.', isActive: true },
-      { id: 'syscomplaint', buttonLabel: '🛠️ Register Complaint', triggerWord: 'Complaint', response: 'Please describe your complaint in the next message.', isActive: true },
-      { id: 'sysreport', buttonLabel: '📊 Deep Detail Report', triggerWord: 'Deep Report', response: 'Let me find your deep detail report.', isActive: true },
-      { id: 'syswater', buttonLabel: '💧 Water Quality Status', triggerWord: 'Water Quality', response: 'Our water quality currently meets all regulatory standards. Safe for drinking!', isActive: true },
-      { id: 'syssupply', buttonLabel: '🕒 Supply Timings', triggerWord: 'Supply Timings', response: 'Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.', isActive: true },
-      { id: 'syscontact', buttonLabel: '📞 Contact Us', triggerWord: 'Contact', response: 'You can contact the Panchayat office at 1800-123-4567.', isActive: true },
-      { id: 'sysnotify', buttonLabel: '🔔 Notify History', triggerWord: 'Notifications', response: 'Your recent notifications are available in the portal dashboard.', isActive: true },
-      { id: 'sysusage', buttonLabel: '📝 Usage History', triggerWord: 'Usage', response: 'Your usage history is currently being computed.', isActive: true },
-      { id: 'sysmaint', buttonLabel: '⚠️ Maintenance Alerts', triggerWord: 'Maintenance', response: 'No scheduled maintenance for your zone currently.', isActive: true },
+      { id: 'sysdlbill', buttonLabel: `📄 ${t('Download Bill')}`, triggerWord: t('Download Bill'), response: t('Here is your PDF bill.'), isActive: true },
+      { id: 'sysqrpay', buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Scan this UPI QR code to make your payment.'), isActive: true },
+      { id: 'sysbill', buttonLabel: `📄 ${t('My Bill')}`, triggerWord: t('My Bill'), response: t('Your current bill status is computed live.'), isActive: true },
+      { id: 'sysbalance', buttonLabel: `💳 ${t('Check Balance')}`, triggerWord: t('Check Balance'), response: t('Your total remaining balance is Rs. {{balance}}.'), isActive: true },
+      { id: 'syscomplaint', buttonLabel: `🛠️ ${t('Complaint')}`, triggerWord: t('Complaint'), response: t('Please describe your complaint in the next message.'), isActive: true },
+      { id: 'sysreport', buttonLabel: `📊 ${t('Deep Report')}`, triggerWord: t('Deep Report'), response: t('Let me find your deep detail report.'), isActive: true },
+      { id: 'syswater', buttonLabel: `💧 ${t('Water Quality')}`, triggerWord: t('Water Quality'), response: t('Our water quality currently meets all regulatory standards. Safe for drinking!'), isActive: true },
+      { id: 'syssupply', buttonLabel: `🕒 ${t('Supply Timings')}`, triggerWord: t('Supply Timings'), response: t('Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.'), isActive: true },
+      { id: 'syscontact', buttonLabel: `📞 ${t('Contact')}`, triggerWord: t('Contact'), response: t('You can contact the Panchayat office at 1800-123-4567.'), isActive: true },
+      { id: 'sysnotify', buttonLabel: `🔔 ${t('Notifications')}`, triggerWord: t('Notifications'), response: t('Your recent notifications are available in the portal dashboard.'), isActive: true },
+      { id: 'sysusage', buttonLabel: `📝 ${t('Usage')}`, triggerWord: t('Usage'), response: t('Your usage history is currently being computed.'), isActive: true },
+      { id: 'sysmaint', buttonLabel: `⚠️ ${t('Maintenance')}`, triggerWord: t('Maintenance'), response: t('No scheduled maintenance for your zone currently.'), isActive: true },
       { id: 'syslink', buttonLabel: '🔗 Portal Link', triggerWord: 'Link', response: 'Here is your portal link.', isActive: true },
     ];
     
@@ -240,6 +242,28 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
                          onBlur={handleBlur}
                          rows={2}
                          className="w-full px-3 py-2 text-xs font-medium neu-pressed rounded-lg outline-none focus:ring-2 focus:ring-[var(--accent)]/30 resize-none bg-transparent"
+                       />
+                    </div>
+                    <div className="flex flex-col gap-1 md:col-span-1">
+                       <label className="text-[8px] font-black uppercase tracking-widest text-[var(--accent)]/60">Media URL (Optional)</label>
+                       <input 
+                         type="text" 
+                         value={cmd.mediaUrl || ''} 
+                         onChange={(e) => handleUpdateCommand(cmd.id, { mediaUrl: e.target.value })}
+                         onBlur={handleBlur}
+                         placeholder="https://example.com/file.pdf"
+                         className="w-full px-3 py-2 text-xs font-mono font-medium neu-pressed rounded-lg outline-none focus:ring-2 focus:ring-[var(--accent)]/30 bg-transparent"
+                       />
+                    </div>
+                    <div className="flex flex-col gap-1 md:col-span-1">
+                       <label className="text-[8px] font-black uppercase tracking-widest text-[var(--accent)]/60">Media Name (Optional)</label>
+                       <input 
+                         type="text" 
+                         value={cmd.mediaName || ''} 
+                         onChange={(e) => handleUpdateCommand(cmd.id, { mediaName: e.target.value })}
+                         onBlur={handleBlur}
+                         placeholder="Invoice.pdf"
+                         className="w-full px-3 py-2 text-xs font-bold uppercase neu-pressed rounded-lg outline-none focus:ring-2 focus:ring-[var(--accent)]/30 bg-transparent"
                        />
                     </div>
                   </div>

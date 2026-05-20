@@ -429,57 +429,143 @@ function processDynamicResponse(response: string, userCustData: any): string {
   return r;
 }
 
+const SERVER_TRANSLATIONS: any = {
+  en: {
+    invoiceMsg: "Here is your invoice. Your outstanding balance is Rs. {{amt}}.",
+    paymentSuccess: "Dear {{name}}, your payment of Rs. {{amt}} was received! Your balance is now 0. Thank you!",
+    receipt: "PAYMENT RECEIPT",
+    invoice: "INVOICE / BILL DETAILS",
+    name: "Name",
+    amountPaidLabel: "Amount Paid",
+    balanceLabel: "Outstanding Balance",
+    date: "Date",
+    thankYou: "Thank you for using SmartBilling.",
+    payBillMsg: "Scan the attached UPI QR code to pay your bill.",
+    noQrCodeMsg: "Sorry, no UPI QR code has been set by the administration yet."
+  },
+  hi: {
+    invoiceMsg: "यहाँ आपका चालान है। आपकी बकाया राशि रु. {{amt}} है।",
+    paymentSuccess: "प्रिय {{name}}, आपका रु. {{amt}} का भुगतान प्राप्त हुआ! आपका बैलेंस अब 0 है। धन्यवाद!",
+    receipt: "PAYMENT RECEIPT (भुगतान रसीद)",
+    invoice: "INVOICE (चालान विवरण)",
+    name: "Name (नाम)",
+    amountPaidLabel: "Amount Paid (भुगतान राशि)",
+    balanceLabel: "Balance (बकाया)",
+    date: "Date (दिनांक)",
+    thankYou: "Thank you for using SmartBilling. धन्यवाद।",
+    payBillMsg: "अपने बिल का भुगतान करने के लिए संलग्न UPI QR कोड को स्कैन करें।",
+    noQrCodeMsg: "क्षमा करें, प्रशासन द्वारा अभी तक कोई UPI QR कोड सेट नहीं किया गया है।"
+  },
+  pa: {
+    invoiceMsg: "ਇੱਥੇ ਤੁਹਾਡਾ ਇਨਵੌਇਸ ਹੈ। ਤੁਹਾਡੀ ਬਾਕੀ ਰਕਮ ਰੁਪਏ {{amt}} ਹੈ।",
+    paymentSuccess: "ਪਿਆਰੇ {{name}}, ਤੁਹਾਡਾ ਰੁਪਏ {{amt}} ਦਾ ਭੁਗਤਾਨ ਪ੍ਰਾਪਤ ਹੋਇਆ! ਤੁਹਾਡਾ ਬਾਕੀ ਹੁਣ 0 ਹੈ। ਧੰਨਵਾਦ!",
+    receipt: "PAYMENT RECEIPT (ਭੁਗਤਾਨ ਰਸੀਦ)",
+    invoice: "INVOICE (ਬਿੱਲ ਵੇਰਵੇ)",
+    name: "Name (ਨਾਮ)",
+    amountPaidLabel: "Amount Paid (ਭੁਗਤਾਨ)",
+    balanceLabel: "Balance (ਬਾਕੀ)",
+    date: "Date (ਮਿਤੀ)",
+    thankYou: "Thank you for using SmartBilling. ਧੰਨਵਾਦ।",
+    payBillMsg: "ਆਪਣੇ ਬਿੱਲ ਦਾ ਭੁਗਤਾਨ ਕਰਨ ਲਈ ਨੱਥੀ UPI QR ਕੋਡ ਨੂੰ ਸਕੈਨ ਕਰੋ।",
+    noQrCodeMsg: "ਮਾਫ ਕਰਨਾ, ਪ੍ਰਸ਼ਾਸਨ ਦੁਆਰਾ ਅਜੇ ਤੱਕ ਕੋਈ UPI QR ਕੋਡ ਸੈੱਟ ਨਹੀਂ ਕੀਤਾ ਗਿਆ ਹੈ।"
+  }
+};
+
+function getSvrT(lang: string = 'en', key: string, params: any = {}) {
+  const translations = SERVER_TRANSLATIONS[lang] || SERVER_TRANSLATIONS['en'];
+  let text = translations[key] || SERVER_TRANSLATIONS['en'][key] || key;
+  Object.keys(params).forEach(k => {
+    text = text.replace(`{{${k}}}`, params[k]);
+  });
+  return text;
+}
+
 async function generateInvoicePdf(
   name: string,
   balance: number,
   amountPaid?: number,
+  templateImage?: string | null,
+  lang: string = 'en'
 ): Promise<string> {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([600, 400]);
+  const page = pdfDoc.addPage([600, 480]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  if (templateImage) {
+    try {
+      let image;
+      const base64Data = templateImage.split(',')[1] || templateImage;
+      if (templateImage.includes('png')) {
+        image = await pdfDoc.embedPng(base64Data);
+      } else {
+        image = await pdfDoc.embedJpg(base64Data);
+      }
+      
+      const dims = image.scaleToFit(600, 480);
+      page.drawImage(image, {
+        x: page.getWidth() / 2 - dims.width / 2,
+        y: page.getHeight() / 2 - dims.height / 2,
+        width: dims.width,
+        height: dims.height,
+        opacity: 0.3, // Faint background so text is readable
+      });
+    } catch (e) {
+      console.error("Failed to embed template image", e);
+    }
+  }
+
+  const t = (k: string, p?: any) => getSvrT(lang, k, p);
 
   if (amountPaid !== undefined && balance === 0) {
-    page.drawText(`PAYMENT RECEIPT`, {
+    page.drawText(t('receipt'), {
       x: 50,
-      y: 350,
+      y: 400,
       size: 20,
+      font: fontBold,
       color: rgb(0.1, 0.6, 0.2),
     });
-    page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
-    page.drawText(`Amount Paid: Rs. ${amountPaid}`, {
+    page.drawText(`${t('name')}: ${name}`, { x: 50, y: 340, size: 14, font });
+    page.drawText(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, {
       x: 50,
-      y: 270,
+      y: 310,
       size: 14,
+      font,
       color: rgb(0.1, 0.6, 0.2),
     });
-    page.drawText(`Outstanding Balance: Rs. 0`, { x: 50, y: 240, size: 14 });
+    page.drawText(`${t('balanceLabel')}: Rs. 0`, { x: 50, y: 280, size: 14, font });
   } else {
-    page.drawText(`INVOICE / BILL DETAILS`, { x: 50, y: 350, size: 20 });
-    page.drawText(`Name: ${name}`, { x: 50, y: 300, size: 14 });
-    page.drawText(`Outstanding Balance: Rs. ${balance}`, {
+    page.drawText(t('invoice'), { x: 50, y: 400, size: 20, font: fontBold });
+    page.drawText(`${t('name')}: ${name}`, { x: 50, y: 340, size: 14, font });
+    page.drawText(`${t('balanceLabel')}: Rs. ${balance}`, {
       x: 50,
-      y: 270,
+      y: 310,
       size: 14,
+      font,
       color: rgb(0.8, 0.1, 0.1),
     });
     if (amountPaid) {
-      page.drawText(`Amount Paid: Rs. ${amountPaid}`, {
+      page.drawText(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, {
         x: 50,
-        y: 240,
+        y: 280,
         size: 12,
+        font,
         color: rgb(0.1, 0.6, 0.2),
       });
     }
   }
 
-  page.drawText(`Date: ${new Date().toLocaleDateString()}`, {
+  page.drawText(`${t('date')}: ${new Date().toLocaleDateString()}`, {
     x: 50,
     y: 200,
     size: 12,
+    font
   });
-  page.drawText(`Thank you for using SmartBilling.`, {
+  page.drawText(t('thankYou'), {
     x: 50,
     y: 150,
     size: 12,
+    font
   });
   return await pdfDoc.saveAsBase64({ dataUri: true });
 }
@@ -503,11 +589,18 @@ async function routeSystemIntent(
     msgLower.includes("invoice")
   ) {
     const amt = custData.balance || 0;
+    const lang = adminSettings?.preferredLanguage || 'en';
     replyText =
       replyText ||
-      `Here is your invoice. Your outstanding balance is Rs. ${amt}.`;
+      getSvrT(lang, 'invoiceMsg', { amt });
     try {
-      const b64Pdf = await generateInvoicePdf(custData.name || "Customer", amt);
+      const b64Pdf = await generateInvoicePdf(
+        custData.name || "Customer", 
+        amt, 
+        undefined, 
+        adminSettings?.billTemplateImage,
+        lang
+      );
       attachments.push({ type: "file", name: "Invoice.pdf", data: b64Pdf });
     } catch (e) {
       console.error("PDF generation failed:", e);
@@ -519,13 +612,13 @@ async function routeSystemIntent(
     msgLower.includes("qr for pay") ||
     msgLower.includes("upi")
   ) {
-    replyText = replyText || "Scan the attached UPI QR code to pay your bill.";
+    const lang = adminSettings?.preferredLanguage || 'en';
+    replyText = replyText || getSvrT(lang, 'payBillMsg');
     const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
     if (qrImage) {
       attachments.push({ type: "image", data: qrImage });
     } else {
-      replyText =
-        "Sorry, no UPI QR code has been set by the administration yet.";
+      replyText = getSvrT(lang, 'noQrCodeMsg');
     }
     matched = true;
   } else if (
@@ -720,6 +813,29 @@ ${cmdListText}`;
     msgLower.includes("portal link")
   ) {
     const protocol = reqHost.includes("localhost") ? "http" : "https";
+    
+    // Auto-create/update portal document so it doesn't say "Not found or expired"
+    if (admin.apps.length && custData.id) {
+      try {
+        await getRequiredAdminDb().collection("public_portals").doc(custData.id).set({
+          portalId: custData.id,
+          ownerId: ownerId,
+          customerId: custData.id,
+          customerName: custData.name || "Customer",
+          mobileNumber: custData.mobileNumber || "",
+          balance: custData.balance || 0,
+          billingAmount: adminSettings?.billingAmount || 0,
+          penaltyAmount: adminSettings?.penaltyAmount || 0,
+          penaltyDays: adminSettings?.penaltyDays || 0,
+          upiQrCodeImage: adminSettings?.upiQrCodeImage || null,
+          createdAt: Date.now()
+        }, { merge: true });
+        console.log(`[Auto-Portal] Created/Updated portal link for ${custData.id}`);
+      } catch (e) {
+        console.error("Failed to auto-create portal link via Chatbot:", e);
+      }
+    }
+    
     replyText =
       replyText ||
       `Here is your personal portal link:\n${protocol}://${reqHost}/?portal=true&customerId=${custData.id}`;
@@ -970,15 +1086,18 @@ async function startServer() {
                   settings.metaWhatsAppPhoneNumberId) ||
                   settings.watiAccessToken)
               ) {
-                const mobile = customer?.mobileNumber?.replace(/\D/g, "");
-                if (mobile && mobile.length >= 10) {
-                  const message = `Dear ${customer?.name}, your payment of Rs. ${amountPaid} was received! Your balance is now 0. Thank you!`;
-                  try {
-                    const generatedPdf = await generateInvoicePdf(
-                      customer?.name || "Customer",
-                      0,
-                      amountPaid,
-                    );
+                  const lang = settings?.preferredLanguage || 'en';
+                  const mobile = customer?.mobileNumber?.replace(/\D/g, "");
+                  if (mobile && mobile.length >= 10) {
+                    const message = getSvrT(lang, 'paymentSuccess', { name: customer?.name, amt: amountPaid });
+                    try {
+                      const generatedPdf = await generateInvoicePdf(
+                        customer?.name || "Customer",
+                        0,
+                        amountPaid,
+                        settings?.billTemplateImage,
+                        lang
+                      );
                     await sendWhatsAppMessage(
                       settings,
                       mobile,
@@ -1063,56 +1182,62 @@ async function startServer() {
     };
 
     let mediaId: string | undefined = undefined;
+    let mediaUrl: string | undefined = undefined;
 
     // Upload media to Meta first if provided
     if (mediaBase64) {
-      try {
-        const base64Data = mediaBase64.split(",")[1] || mediaBase64;
-        const mimeType =
-          mediaBase64.split(";")[0].split(":")[1] || "application/pdf";
-        const isImage = mimeType.startsWith("image/");
+      if (mediaBase64.startsWith("http://") || mediaBase64.startsWith("https://")) {
+         mediaUrl = mediaBase64;
+         console.log(`[WhatsApp] Using provided media URL instead of uploading`);
+      } else {
+        try {
+          const base64Data = mediaBase64.split(",")[1] || mediaBase64;
+          const mimeType =
+            mediaBase64.split(";")[0].split(":")[1] || "application/pdf";
+          const isImage = mimeType.startsWith("image/");
 
-        const buffer = Buffer.from(base64Data, "base64");
-        const formData = new FormData();
-        const blob = new Blob([buffer], { type: mimeType });
-        formData.append(
-          "file",
-          blob,
-          mediaName || (isImage ? "image.png" : "document.pdf"),
-        );
-        formData.append("messaging_product", "whatsapp");
+          const buffer = Buffer.from(base64Data, "base64");
+          const formData = new FormData();
+          const blob = new Blob([buffer], { type: mimeType });
+          formData.append(
+            "file",
+            blob,
+            mediaName || (isImage ? "image.png" : "document.pdf"),
+          );
+          formData.append("messaging_product", "whatsapp");
 
-        const uploadRes = await fetch(
-          `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`,
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+          const uploadRes = await fetch(
+            `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/media`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+              },
+              body: formData as any,
             },
-            body: formData as any,
-          },
-        );
+          );
 
-        const uploadData = await uploadRes.json();
-        if (!uploadRes.ok) {
-          console.error(`[WhatsApp] Media Upload Error:`, uploadData);
-          if (
-            uploadData.error &&
-            uploadData.error.message &&
-            uploadData.error.message.includes("register this phone number")
-          ) {
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) {
+            console.error(`[WhatsApp] Media Upload Error:`, uploadData);
+            if (
+              uploadData.error &&
+              uploadData.error.message &&
+              uploadData.error.message.includes("register this phone number")
+            ) {
+              throw new Error(
+                "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.",
+              );
+            }
             throw new Error(
-              "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.",
+              uploadData.error?.message || "Failed to upload media to WhatsApp",
             );
           }
-          throw new Error(
-            uploadData.error?.message || "Failed to upload media to WhatsApp",
-          );
+          mediaId = uploadData.id;
+          console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
+        } catch (err) {
+          console.error(`[WhatsApp] Error handling media:`, err);
         }
-        mediaId = uploadData.id;
-        console.log(`[WhatsApp] Successfully uploaded media, ID: ${mediaId}`);
-      } catch (err) {
-        console.error(`[WhatsApp] Error handling media:`, err);
       }
     }
 
@@ -1160,16 +1285,21 @@ async function startServer() {
         }
       }
 
-      if (mediaId) {
+      if (mediaId || mediaUrl) {
+        const docObj: any = {};
+        if (mediaUrl) {
+          docObj.link = mediaUrl;
+        } else {
+          docObj.id = mediaId;
+        }
+        docObj.filename = mediaName || "Invoice.pdf";
+
         components.push({
           type: "header",
           parameters: [
             {
               type: "document",
-              document: {
-                id: mediaId,
-                filename: mediaName || "Invoice.pdf",
-              },
+              document: docObj,
             },
           ],
         });
@@ -1213,20 +1343,25 @@ async function startServer() {
         components: components.length > 0 ? components : undefined,
       };
     } else {
-      if (mediaId) {
+      if (mediaId || mediaUrl) {
         const mimeType = mediaBase64?.split(";")[0].split(":")[1] || "";
-        const isImage = mimeType.startsWith("image/");
+        const isImage = mimeType.startsWith("image/") || (mediaName && (mediaName.endsWith(".png") || mediaName.endsWith(".jpg") || mediaName.endsWith(".jpeg")));
 
         if (isImage) {
           bodyPayload.type = "image";
-          bodyPayload.image = { id: mediaId, caption: message };
+          const imgObj: any = { caption: message };
+          if (mediaUrl) imgObj.link = mediaUrl;
+          else imgObj.id = mediaId;
+          bodyPayload.image = imgObj;
         } else {
           bodyPayload.type = "document";
-          bodyPayload.document = {
-            id: mediaId,
+          const docObj: any = {
             caption: message,
             filename: mediaName || "document.pdf",
           };
+          if (mediaUrl) docObj.link = mediaUrl;
+          else docObj.id = mediaId;
+          bodyPayload.document = docObj;
         }
       } else {
         bodyPayload.type = "text";
@@ -2209,13 +2344,20 @@ async function startServer() {
         } catch (e) {}
       }
 
+      const lang = settings?.preferredLanguage || 'en';
       const generatedTestPdfBase64 = await generateInvoicePdf(
         testCustName,
         testCustBalance,
+        undefined,
+        settings?.billTemplateImage,
+        lang
       );
 
-      const message =
-        "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
+      const message = lang === 'hi' 
+        ? "यह आपके स्मार्टबिलिंग इंजन से एक परीक्षण सूचना है! यदि आप इसे देखते हैं, तो आपका एपीआई कॉन्फ़िगरेशन एकदम सही है। ✅" 
+        : lang === 'pa'
+        ? "ਇਹ ਤੁਹਾਡੇ ਸਮਾਰਟਬਿਲਿੰਗ ਇੰਜਨ ਤੋਂ ਇੱਕ ਟੈਸਟ ਨੋਟੀਫਿਕੇਸ਼ਨ ਹੈ! ਜੇਕਰ ਤੁਸੀਂ ਇਸਨੂੰ ਦੇਖਦੇ ਹੋ, ਤਾਂ ਤੁਹਾਡੀ API ਕੌਂਫਿਗਰੇਸ਼ਨ ਬਿਲਕੁਲ ਸਹੀ ਹੈ। ✅"
+        : "This is a test notification from your SmartBilling Engine! If you see this, your API configuration is PERFECT. ✅";
 
       try {
         let templateName;
@@ -2665,6 +2807,7 @@ async function startServer() {
         }
       }
 
+      let matchedCommand: any = null;
       // First check user defined commands (which includes modified system commands!)
       for (const cmd of (chatbotSettings as any).commands || []) {
         if (!cmd.isActive) continue;
@@ -2672,6 +2815,7 @@ async function startServer() {
           replyText = cmd.response || "";
           sysTrigger = cmd.triggerWord;
           hasCustomCommandMatched = true;
+          matchedCommand = cmd;
           matched = true;
           break;
         }
@@ -2698,6 +2842,13 @@ async function startServer() {
         matched = true;
       } else if (hasCustomCommandMatched) {
         matched = true;
+        if (matchedCommand?.mediaUrl) {
+          attachments.push({
+            type: "file",
+            name: matchedCommand.mediaName || "Attachment",
+            data: matchedCommand.mediaUrl
+          });
+        }
       } else if (msgLower.startsWith("complaint:")) {
         const complaintText = message.substring(10).trim();
         if (complaintText.length > 5) {
@@ -3024,6 +3175,7 @@ async function startServer() {
                       "I'm sorry, I don't understand that command.";
                     let sysTrigger = "";
                     let hasCustomCommandMatched = false;
+                    let matchedCommand: any = null;
 
                     if (
                       chatbotSettings &&
@@ -3048,6 +3200,7 @@ async function startServer() {
                           );
                           sysTrigger = cmd.triggerWord;
                           hasCustomCommandMatched = true;
+                          matchedCommand = cmd;
                           break;
                         }
                       }
@@ -3079,6 +3232,13 @@ async function startServer() {
                       handled = true;
                     } else if (hasCustomCommandMatched) {
                       handled = true;
+                      if (matchedCommand?.mediaUrl) {
+                        attachmentsToPass.push({
+                          type: "file",
+                          name: matchedCommand.mediaName || "Attachment",
+                          data: matchedCommand.mediaUrl
+                        });
+                      }
                     } else if (
                       msgLower.startsWith("complaint") ||
                       msgLower.startsWith("issue")

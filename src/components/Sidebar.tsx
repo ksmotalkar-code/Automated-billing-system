@@ -64,8 +64,18 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
   const { isInstallable, promptInstall } = usePWAInstall();
 
   const toggleLanguage = () => {
-    const newLang = i18n.language === 'en' ? 'pa' : 'en';
-    i18n.changeLanguage(newLang);
+    const langs = ['en', 'hi', 'pa'];
+    const currentIdx = langs.indexOf(i18n.language);
+    const nextIdx = (currentIdx + 1) % langs.length;
+    i18n.changeLanguage(langs[nextIdx]);
+  };
+
+  const getLanguageLabel = (lang: string) => {
+    switch (lang) {
+      case 'hi': return 'हिन्दी';
+      case 'pa': return 'ਪੰਜਾਬੀ';
+      default: return 'English';
+    }
   };
 
   return (
@@ -201,7 +211,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
             <Languages className={cn("shrink-0 neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
             {isExpanded && <span>{t('Language')}</span>}
           </div>
-          {isExpanded && <span className="capitalize text-xs neu-text-muted">{i18n.language === 'en' ? 'English' : 'ਪੰਜਾਬੀ'}</span>}
+          {isExpanded && <span className="capitalize text-xs neu-text-muted">{getLanguageLabel(i18n.language)}</span>}
           {!isExpanded && (
             <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
               {t('Language')}

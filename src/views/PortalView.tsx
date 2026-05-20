@@ -41,19 +41,50 @@ export function PortalView() {
     const reader = new FileReader();
     reader.onloadend = async () => {
       try {
-        const base64Image = reader.result as string;
-        
-        // Show user they uploaded an image
-        setChatHistory(prev => [...prev, { role: 'user', content: '[Payment Screenshot Uploaded]', attachments: [{ type: 'image', data: base64Image }] }]);
-        
-        // Submit receipt
-        const { submitPaymentReceipt } = await import('../lib/portal');
-        await submitPaymentReceipt(portalData!, base64Image);
-        
-        addBotMessage("Thank you! Your payment screenshot has been uploaded and sent to the waterworks department for verification.");
+        const img = new Image();
+        img.onload = async () => {
+          const canvas = document.createElement("canvas");
+          const MAX_WIDTH = 1000;
+          const MAX_HEIGHT = 1000;
+          let width = img.width;
+          let height = img.height;
+          
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height *= MAX_WIDTH / width;
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width *= MAX_HEIGHT / height;
+              height = MAX_HEIGHT;
+            }
+          }
+          
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx?.drawImage(img, 0, 0, width, height);
+          
+          const base64Image = canvas.toDataURL("image/jpeg", 0.6);
+          
+          // Show user they uploaded an image
+          setChatHistory(prev => [...prev, { role: 'user', content: '[Payment Screenshot Uploaded]', attachments: [{ type: 'image', data: base64Image }] }]);
+          
+          // Submit receipt
+          const { submitPaymentReceipt } = await import('../lib/portal');
+          await submitPaymentReceipt(portalData!, base64Image);
+          
+          addBotMessage("Thank you! Your payment screenshot has been uploaded and sent to the waterworks department for verification.");
+          setChatLoading(false);
+        };
+        img.onerror = () => {
+          addBotMessage("Failed to process image.");
+          setChatLoading(false);
+        };
+        img.src = reader.result as string;
       } catch (err) {
         addBotMessage("Failed to upload screenshot. Please try again.");
-      } finally {
         setChatLoading(false);
       }
     };

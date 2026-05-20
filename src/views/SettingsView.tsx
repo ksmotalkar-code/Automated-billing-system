@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud } from "lucide-react";
 import { motion } from "motion/react";
 import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -11,6 +11,40 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
 import { getLogs, clearLogs, LogEntry } from '../lib/logger';
 import { CommandManagerWrapper } from '../components/CommandManager';
+
+const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
 
 export function SettingsView() {
   const { t } = useTranslation();
@@ -1068,13 +1102,133 @@ export function SettingsView() {
                 </div>
 
                 <div className="space-y-3">
-                  <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1 text-rose-600">Escalation Limit (Days)</label>
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Escalation Limit (Days)</label>
                   <input
                     type="number"
                     value={settings.escalationDays || 60}
                     onChange={(e) => setSettings({ ...settings, escalationDays: Number(e.target.value) })}
                     className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-base font-black text-rose-600 border border-rose-500/20 focus:ring-2 focus:ring-rose-500/30 transition-all shadow-inner"
                   />
+                </div>
+
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">System Language</label>
+                  <select
+                    value={settings.preferredLanguage || 'en'}
+                    onChange={(e) => setSettings({ ...settings, preferredLanguage: e.target.value as any })}
+                    className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-sm font-black uppercase tracking-widest text-emerald-600 cursor-pointer shadow-inner"
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">हिन्दी (Hindi)</option>
+                    <option value="pa">ਪੰਜਾਬੀ (Punjabi)</option>
+                  </select>
+                  <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">Primary language for automated WhatsApp messages</p>
+                </div>
+              </div>
+
+              <div className="space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
+                <div className="flex items-center gap-3">
+                   <Palette className="w-5 h-5 text-emerald-600" />
+                   <div>
+                    <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-emerald-600 leading-none">Invoicing & Branding</h4>
+                    <p className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter opacity-60 mt-1">Customize Your Bill Appearance</p>
+                   </div>
+                </div>
+
+                <div className="grid gap-6 md:grid-cols-2">
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Bill Template Image</label>
+                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
+                      {settings.billTemplateImage ? (
+                        <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                          <img src={settings.billTemplateImage} alt="Template" className="w-full h-full object-contain" />
+                          <button 
+                            onClick={() => setSettings({...settings, billTemplateImage: null})}
+                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-4 py-6">
+                           <div className="w-16 h-16 rounded-2xl neu-flat flex items-center justify-center text-emerald-600">
+                             <UploadCloud className="w-8 h-8" />
+                           </div>
+                           <div className="text-center">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-[#1e1e2d]">No Template Uploaded</p>
+                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Uplaod your bill image (Header/Footer layout)</p>
+                           </div>
+                        </div>
+                      )}
+                      <label className="cursor-pointer px-6 py-3 bg-[var(--accent)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 hover:opacity-90 transition-all">
+                        {settings.billTemplateImage ? "Change Image" : "Upload Template"}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const compressedData = await compressImage(file, 800, 0.7);
+                                setSettings({...settings, billTemplateImage: compressedData});
+                              } catch (err) {
+                                console.error("Compression failed", err);
+                                alert("Failed to process image. Please try a smaller image.");
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Payment QR Code</label>
+                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
+                      {settings.upiQrCodeImage ? (
+                        <div className="relative w-full aspect-square max-w-[200px] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                          <img src={settings.upiQrCodeImage} alt="UPI QR" className="w-full h-full object-contain" />
+                          <button 
+                            onClick={() => setSettings({...settings, upiQrCodeImage: null})}
+                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-4 py-4">
+                           <div className="w-16 h-16 rounded-2xl neu-flat flex items-center justify-center text-indigo-600">
+                             <CreditCard className="w-8 h-8" />
+                           </div>
+                           <div className="text-center">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-[#1e1e2d]">No UPI QR Uploaded</p>
+                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Used for customer dynamic scan & pay</p>
+                           </div>
+                        </div>
+                      )}
+                      <label className="cursor-pointer px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all">
+                        {settings.upiQrCodeImage ? "Change QR" : "Upload QR Code"}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const compressedData = await compressImage(file, 400, 0.7);
+                                setSettings({...settings, upiQrCodeImage: compressedData});
+                              } catch (err) {
+                                console.error("Compression failed", err);
+                                alert("Failed to process image. Please try a smaller image.");
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </div>
 

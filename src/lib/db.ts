@@ -191,6 +191,8 @@ export interface ChatbotCommand {
   triggerWord: string;
   response: string;
   isActive: boolean;
+  mediaUrl?: string;
+  mediaName?: string;
 }
 
 export interface CustomAutomationParam {
@@ -238,6 +240,8 @@ export interface AppSettings {
   chatbotCommands?: ChatbotCommand[];
   appTheme?: string;
   appUiStyle?: string;
+  billTemplateImage?: string | null;
+  preferredLanguage?: 'en' | 'hi' | 'pa';
 }
 
 export interface UploadedData {
@@ -968,6 +972,8 @@ export interface ChatbotCommand {
   triggerWord: string;
   response: string;
   isActive: boolean;
+  mediaUrl?: string;
+  mediaName?: string;
 }
 
 export interface ChatbotSettings {
