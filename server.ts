@@ -495,11 +495,18 @@ async function generateInvoicePdf(
   if (templateImage) {
     try {
       let image;
-      const base64Data = templateImage.split(',')[1] || templateImage;
-      if (templateImage.includes('png')) {
-        image = await pdfDoc.embedPng(base64Data);
+      let imgData: any;
+      if (templateImage.startsWith("http://") || templateImage.startsWith("https://")) {
+        const res = await fetch(templateImage);
+        imgData = await res.arrayBuffer();
       } else {
-        image = await pdfDoc.embedJpg(base64Data);
+        imgData = templateImage.split(',')[1] || templateImage;
+      }
+      
+      if (templateImage.includes('png') || templateImage.includes('.png')) {
+        image = await pdfDoc.embedPng(imgData);
+      } else {
+        image = await pdfDoc.embedJpg(imgData);
       }
       
       const dims = image.scaleToFit(600, 480);
@@ -571,7 +578,7 @@ async function generateInvoicePdf(
 }
 
 async function routeSystemIntent(
-  msgLower: string,
+  rawMsgLower: string,
   custData: any,
   ownerId: string,
   adminSettings: any,
@@ -579,6 +586,7 @@ async function routeSystemIntent(
   chatbotSettings?: any,
   reqHost: string = "your-app-url",
 ) {
+  const msgLower = (rawMsgLower || "").toLowerCase().trim();
   let replyText = baseText;
   let matched = false;
   let attachments: any[] = [];
@@ -616,7 +624,8 @@ async function routeSystemIntent(
     replyText = replyText || getSvrT(lang, 'payBillMsg');
     const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
     if (qrImage) {
-      attachments.push({ type: "image", data: qrImage });
+      const ext = qrImage.includes("png") ? ".png" : ".jpg";
+      attachments.push({ type: "image", data: qrImage, name: `qrcode${ext}` });
     } else {
       replyText = getSvrT(lang, 'noQrCodeMsg');
     }
@@ -1755,12 +1764,17 @@ async function startServer() {
                   // Embed QR Code if available
                   if (settings.upiQrCodeImage) {
                     try {
-                      const qrData =
-                        settings.upiQrCodeImage.split(",")[1] ||
-                        settings.upiQrCodeImage;
-                      const qrBytes = Buffer.from(qrData, "base64");
+                      let qrBytes: any;
+                      if (settings.upiQrCodeImage.startsWith("http://") || settings.upiQrCodeImage.startsWith("https://")) {
+                        const res = await fetch(settings.upiQrCodeImage);
+                        qrBytes = await res.arrayBuffer();
+                      } else {
+                        const qrData = settings.upiQrCodeImage.split(",")[1] || settings.upiQrCodeImage;
+                        qrBytes = Buffer.from(qrData, "base64");
+                      }
+                      
                       let qrImage;
-                      if (settings.upiQrCodeImage.includes("image/png")) {
+                      if (settings.upiQrCodeImage.includes("png")) {
                         qrImage = await pdfDoc.embedPng(qrBytes);
                       } else {
                         qrImage = await pdfDoc.embedJpg(qrBytes);

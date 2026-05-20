@@ -21,18 +21,18 @@ export function ChatbotView() {
     const fetchSettings = async () => {
       const data = await getChatbotSettings();
       const defaultSystemCommands: ChatbotCommand[] = [
-        { id: "sysdlbill", buttonLabel: `📄 ${t('Download Bill')}`, triggerWord: t('Download Bill'), response: t('Here is your PDF bill.'), isActive: true },
-        { id: "sysqrpay", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Scan this UPI QR code to make your payment.'), isActive: true },
-        { id: "sysbill", buttonLabel: `📄 ${t('My Bill')}`, triggerWord: t('My Bill'), response: t('Your current bill status is computed live.'), isActive: true },
-        { id: "sysbalance", buttonLabel: `💳 ${t('Check Balance')}`, triggerWord: t('Check Balance'), response: t('Your total remaining balance is Rs. {{balance}}.'), isActive: true },
-        { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaint')}`, triggerWord: t('Complaint'), response: t('Please describe your complaint in the next message.'), isActive: true },
-        { id: "sysreport", buttonLabel: `📊 ${t('Deep Report')}`, triggerWord: t('Deep Report'), response: t('Let me find your deep detail report.'), isActive: true },
-        { id: "syswater", buttonLabel: `💧 ${t('Water Quality')}`, triggerWord: t('Water Quality'), response: t('Our water quality currently meets all regulatory standards. Safe for drinking!'), isActive: true },
-        { id: "syssupply", buttonLabel: `🕒 ${t('Supply Timings')}`, triggerWord: t('Supply Timings'), response: t('Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.'), isActive: true },
-        { id: "syscontact", buttonLabel: `📞 ${t('Contact')}`, triggerWord: t('Contact'), response: t('You can contact the Panchayat office at 1800-123-4567.'), isActive: true },
-        { id: "sysnotify", buttonLabel: `🔔 ${t('Notifications')}`, triggerWord: t('Notifications'), response: t('Your recent notifications are available in the portal dashboard.'), isActive: true },
-        { id: "sysusage", buttonLabel: `📝 ${t('Usage')}`, triggerWord: t('Usage'), response: t('Your usage history is currently being computed.'), isActive: true },
-        { id: "sysmaint", buttonLabel: `⚠️ ${t('Maintenance')}`, triggerWord: t('Maintenance'), response: t('No scheduled maintenance for your zone currently.'), isActive: true }
+        { id: "sysdlbill", buttonLabel: `📄 ${t('Download Bill')}`, triggerWord: t('Download Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
+        { id: "sysqrpay", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
+        { id: "sysbill", buttonLabel: `📄 ${t('My Bill')}`, triggerWord: t('My Bill'), response: t('Dear {{name}}, your current bill status is being generated. Your outstanding balance is Rs. {{balance}}.'), isActive: true },
+        { id: "sysbalance", buttonLabel: `💳 ${t('Check Balance')}`, triggerWord: t('Check Balance'), response: t('Hi {{name}}, your total remaining balance is Rs. {{balance}}. Please ensure payment by {{dueDate}}.'), isActive: true },
+        { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaint')}`, triggerWord: t('Complaint'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true },
+        { id: "sysreport", buttonLabel: `📊 ${t('Deep Report')}`, triggerWord: t('Deep Report'), response: t('Hello {{name}}, let me fetch your detailed usage report from our systems.'), isActive: true },
+        { id: "syswater", buttonLabel: `💧 ${t('Water Quality')}`, triggerWord: t('Water Quality'), response: t('Dear {{name}}, our water quality currently meets all regulatory standards. Safe and clean for drinking!'), isActive: true },
+        { id: "syssupply", buttonLabel: `🕒 ${t('Supply Timings')}`, triggerWord: t('Supply Timings'), response: t('Hi {{name}}, the water supply timings for your area are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.'), isActive: true },
+        { id: "syscontact", buttonLabel: `📞 ${t('Contact')}`, triggerWord: t('Contact'), response: t('Hello {{name}}, for any urgent queries, you can reach out to our office directly at 1800-123-4567.'), isActive: true },
+        { id: "sysnotify", buttonLabel: `🔔 ${t('Notifications')}`, triggerWord: t('Notifications'), response: t('Hi {{name}}, your recent alerts and notifications are available in the public portal dashboard.'), isActive: true },
+        { id: "sysusage", buttonLabel: `📝 ${t('Usage')}`, triggerWord: t('Usage'), response: t('Dear {{name}}, your consumption and usage history over the past months is currently being computed.'), isActive: true },
+        { id: "sysmaint", buttonLabel: `⚠️ ${t('Maintenance')}`, triggerWord: t('Maintenance'), response: t('Good news {{name}}, there is no scheduled maintenance for your zone currently.'), isActive: true }
       ];
 
       let mergedCommands = [];
@@ -194,7 +194,7 @@ export function ChatbotView() {
                     Use handles to inject real-time data:
                   </p>
                   <div className="flex flex-wrap gap-1.5 pt-1">
-                    {['name', 'balance', 'status', 'dueDate', 'amount'].map(v => (
+                    {['name', 'balance', 'mobileNumber', 'status', 'dueDate'].map(v => (
                       <code key={v} className="px-2 py-1 bg-white/40 rounded text-[9px] font-black text-blue-800/60 lowercase tracking-widest">
                         {"{{"}{v}{"}}"}
                       </code>
