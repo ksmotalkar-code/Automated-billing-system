@@ -203,6 +203,7 @@ export interface CustomAutomationParam {
 }
 
 export interface AppSettings {
+  appLogoImage?: string | null;
   upiQrCodeImage: string | null;
   billingAmount: number;
   billingCycleMonths: number;

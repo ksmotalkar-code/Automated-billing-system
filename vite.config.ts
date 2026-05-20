@@ -17,8 +17,8 @@ export default defineConfig(({mode}) => {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
         },
         manifest: {
-          name: 'Trismart Automated Billing System',
-          short_name: 'Trismart ABS',
+          name: 'Gram Panchayat GP. Jhanda Khurd Automated Billing',
+          short_name: 'GP. Jhanda Khurd',
           description: 'A powerful automated billing application',
           theme_color: '#1a202c',
           background_color: '#1a202c',

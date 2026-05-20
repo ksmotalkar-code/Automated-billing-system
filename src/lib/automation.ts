@@ -483,10 +483,10 @@ export const generateEscalationPDF = (customer: Customer, settings: AppSettings)
   
   // Company Info
   doc.setFontSize(12);
-  doc.text('Trismart ABS Billing Authority', 20, 45);
+  doc.text('Gram Panchayat GP. Jhanda Khurd', 20, 45);
   doc.setFontSize(10);
-  doc.text('Sector 17, Chandigarh, Punjab', 20, 50);
-  doc.text('Email: legal@trismartabs.in', 20, 55);
+  doc.text('Office of the Sarpanch', 20, 50);
+  doc.text('Email: info@gpjhandakhurd.in', 20, 55);
   
   // Customer Info
   doc.setFontSize(14);

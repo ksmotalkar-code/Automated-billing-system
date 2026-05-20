@@ -56,9 +56,10 @@ interface SidebarProps {
   setUiStyle: (uiStyle: string) => void;
   isExpanded: boolean;
   setIsExpanded: (expanded: boolean) => void;
+  appLogoImage?: string | null;
 }
 
-export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle, setUiStyle, isExpanded, setIsExpanded }: SidebarProps) {
+export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle, setUiStyle, isExpanded, setIsExpanded, appLogoImage }: SidebarProps) {
   const [showThemes, setShowThemes] = useState(false);
   const { t, i18n } = useTranslation();
   const { isInstallable, promptInstall } = usePWAInstall();
@@ -92,10 +93,14 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
         >
           <motion.div 
             transition={{ type: "spring", stiffness: 400, damping: 10 }}
-            className="w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-white font-bold text-xl static-glow transition-all duration-300"
-            style={{ background: 'var(--accent)' }}
+            className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-white font-bold text-xl static-glow transition-all duration-300 ${appLogoImage ? 'overflow-hidden bg-transparent' : ''}`}
+            style={appLogoImage ? {} : { background: 'var(--accent)' }}
           >
-            TS
+            {appLogoImage ? (
+              <img src={appLogoImage} alt="Logo" className="w-full h-full object-cover" />
+            ) : (
+              'GP'
+            )}
           </motion.div>
           <AnimatePresence>
             {isExpanded && (
@@ -105,8 +110,8 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                 exit={{ opacity: 0, x: -20 }}
                 className="whitespace-nowrap"
               >
-                <h1 className="neu-text font-black text-lg leading-tight tracking-tighter group-hover:text-[var(--accent)] transition-colors">Trismart ABS</h1>
-                <p className="text-[10px] neu-accent uppercase tracking-widest font-black opacity-80">Automated Billing</p>
+                <h1 className="neu-text font-black text-lg leading-tight tracking-tighter group-hover:text-[var(--accent)] transition-colors">Gram Panchayat</h1>
+                <p className="text-[10px] neu-accent uppercase tracking-widest font-black opacity-80">GP. Jhanda Khurd</p>
               </motion.div>
             )}
           </AnimatePresence>

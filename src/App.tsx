@@ -270,10 +270,10 @@ export default function App() {
           className="p-8 neu-pressed rounded-3xl max-w-md w-full text-center space-y-6 relative z-20 elite-sparkle-card"
         >
           <div className="w-20 h-20 mx-auto rounded-2xl flex items-center justify-center text-white font-bold text-4xl static-glow transition-all duration-300" style={{ background: 'var(--accent)' }}>
-            TS
+            GP
           </div>
           <div>
-            <h1 className="text-3xl font-black bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent">Trismart ABS</h1>
+            <h1 className="text-3xl font-black bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent">Gram Panchayat GP. Jhanda Khurd</h1>
             <p className="neu-text-muted mt-2 font-bold uppercase tracking-widest text-xs">Automated Billing System</p>
             <p className="text-xs text-blue-600 font-medium mt-4 px-4 py-2 bg-blue-50 rounded-lg inline-block">
               Registration is open! Create your own private workspace.
@@ -434,6 +434,7 @@ export default function App() {
             setUiStyle={setUiStyle}
             isExpanded={isExpanded}
             setIsExpanded={setIsExpanded}
+            appLogoImage={settings?.appLogoImage}
           />
         </div>
       </div>

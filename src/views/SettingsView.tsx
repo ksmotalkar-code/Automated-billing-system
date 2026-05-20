@@ -1135,7 +1135,54 @@ export function SettingsView() {
                    </div>
                 </div>
 
-                <div className="grid gap-6 md:grid-cols-2">
+                <div className="grid gap-6 md:grid-cols-3">
+                  <div className="space-y-4">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">App Logo (Icon)</label>
+                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
+                      {settings.appLogoImage ? (
+                        <div className="relative w-full aspect-square max-w-[200px] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                          <img src={settings.appLogoImage} alt="App Logo" className="w-full h-full object-contain" />
+                          <button 
+                            onClick={() => setSettings({...settings, appLogoImage: null})}
+                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center gap-4 py-4">
+                           <div className="w-16 h-16 rounded-2xl neu-flat flex items-center justify-center text-rose-600">
+                             <Palette className="w-8 h-8" />
+                           </div>
+                           <div className="text-center">
+                             <p className="text-[10px] font-black uppercase tracking-widest text-[#1e1e2d]">No Logo Uploaded</p>
+                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Used for app branding</p>
+                           </div>
+                        </div>
+                      )}
+                      <label className="cursor-pointer px-6 py-3 bg-[var(--accent)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 hover:opacity-90 transition-all">
+                        {settings.appLogoImage ? "Change Logo" : "Upload Logo"}
+                        <input 
+                          type="file" 
+                          accept="image/*" 
+                          className="hidden" 
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const compressedData = await compressImage(file, 200, 0.7);
+                                setSettings({...settings, appLogoImage: compressedData});
+                              } catch (err) {
+                                console.error("Compression failed", err);
+                                alert("Failed to process image. Please try a smaller image.");
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
                   <div className="space-y-4">
                     <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Bill Template Image</label>
                     <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
