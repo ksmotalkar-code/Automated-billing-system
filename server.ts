@@ -3034,6 +3034,22 @@ async function startServer() {
                 processedMessageIds.push(msgId);
                 if (processedMessageIds.length > 2000)
                   processedMessageIds.shift();
+
+                // DB-backed deduplication to handle Cloud Run multi-instance scaling
+                const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
+                if (dbInstance) {
+                  try {
+                    const dedupRef = dbInstance.collection("webhook_dedup").doc(msgId);
+                    const dedupDoc = await dedupRef.get();
+                    if (dedupDoc.exists) {
+                      console.log(`[Webhook] Ignoring duplicate message (DB): ${msgId}`);
+                      continue;
+                    }
+                    await dedupRef.set({ timestamp: FieldValue.serverTimestamp() });
+                  } catch (e) {
+                    console.error("Dedup DB check failed:", e);
+                  }
+                }
               }
 
               const fromMobile = messageObj.from;
