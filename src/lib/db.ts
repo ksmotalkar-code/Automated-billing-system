@@ -202,6 +202,12 @@ export interface CustomAutomationParam {
   type: string;
 }
 
+export interface MetaTemplateDef {
+  id: string;
+  templateName: string;
+  parameters: string; // comma separated: e.g. "customer_name, balance, date"
+}
+
 export interface AppSettings {
   appLogoImage?: string | null;
   upiQrCodeImage: string | null;
@@ -229,6 +235,7 @@ export interface AppSettings {
   metaTemplateOverdue?: string;
   metaTemplateSuspension?: string;
   metaTemplateCustom?: string;
+  metaCustomTemplates?: MetaTemplateDef[];
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
@@ -724,7 +731,19 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
   if (!user) return () => {};
   return onSnapshot(doc(db, 'settings', user.uid), (docSnap) => {
     if (docSnap.exists()) {
-      callback(docSnap.data() as AppSettings);
+      const data = docSnap.data() as AppSettings;
+      
+      // Inject missing default custom templates config for predefined ones (so user doesn't have to manually create them instantly)
+      if (!data.metaCustomTemplates || data.metaCustomTemplates.length === 0) {
+        data.metaCustomTemplates = [
+          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome_customer_v1', parameters: 'customer_name, button_param' },
+          { id: 'def_billing', templateName: data.metaTemplateBilling || 'bill_reminder_v1', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
+          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'payment_ack_v3', parameters: 'customer_name, payment_amount, button_param' },
+          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'penalty_alert_v1', parameters: 'customer_name, overdue_amount, date, button_param' },
+        ];
+      }
+      
+      callback(data);
     } else {
       callback({
         upiQrCodeImage: null,

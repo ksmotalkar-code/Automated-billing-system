@@ -44,31 +44,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let unsubs: (() => void)[] = [];
+
+    const clearSubscriptions = () => {
+      unsubs.forEach(unsub => unsub());
+      unsubs = [];
+    };
+
     const unsubAuth = auth.onAuthStateChanged((user) => {
       if (user) {
+        clearSubscriptions(); // Just in case
         // Initializing consolidated subscriptions
-        const unsubCustomers = subscribeToCustomers(setCustomers);
-        const unsubSettings = subscribeToSettings(setSettings);
-        const unsubTransactions = subscribeToTransactions(setTransactions);
-        const unsubComplaints = subscribeToComplaints(setComplaints);
-        const unsubReports = subscribeToReports(setReports);
-        const unsubMessages = subscribeToWhatsappMessages(setMessages);
-        const unsubErrors = subscribeToAutomationErrors(setAutomationErrors);
-        const unsubReceipts = subscribeToPendingReceipts(setPendingReceipts);
+        unsubs.push(subscribeToCustomers(setCustomers));
+        unsubs.push(subscribeToSettings(setSettings));
+        unsubs.push(subscribeToTransactions(setTransactions));
+        unsubs.push(subscribeToComplaints(setComplaints));
+        unsubs.push(subscribeToReports(setReports));
+        unsubs.push(subscribeToWhatsappMessages(setMessages));
+        unsubs.push(subscribeToAutomationErrors(setAutomationErrors));
+        unsubs.push(subscribeToPendingReceipts(setPendingReceipts));
 
         setIsLoading(false);
-
-        return () => {
-          unsubCustomers();
-          unsubSettings();
-          unsubTransactions();
-          unsubComplaints();
-          unsubReports();
-          unsubMessages();
-          unsubErrors();
-          unsubReceipts();
-        };
       } else {
+        clearSubscriptions();
         // Clear data on logout
         setCustomers([]);
         setSettings(null);
@@ -82,7 +80,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     });
 
-    return () => unsubAuth();
+    return () => {
+      clearSubscriptions();
+      unsubAuth();
+    };
   }, []);
 
   return (

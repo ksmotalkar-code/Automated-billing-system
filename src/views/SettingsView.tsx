@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces } from "lucide-react";
 import { motion } from "motion/react";
 import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -679,6 +679,76 @@ export function SettingsView() {
                             />
                          </div>
                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Meta Template Parameters Registry */}
+                {(settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati') && (
+                  <div className="col-span-full space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
+                    <div className="flex flex-col gap-2">
+                       <div className="flex items-center gap-3">
+                          <Braces className="w-5 h-5 text-purple-600" />
+                          <div>
+                            <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-purple-600 leading-none">Parameters</h4>
+                            <p className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter opacity-60 mt-1">Map dynamic variables to templates</p>
+                          </div>
+                       </div>
+                       <p className="text-[10px] text-gray-500 max-w-3xl leading-relaxed mt-2">
+                         Meta API requires the exact number of parameters in order. Define the parameter sequence for each template here. Available variables: <code className="text-purple-600 font-mono">customer_name, customer_balance, billing_amount, new_balance, payment_amount, overdue_amount, date, portal_link</code>
+                       </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      {settings.metaCustomTemplates?.map((tmp, index) => (
+                        <div key={tmp.id} className="grid grid-cols-[1fr,2fr,auto] gap-4 items-center neu-pressed p-4 rounded-2xl">
+                           <input
+                             type="text"
+                             value={tmp.templateName}
+                             onChange={(e) => {
+                               const updated = [...(settings.metaCustomTemplates || [])];
+                               updated[index].templateName = e.target.value;
+                               setSettings({ ...settings, metaCustomTemplates: updated });
+                             }}
+                             placeholder="Template Name (e.g. bill_reminder_v1)"
+                             className="px-4 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-xs font-black tracking-wider placeholder:font-normal placeholder:opacity-50"
+                           />
+                           <input
+                             type="text"
+                             value={tmp.parameters}
+                             onChange={(e) => {
+                               const updated = [...(settings.metaCustomTemplates || [])];
+                               updated[index].parameters = e.target.value;
+                               setSettings({ ...settings, metaCustomTemplates: updated });
+                             }}
+                             placeholder="customer_name, billing_amount, portal_link"
+                             className="px-4 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-xs font-mono placeholder:font-normal placeholder:opacity-50"
+                           />
+                           <button
+                             onClick={() => {
+                               const updated = settings.metaCustomTemplates?.filter(t => t.id !== tmp.id);
+                               setSettings({ ...settings, metaCustomTemplates: updated });
+                             }}
+                             className="p-3 text-red-500 hover:text-white hover:bg-red-500 bg-red-500/10 rounded-xl transition-colors"
+                           >
+                             <Trash2 className="w-4 h-4" />
+                           </button>
+                        </div>
+                      ))}
+                      
+                      <button
+                        onClick={() => {
+                          const updated = [...(settings.metaCustomTemplates || []), {
+                            id: Math.random().toString(36).substring(7),
+                            templateName: '',
+                            parameters: ''
+                          }];
+                          setSettings({ ...settings, metaCustomTemplates: updated });
+                        }}
+                        className="text-[10px] font-black uppercase tracking-widest text-purple-600 flex items-center gap-2 mt-4 ml-1 px-4 py-3 neu-flat rounded-xl"
+                      >
+                        <Plus className="w-4 h-4" /> Add Template configuration
+                      </button>
                     </div>
                   </div>
                 )}

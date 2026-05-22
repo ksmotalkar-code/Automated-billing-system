@@ -122,16 +122,57 @@ export const sendWhatsAppNotification = async (
 
   usePortalLink = usePortalLink && includePortalLink;
 
+  // Determine Template Name
+  let templateName = customTemplateName;
+  if (!templateName) {
+    if (templateCategory === 'billing') templateName = settings.metaTemplateBilling;
+    else if (templateCategory === 'receipt') templateName = settings.metaTemplateReceipt;
+    else if (templateCategory === 'broadcast') templateName = settings.metaTemplateBroadcast;
+    else if (templateCategory === 'welcome') templateName = settings.metaTemplateWelcome;
+    else if (templateCategory === 'overdue') templateName = settings.metaTemplateOverdue;
+    else if (templateCategory === 'suspension') templateName = settings.metaTemplateSuspension;
+    else if (templateCategory === 'custom') templateName = settings.metaTemplateCustom;
+  }
+
+  // Look for custom parameters mapping
+  let dynamicParamsResolved = false;
+  if (templateName && settings.metaCustomTemplates) {
+    const matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
+    if (matchedConfig && matchedConfig.parameters) {
+      const paramKeys = matchedConfig.parameters.split(',').map(s => s.trim());
+      templateParams = paramKeys.map(key => {
+        let val: any = '';
+        if (key === 'customer_name') val = customer.name;
+        else if (key === 'customer_balance') val = customer.balance;
+        else if (key === 'billing_amount') val = settings.billingAmount;
+        else if (key === 'new_balance') val = customer.balance + settings.billingAmount;
+        else if (key === 'payment_amount') val = customer.balance; // Approximation if unknown
+        else if (key === 'overdue_amount') val = customer.balance + settings.penaltyAmount;
+        else if (key === 'date') val = new Date().toLocaleDateString('en-GB');
+        else if (key === 'portal_link' || key === 'button_param') val = { isButtonParam: true, value: customer.id, index: '0' };
+        else val = '';
+        return val;
+      });
+      dynamicParamsResolved = true;
+    }
+  }
+
   if (usePortalLink) {
     try {
       const portalUrl = await createPortalLink(customer, settings);
       finalMessage = `${message}\n\n📄 View Invoice & Pay Securely:\n${portalUrl}`;
       
-      // Pass the customer.id to support Meta's dynamic URL button {1} parameter if it expects it
-      templateParams = templateParams || [];
-      if (templateParams.length === 0) {
-        templateParams.push(customer.name);
-        templateParams.push({ isButtonParam: true, value: customer.id, index: '0' });
+      if (!dynamicParamsResolved) {
+        templateParams = templateParams || [];
+        if (templateParams.length === 0) {
+          templateParams.push(customer.name);
+          if (templateCategory === 'billing') {
+            templateParams.push(settings.billingAmount);
+            templateParams.push(customer.balance);
+            templateParams.push(new Date().toLocaleDateString('en-GB'));
+          }
+          templateParams.push({ isButtonParam: true, value: customer.id, index: '0' });
+        }
       }
       
       // If we use a portal link, we strip out the binary attachments since manual links can't use them anyway
@@ -140,6 +181,17 @@ export const sendWhatsAppNotification = async (
     } catch (e) {
       console.warn("Failed to generate portal link", e);
     }
+   } else if (!dynamicParamsResolved) {
+      templateParams = templateParams || [];
+      if (templateParams.length === 0) {
+        templateParams.push(customer.name);
+        if (templateCategory === 'billing') {
+          templateParams.push(settings.billingAmount);
+          templateParams.push(customer.balance);
+          templateParams.push(new Date().toLocaleDateString('en-GB'));
+        }
+        templateParams.push({ isButtonParam: true, value: customer.id, index: '0' });
+      }
    }
   
   // 2. Try automated API if configured
@@ -150,7 +202,9 @@ export const sendWhatsAppNotification = async (
       attachment,
       attachmentName,
       attachmentType: attachment ? 'application/pdf' : undefined,
-      templateCategory
+      templateCategory,
+      templateParams,
+      customTemplateName: templateName
     });
 
     if (result.success) {

@@ -1107,6 +1107,36 @@ async function startServer() {
                         settings?.billTemplateImage,
                         lang
                       );
+                      
+                      let finalTemplateParams: any[] = [
+                        customer?.name || "Customer",
+                        amountPaid,
+                        {
+                          isButtonParam: true,
+                          value: finalCustomerId,
+                          index: "0",
+                        },
+                      ];
+                      
+                      const templateName = settings?.metaTemplateReceipt;
+                      if (templateName && settings?.metaCustomTemplates) {
+                        const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
+                        if (matchedConfig && matchedConfig.parameters) {
+                          const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
+                          finalTemplateParams = paramKeys.map((key:string) => {
+                            if (key === 'customer_name') return customer?.name || "Customer";
+                            if (key === 'customer_balance') return customer?.balance || 0;
+                            if (key === 'billing_amount') return settings?.billingAmount || 0;
+                            if (key === 'new_balance') return customer?.balance || 0;
+                            if (key === 'payment_amount') return amountPaid;
+                            if (key === 'overdue_amount') return customer?.balance || 0;
+                            if (key === 'date') return new Date().toLocaleDateString('en-GB');
+                            if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: finalCustomerId, index: "0" };
+                            return '';
+                          });
+                        }
+                      }
+
                     await sendWhatsAppMessage(
                       settings,
                       mobile,
@@ -1115,15 +1145,7 @@ async function startServer() {
                       "Payment_Receipt.pdf",
                       false,
                       "receipt",
-                      [
-                        customer?.name || "Customer",
-                        amountPaid,
-                        {
-                          isButtonParam: true,
-                          value: finalCustomerId,
-                          index: "0",
-                        },
-                      ],
+                      finalTemplateParams,
                     );
                   } catch (e) {
                     console.error("Webhook Auto-Receipt failed", e);
@@ -1164,6 +1186,7 @@ async function startServer() {
       | "custom",
     templateParams?: any[],
     customTemplateName?: string,
+    contextData?: any,
   ) {
     if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
       throw new Error("WhatsApp API not configured");
@@ -1346,9 +1369,11 @@ async function startServer() {
         // generic fallback param when test template is used
       }
 
+      const lang = settings.preferredLanguage === 'hi' ? 'hi' : settings.preferredLanguage === 'pa' ? 'pa' : settings.preferredLanguage || "en_US";
+      
       bodyPayload.template = {
         name: templateName,
-        language: { code: "en_US" },
+        language: { code: lang },
         components: components.length > 0 ? components : undefined,
       };
     } else {
@@ -1503,6 +1528,7 @@ async function startServer() {
       | "custom",
     templateParams?: any[],
     customTemplateName?: string,
+    contextData?: any,
   ) {
     if (settings.preferredNotificationMethod === "manual_link") {
       throw new Error("Manual link selected, API disabled.");
@@ -1540,6 +1566,7 @@ async function startServer() {
         templateCategory,
         templateParams,
         customTemplateName,
+        contextData,
       );
     }
   }
@@ -1820,6 +1847,34 @@ async function startServer() {
 
               const message = `Dear ${customer.name}, your new water bill of Rs. ${settings.billingAmount} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
               try {
+                let finalTemplateParams: any[] = [
+                    customer.name,
+                    settings.billingAmount,
+                    newBalance,
+                    new Date().toLocaleDateString('en-GB'),
+                    { isButtonParam: true, value: customer.id, index: "0" },
+                ];
+                
+                // Map Custom parameters for billing template
+                const templateName = settings.metaTemplateBilling;
+                if (templateName && settings.metaCustomTemplates) {
+                  const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
+                  if (matchedConfig && matchedConfig.parameters) {
+                    const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
+                    finalTemplateParams = paramKeys.map((key:string) => {
+                      if (key === 'customer_name') return customer.name;
+                      if (key === 'customer_balance') return customer.balance; // Old balance
+                      if (key === 'billing_amount') return settings.billingAmount;
+                      if (key === 'new_balance') return newBalance;
+                      if (key === 'payment_amount') return 0;
+                      if (key === 'overdue_amount') return newBalance;
+                      if (key === 'date') return new Date().toLocaleDateString('en-GB');
+                      if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: customer.id, index: "0" };
+                      return '';
+                    });
+                  }
+                }
+
                 await sendWhatsAppMessage(
                   settings,
                   customer.mobileNumber,
@@ -1828,12 +1883,7 @@ async function startServer() {
                   mediaName,
                   false,
                   "billing",
-                  [
-                    customer.name,
-                    settings.billingAmount,
-                    newBalance,
-                    { isButtonParam: true, value: customer.id, index: "0" },
-                  ],
+                  finalTemplateParams,
                 );
               } catch (e: any) {
                 console.error(
@@ -2245,6 +2295,28 @@ async function startServer() {
 
       for (const customer of customers) {
         try {
+          let finalTemplateParams: any[] = [message]; // Default parameter is just the message
+          
+          const templateName = settings.metaTemplateBroadcast || "mass_broadcast_generic";
+          if (settings.metaCustomTemplates) {
+            const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
+            if (matchedConfig && matchedConfig.parameters) {
+              const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
+              finalTemplateParams = paramKeys.map((key:string) => {
+                if (key === 'customer_name') return customer.name || "Customer";
+                if (key === 'customer_balance') return customer.balance || 0;
+                if (key === 'billing_amount') return settings.billingAmount || 0;
+                if (key === 'new_balance') return customer.balance || 0;
+                if (key === 'payment_amount') return customer.balance || 0;
+                if (key === 'overdue_amount') return customer.balance || 0;
+                if (key === 'date') return new Date().toLocaleDateString('en-GB');
+                if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: customer.id, index: "0" };
+                if (key === 'message') return message;
+                return message; // Default mapping
+              });
+            }
+          }
+
           await sendWhatsAppMessage(
             settings,
             customer.mobileNumber,
@@ -2253,7 +2325,7 @@ async function startServer() {
             mediaName,
             false,
             "broadcast",
-            [message],
+            finalTemplateParams,
           );
           results.success++;
         } catch (e: any) {
@@ -2390,6 +2462,25 @@ async function startServer() {
               `The '${templateToTest}' template name is not configured in your settings.`,
             );
 
+          let finalTemplateParams: any[] = [testCustName];
+          if (settings.metaCustomTemplates) {
+            const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
+            if (matchedConfig && matchedConfig.parameters) {
+              const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
+              finalTemplateParams = paramKeys.map((key:string) => {
+                if (key === 'customer_name') return testCustName;
+                if (key === 'customer_balance') return testCustBalance;
+                if (key === 'billing_amount') return settings?.billingAmount || 0;
+                if (key === 'new_balance') return testCustBalance;
+                if (key === 'payment_amount') return testCustBalance;
+                if (key === 'overdue_amount') return testCustBalance;
+                if (key === 'date') return new Date().toLocaleDateString('en-GB');
+                if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: testCustId, index: "0" };
+                return '';
+              });
+            }
+          }
+
           await sendWhatsAppMessage(
             settings,
             testMobile,
@@ -2398,7 +2489,7 @@ async function startServer() {
             "Test_Invoice.pdf",
             true,
             "custom",
-            [testCustName],
+            finalTemplateParams,
             templateName,
           );
         } else {
@@ -3496,6 +3587,42 @@ async function startServer() {
   // Portal Short Links format redirect
   app.get("/p/:portalId", (req, res) => {
     res.redirect(`/?portal=${req.params.portalId}`);
+  });
+
+  app.get("/api/portal-data/:portalId", async (req, res) => {
+    try {
+      const db = getAdminDb();
+      if (!db) return res.status(500).json({ error: "No DB" });
+      const portalId = req.params.portalId;
+      
+      const portalDoc = await db.collection("public_portals").doc(portalId).get();
+      if (portalDoc.exists) {
+        return res.json(portalDoc.data());
+      }
+      
+      const custDoc = await db.collection("customers").doc(portalId).get();
+      if (!custDoc.exists) return res.status(404).json({ error: "Portal not found" });
+      
+      const customer = custDoc.data() as any;
+      const settingsDoc = await db.collection("settings").doc(customer.ownerId).get();
+      const settings: any = settingsDoc.exists ? settingsDoc.data() : {};
+      
+      return res.json({
+        portalId: customer.id,
+        ownerId: customer.ownerId,
+        customerId: customer.id,
+        customerName: customer.name || "Customer",
+        mobileNumber: customer.mobileNumber || "",
+        balance: customer.balance || 0,
+        billingAmount: settings.billingAmount || 0,
+        penaltyAmount: settings.penaltyAmount || 0,
+        penaltyDays: settings.penaltyDays || 0,
+        upiQrCodeImage: settings.upiQrCodeImage || null,
+        createdAt: Date.now()
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // Vite middleware for development (Serves the App)
