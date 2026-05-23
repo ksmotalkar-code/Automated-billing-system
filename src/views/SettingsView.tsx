@@ -64,6 +64,7 @@ export function SettingsView() {
     metaWhatsAppVerifyToken: '',
     paymentGatewayKey: '',
     paymentGatewaySecret: '',
+    publicPortalBaseUrl: '',
     enableAutosave: false,
     enableFreeTierLock: true,
     automation: {
@@ -802,6 +803,30 @@ export function SettingsView() {
                      {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-5 h-5" />}
                      {isTestLoading ? "Testing Connection..." : "Fire Connectivity Test"}
                    </motion.button>
+                </div>
+
+                {/* Portal Link Overrides */}
+                <div className="col-span-full space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
+                   <div className="flex items-center gap-3">
+                      <Zap className="w-5 h-5 text-emerald-600 font-black" />
+                      <div>
+                        <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-emerald-600 leading-none">Public Portal Base URL</h4>
+                        <p className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter opacity-60 mt-1">Override portal base URL for Meta payload injection</p>
+                      </div>
+                   </div>
+                   <div className="flex flex-col sm:flex-row gap-4">
+                      <div className="flex-1 space-y-3">
+                        <label className="text-[9px] font-black uppercase tracking-widest neu-text-muted ml-1">Domain Link</label>
+                        <input
+                          type="text"
+                          value={settings.publicPortalBaseUrl || ''}
+                          onChange={(e) => setSettings({ ...settings, publicPortalBaseUrl: e.target.value })}
+                          className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-black tracking-widest placeholder:opacity-20 shadow-inner"
+                          placeholder="https://my-app.onrender.com"
+                        />
+                        <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">This URL will be used to inject the `portal_link` parameter into WhatsApp Buttons.</p>
+                      </div>
+                   </div>
                 </div>
 
                 {/* Webhook Settings */}

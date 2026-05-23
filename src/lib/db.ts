@@ -50,6 +50,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
   if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
     console.warn('Firestore Quota Exceeded.', errInfo);
+    // Lock background tasks for 12 hours locally when quota hits
+    localStorage.setItem('firestore_quota_expiry', (Date.now() + 12 * 60 * 60 * 1000).toString());
     throw new Error('resource-exhausted: Your database quota has been exceeded. Please review usage or billing.');
   }
 
@@ -260,6 +262,7 @@ export interface AppSettings {
   enableFreeTierLock?: boolean;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
+  publicPortalBaseUrl?: string; // e.g. https://my-app.onrender.com
   automation?: AutomationSettings;
   chatbotCommands?: ChatbotCommand[];
   appTheme?: string;

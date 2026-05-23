@@ -1132,7 +1132,8 @@ async function startServer() {
                             if (key === 'payment_amount') return amountPaid;
                             if (key === 'overdue_amount') return customer?.balance || 0;
                             if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                            if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: finalCustomerId, index: "0" };
+                            if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${finalCustomerId}`;
+                            if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${finalCustomerId}`, index: "0" };
                             return '';
                           });
                         }
@@ -1416,23 +1417,96 @@ async function startServer() {
       },
     );
 
-    const data = await response.json();
+    let latestData = await response.json();
     if (!response.ok) {
-      let errMsg = data.error?.message || "Meta API Error";
       let isRecovered = false;
       
-      let detailsStr = data.error?.error_data?.details?.toLowerCase() || "";
-      const isParamCountError = errMsg.toLowerCase().includes("132000") || data.error?.code === 132000 || detailsStr.includes("does not match the expected number of params");
-      const isHeaderIssue = errMsg.toLowerCase().includes("132018") || data.error?.code === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (isRecovered) break;
+        
+        let errMsg = latestData.error?.message || "Meta API Error";
+        let detailsStr = latestData.error?.error_data?.details?.toLowerCase() || "";
+        
+        const isParamCountError = errMsg.toLowerCase().includes("132000") || latestData.error?.code === 132000 || detailsStr.includes("does not match the expected number of params");
+        const isHeaderIssue = errMsg.toLowerCase().includes("132018") || latestData.error?.code === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
+        const isButtonNoParamAllowed = detailsStr.includes("button") && detailsStr.includes("no parameters allowed");
+        const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || latestData.error?.code === 131008 || (detailsStr.includes("button") && detailsStr.includes("requires a parameter"));
 
-      if (isHeaderIssue && bodyPayload.type === "template" && bodyPayload.template.components) {
-        // Attempt to retry without the header component if the template didn't expect one
-        const hasHeader = bodyPayload.template.components.some((c: any) => c.type === "header");
-        if (hasHeader) {
-          console.warn("[WhatsApp] Retrying message without header component as template may not support it...");
-          const newComponents = bodyPayload.template.components.filter((c: any) => c.type !== "header");
-          bodyPayload.template.components = newComponents.length > 0 ? newComponents : undefined;
+        let madeChanges = false;
+        
+        if (bodyPayload.type === "template" && bodyPayload.template.components) {
+          if (isHeaderIssue || isButtonNoParamAllowed || isButtonMissingParam) {
+            const hasHeader = bodyPayload.template.components.some((c: any) => c.type === "header");
+            const hasButton = bodyPayload.template.components.some((c: any) => c.type === "button");
+            
+            if (hasHeader && (detailsStr.includes("header") || (!isButtonNoParamAllowed && !isButtonMissingParam))) {
+              console.warn("[WhatsApp] Retrying message without header component as template may not support it...");
+              bodyPayload.template.components = bodyPayload.template.components.filter((c: any) => c.type !== "header");
+              madeChanges = true;
+            } else if (isButtonNoParamAllowed && hasButton) {
+              console.warn("[WhatsApp] Retrying message without button component as template does not allow it...");
+              bodyPayload.template.components = bodyPayload.template.components.filter((c: any) => c.type !== "button");
+              madeChanges = true;
+            } else if (isButtonMissingParam) {
+              console.warn("[WhatsApp] Retrying message by injecting missing button parameter...");
+              if (!hasButton) {
+                 bodyPayload.template.components.push({
+                   type: "button",
+                   sub_type: "url",
+                   index: "0",
+                   parameters: [{ type: "text", text: "?portal=true" }]
+                 });
+              } else {
+                 bodyPayload.template.components = bodyPayload.template.components.map((c: any) => {
+                   if (c.type === "button") {
+                     return {
+                       ...c,
+                       parameters: [{ type: "text", text: "?portal=true" }]
+                     };
+                   }
+                   return c;
+                 });
+              }
+              madeChanges = true;
+            }
+          }
           
+          if (!madeChanges && isParamCountError) {
+            const match = detailsStr.match(/expected number of params \((\d+)\)/);
+            if (match && match[1]) {
+              const expectedCount = parseInt(match[1], 10);
+              console.warn(`[WhatsApp] Retrying message with exactly ${expectedCount} body parameters...`);
+              
+              let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
+              bodyPayload.template.components = bodyPayload.template.components.map((c: any) => {
+                if (c.type === "body") {
+                  const currentParams = c.parameters || [];
+                  const paddedParams = [...currentParams];
+                  while (paddedParams.length < expectedCount) {
+                    paddedParams.push({ type: "text", text: "N/A" });
+                  }
+                  if (paddedParams.length > expectedCount) {
+                    paddedParams.length = expectedCount;
+                  }
+                  return { ...c, parameters: paddedParams };
+                }
+                return c;
+              });
+              
+              if (!bodyComponentOpt && expectedCount > 0) {
+                const injectedParams = Array(expectedCount).fill({ type: "text", text: "N/A" });
+                bodyPayload.template.components.push({ type: "body", parameters: injectedParams });
+              }
+              madeChanges = true;
+            }
+          }
+        }
+        
+        if (bodyPayload.template && bodyPayload.template.components && bodyPayload.template.components.length === 0) {
+           bodyPayload.template.components = undefined;
+        }
+
+        if (madeChanges) {
           const retryResponse = await fetch(
             `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
             {
@@ -1444,78 +1518,20 @@ async function startServer() {
               body: JSON.stringify(bodyPayload),
             }
           );
+          latestData = await retryResponse.json();
           if (retryResponse.ok) {
             isRecovered = true;
-            return await retryResponse.json();
-          } else {
-            // Keep the retry error for further retry attempts
-            const retryData = await retryResponse.json();
-            errMsg = retryData.error?.message || "Meta API Error";
-            detailsStr = retryData.error?.error_data?.details?.toLowerCase() || "";
+            return latestData;
           }
+        } else {
+          break; // No more automated fixes available
         }
       }
       
-      // Attempt retry with dynamically populated body parameters if parameter count doesn't match
-      if (!isRecovered && isParamCountError && bodyPayload.type === "template" && bodyPayload.template.components) {
-        // Find expected count
-        const match = detailsStr.match(/expected number of params \((\d+)\)/);
-        if (match && match[1]) {
-          const expectedCount = parseInt(match[1], 10);
-          console.warn(`[WhatsApp] Retrying message with exactly ${expectedCount} body parameters...`);
-          
-          let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
-          
-          // Re-create the components array
-          const newComponents = bodyPayload.template.components.map((c: any) => {
-            if (c.type === "body") {
-              const currentParams = c.parameters || [];
-              const paddedParams = [...currentParams];
-              
-              // Pad with generic text if not enough
-              while (paddedParams.length < expectedCount) {
-                paddedParams.push({ type: "text", text: "N/A" });
-              }
-              // Truncate if too many
-              if (paddedParams.length > expectedCount) {
-                paddedParams.length = expectedCount;
-              }
-              return { ...c, parameters: paddedParams };
-            }
-            return c;
-          });
-          
-          // If no body component existed but expected count > 0, we must inject it
-          if (!bodyComponentOpt && expectedCount > 0) {
-            const injectedParams = Array(expectedCount).fill({ type: "text", text: "N/A" });
-            newComponents.push({ type: "body", parameters: injectedParams });
-          }
-          
-          bodyPayload.template.components = newComponents;
+      let finalErrMsg = latestData.error?.message || "Meta API Error";
+      let finalDetailsStr = latestData.error?.error_data?.details?.toLowerCase() || "";
+      const errStr = finalErrMsg.toLowerCase();
 
-          const paramRetryResponse = await fetch(
-            `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(bodyPayload),
-            }
-          );
-          
-          if (paramRetryResponse.ok) {
-            isRecovered = true;
-            return await paramRetryResponse.json();
-          } else {
-             const retryData = await paramRetryResponse.json();
-             errMsg = retryData.error?.message || "Meta API Error";
-          }
-        }
-      }
-
-      const errStr = errMsg.toLowerCase();
       const isExpectedFallbackError =
         isTestMessage &&
         (errStr.includes("hello_world") ||
@@ -1523,35 +1539,29 @@ async function startServer() {
           errStr.includes("test number") ||
           errStr.includes("does not exist") ||
           errStr.includes("131058") ||
-          data.error?.code === 131058);
+          latestData.error?.code === 131058);
           
       if (!isRecovered && !isExpectedFallbackError) {
-        console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(data));
+        console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(latestData));
       }
-      const isExpectedWindowError =
-        !isTestMessage &&
-        (errStr.includes("131047") ||
-          errStr.includes("24 hours") ||
-          errStr.includes("free-form") ||
-          errStr.includes("doesn't exist") ||
-          errStr.includes("template"));
 
       if (
-        data.error &&
-        data.error.message &&
-        data.error.message.includes("register this phone number")
+        latestData.error &&
+        latestData.error.message &&
+        latestData.error.message.includes("register this phone number")
       ) {
-        errMsg =
+        finalErrMsg =
           "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.";
-      } else if (data.error?.type === "OAuthException") {
-        errMsg = `OAuthException: ${data.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
-        if (data.error.error_data && data.error.error_data.details) {
-          errMsg += ` Details: ${data.error.error_data.details}`;
+      } else if (latestData.error?.type === "OAuthException") {
+        finalErrMsg = `OAuthException: ${latestData.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
+        if (latestData.error.error_data && latestData.error.error_data.details) {
+          finalErrMsg += ` Details: ${latestData.error.error_data.details}`;
         }
       }
-      throw new Error(errMsg);
+      
+      throw new Error(finalErrMsg);
     }
-    return data;
+    return latestData;
   }
 
   // Helper for WATI WhatsApp API
@@ -1967,7 +1977,8 @@ async function startServer() {
                       if (key === 'payment_amount') return 0;
                       if (key === 'overdue_amount') return newBalance;
                       if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                      if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: customer.id, index: "0" };
+                      if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id}`;
+                      if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id}`, index: "0" };
                       return '';
                     });
                   }
@@ -2408,7 +2419,8 @@ async function startServer() {
                 if (key === 'payment_amount') return customer.balance || 0;
                 if (key === 'overdue_amount') return customer.balance || 0;
                 if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: customer.id, index: "0" };
+                if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id}`;
+                if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id}`, index: "0" };
                 if (key === 'message') return message;
                 return message; // Default mapping
               });
@@ -2573,7 +2585,8 @@ async function startServer() {
                 if (key === 'payment_amount') return testCustBalance;
                 if (key === 'overdue_amount') return testCustBalance;
                 if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                if (key === 'portal_link' || key === 'button_param') return { isButtonParam: true, value: testCustId, index: "0" };
+                if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${testCustId}`;
+                if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${testCustId}`, index: "0" };
                 return '';
               });
             }

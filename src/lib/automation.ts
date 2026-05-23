@@ -212,12 +212,14 @@ export const sendWhatsAppNotification = async (
       return { success: true };
     } else {
       console.error(`Automated WhatsApp API failed: ${result.error}.`);
-      // If bulk mode and no other options, we might fail here, but let's keep going for manual if not bulk
+      return { success: false, error: result.error };
     }
+  } else if (settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati') {
+    return { success: false, error: "API method selected but not configured properly." };
   }
 
-  // 3. Fallback to manual link if not in bulk mode
-  if (!isBulkMode) {
+  // 3. Fallback to manual link if not in bulk mode and preferred method is manual
+  if (!isBulkMode && (!settings.preferredNotificationMethod || settings.preferredNotificationMethod === 'manual_link')) {
     const mobile = customer.mobileNumber.replace(/\D/g, '');
     let formattedTo = mobile;
     if (mobile.length === 10) {

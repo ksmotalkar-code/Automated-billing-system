@@ -139,17 +139,26 @@ export default function App() {
   const lastRunRef = useRef<number>(0);
   useEffect(() => {
     const minWait = 1000 * 60 * 5; // 5 minutes minimum between attempts in this session
-    if (user && customers.length > 0 && settings && settings.automation && (Date.now() - lastRunRef.current > minWait)) {
-       lastRunRef.current = Date.now();
-       console.log("Triggering automation cycle check...");
-       runAutomationCycle(customers, settings).catch(e => {
-         if (e.message?.includes('Quota') || e.code === 'resource-exhausted') {
-            console.warn("Automation cycle hit quota limits, will retry later.");
-         } else {
-            console.error("Auto Cycle Error", e);
-         }
-       });
-    }
+    
+    // Check if quota lock is active before running to prevent infinite backend hits
+    import('./lib/db').then(({ isQuotaExceeded }) => {
+      if (isQuotaExceeded()) {
+        console.warn("Automation cycle skipped due to Free Tier Quota Lock.");
+        return;
+      }
+      
+      if (user && customers.length > 0 && settings && settings.automation && (Date.now() - lastRunRef.current > minWait)) {
+         lastRunRef.current = Date.now();
+         console.log("Triggering automation cycle check...");
+         runAutomationCycle(customers, settings).catch(e => {
+           if (e.message?.includes('Quota') || e.code === 'resource-exhausted') {
+              console.warn("Automation cycle hit quota limits, will retry later.");
+           } else {
+              console.error("Auto Cycle Error", e);
+           }
+         });
+      }
+    });
   }, [user, customers.length, !!settings]); // Use !!settings to only trigger when settings exists, not on every change to settings object
 
   useEffect(() => {
