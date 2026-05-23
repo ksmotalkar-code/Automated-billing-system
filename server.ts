@@ -1419,6 +1419,35 @@ async function startServer() {
     if (!response.ok) {
       let errMsg = data.error?.message || "Meta API Error";
       console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(data));
+      
+      const detailsStr = data.error?.error_data?.details?.toLowerCase() || "";
+      if ((errMsg.toLowerCase().includes("132018") || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed")) && bodyPayload.type === "template" && bodyPayload.template.components) {
+        // Attempt to retry without the header component if the template didn't expect one
+        const hasHeader = bodyPayload.template.components.some((c: any) => c.type === "header");
+        if (hasHeader) {
+          console.warn("[WhatsApp] Retrying message without header component as template may not support it...");
+          const newComponents = bodyPayload.template.components.filter((c: any) => c.type !== "header");
+          bodyPayload.template.components = newComponents.length > 0 ? newComponents : undefined;
+          
+          const retryResponse = await fetch(
+            `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(bodyPayload),
+            }
+          );
+          if (retryResponse.ok) {
+            return await retryResponse.json();
+          }
+          // If the retry also fails, we will just proceed to throw the original error (or retry's error)
+          const retryData = await retryResponse.json();
+          errMsg = retryData.error?.message || "Meta API Error";
+        }
+      }
 
       // Ignore logging if this is a test message failing due to missing hello_world template,
       // as our route handler expects this and falls back to text messages.
