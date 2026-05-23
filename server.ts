@@ -284,6 +284,7 @@ interface AppSettings {
   metaTemplateBilling?: string;
   metaTemplateReceipt?: string;
   metaTemplateBroadcast?: string;
+  metaCustomTemplates?: any[];
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
@@ -1418,10 +1419,13 @@ async function startServer() {
     const data = await response.json();
     if (!response.ok) {
       let errMsg = data.error?.message || "Meta API Error";
-      console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(data));
+      let isRecovered = false;
       
-      const detailsStr = data.error?.error_data?.details?.toLowerCase() || "";
-      if ((errMsg.toLowerCase().includes("132018") || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed")) && bodyPayload.type === "template" && bodyPayload.template.components) {
+      let detailsStr = data.error?.error_data?.details?.toLowerCase() || "";
+      const isParamCountError = errMsg.toLowerCase().includes("132000") || data.error?.code === 132000 || detailsStr.includes("does not match the expected number of params");
+      const isHeaderIssue = errMsg.toLowerCase().includes("132018") || data.error?.code === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
+
+      if (isHeaderIssue && bodyPayload.type === "template" && bodyPayload.template.components) {
         // Attempt to retry without the header component if the template didn't expect one
         const hasHeader = bodyPayload.template.components.some((c: any) => c.type === "header");
         if (hasHeader) {
@@ -1441,16 +1445,76 @@ async function startServer() {
             }
           );
           if (retryResponse.ok) {
+            isRecovered = true;
             return await retryResponse.json();
+          } else {
+            // Keep the retry error for further retry attempts
+            const retryData = await retryResponse.json();
+            errMsg = retryData.error?.message || "Meta API Error";
+            detailsStr = retryData.error?.error_data?.details?.toLowerCase() || "";
           }
-          // If the retry also fails, we will just proceed to throw the original error (or retry's error)
-          const retryData = await retryResponse.json();
-          errMsg = retryData.error?.message || "Meta API Error";
+        }
+      }
+      
+      // Attempt retry with dynamically populated body parameters if parameter count doesn't match
+      if (!isRecovered && isParamCountError && bodyPayload.type === "template" && bodyPayload.template.components) {
+        // Find expected count
+        const match = detailsStr.match(/expected number of params \((\d+)\)/);
+        if (match && match[1]) {
+          const expectedCount = parseInt(match[1], 10);
+          console.warn(`[WhatsApp] Retrying message with exactly ${expectedCount} body parameters...`);
+          
+          let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
+          
+          // Re-create the components array
+          const newComponents = bodyPayload.template.components.map((c: any) => {
+            if (c.type === "body") {
+              const currentParams = c.parameters || [];
+              const paddedParams = [...currentParams];
+              
+              // Pad with generic text if not enough
+              while (paddedParams.length < expectedCount) {
+                paddedParams.push({ type: "text", text: "N/A" });
+              }
+              // Truncate if too many
+              if (paddedParams.length > expectedCount) {
+                paddedParams.length = expectedCount;
+              }
+              return { ...c, parameters: paddedParams };
+            }
+            return c;
+          });
+          
+          // If no body component existed but expected count > 0, we must inject it
+          if (!bodyComponentOpt && expectedCount > 0) {
+            const injectedParams = Array(expectedCount).fill({ type: "text", text: "N/A" });
+            newComponents.push({ type: "body", parameters: injectedParams });
+          }
+          
+          bodyPayload.template.components = newComponents;
+
+          const paramRetryResponse = await fetch(
+            `https://graph.facebook.com/v17.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(bodyPayload),
+            }
+          );
+          
+          if (paramRetryResponse.ok) {
+            isRecovered = true;
+            return await paramRetryResponse.json();
+          } else {
+             const retryData = await paramRetryResponse.json();
+             errMsg = retryData.error?.message || "Meta API Error";
+          }
         }
       }
 
-      // Ignore logging if this is a test message failing due to missing hello_world template,
-      // as our route handler expects this and falls back to text messages.
       const errStr = errMsg.toLowerCase();
       const isExpectedFallbackError =
         isTestMessage &&
@@ -1458,7 +1522,12 @@ async function startServer() {
           errStr.includes("hello world") ||
           errStr.includes("test number") ||
           errStr.includes("does not exist") ||
-          errStr.includes("131058"));
+          errStr.includes("131058") ||
+          data.error?.code === 131058);
+          
+      if (!isRecovered && !isExpectedFallbackError) {
+        console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(data));
+      }
       const isExpectedWindowError =
         !isTestMessage &&
         (errStr.includes("131047") ||

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, CheckCircle2, AlertTriangle, Send, Camera, Paperclip } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Customer, saveSettings, AppSettings, updateCustomer } from "../lib/db";
+import { Customer, saveSettings, AppSettings, updateCustomer, saveBillingAuditLog } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { generateInvoicePDF, sendWhatsAppNotification, generateEscalationPDF, runAutomationCycle } from "../lib/automation";
@@ -475,6 +475,8 @@ export function BillingView() {
       showCancel: true,
       onConfirm: async () => {
         const activeCustomers = customers.filter(c => c.status === 'Active');
+        let processedCount = 0;
+        let totalBilled = 0;
         for (let i = 0; i < activeCustomers.length; i += 400) {
           const batch = writeBatch(db);
           const chunk = activeCustomers.slice(i, i + 400);
@@ -483,6 +485,8 @@ export function BillingView() {
               balance: customer.balance + settings.billingAmount,
               invoiceSent: false
             });
+            processedCount++;
+            totalBilled += settings.billingAmount;
           }
            try {
                await batch.commit();
@@ -492,6 +496,19 @@ export function BillingView() {
            }
           await new Promise(resolve => setTimeout(resolve, 800));
         }
+        
+        if (processedCount > 0 && auth.currentUser) {
+          await saveBillingAuditLog({
+            ownerId: auth.currentUser.uid,
+            type: 'bill_generation',
+            description: 'Manual Bulk Bill Generation',
+            affectedCustomersCount: processedCount,
+            totalAmount: totalBilled,
+            timestamp: new Date().toISOString(),
+            executedBy: 'admin'
+          });
+        }
+        
         showAlert("Success", "Billing cycle completed successfully!");
       }
     });
@@ -506,6 +523,8 @@ export function BillingView() {
       showCancel: true,
       onConfirm: async () => {
         const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+        let processedCount = 0;
+        let totalPenalties = 0;
         for (let i = 0; i < activeCustomers.length; i += 400) {
           const batch = writeBatch(db);
           const chunk = activeCustomers.slice(i, i + 400);
@@ -513,6 +532,8 @@ export function BillingView() {
             batch.update(doc(db, 'customers', customer.id), { 
               balance: customer.balance + settings.penaltyAmount 
             });
+            processedCount++;
+            totalPenalties += settings.penaltyAmount;
           }
            try {
                await batch.commit();
@@ -522,6 +543,19 @@ export function BillingView() {
            }
           await new Promise(resolve => setTimeout(resolve, 800));
         }
+        
+        if (processedCount > 0 && auth.currentUser) {
+          await saveBillingAuditLog({
+            ownerId: auth.currentUser.uid,
+            type: 'penalty_application',
+            description: 'Manual Bulk Penalty Application',
+            affectedCustomersCount: processedCount,
+            totalAmount: totalPenalties,
+            timestamp: new Date().toISOString(),
+            executedBy: 'admin'
+          });
+        }
+        
         showAlert("Success", "Penalties applied successfully!");
       }
     });

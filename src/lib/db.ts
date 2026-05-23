@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit, addDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -99,6 +99,22 @@ export interface Complaint {
   description?: string;
   mobileNumber?: string;
 }
+
+export interface BillingAuditLog {
+  id?: string;
+  ownerId: string;
+  type: 'bill_generation' | 'penalty_application' | 'auto_suspend';
+  description: string;
+  affectedCustomersCount: number;
+  totalAmount: number;
+  timestamp: string;
+  executedBy: 'system' | 'admin';
+}
+
+export const saveBillingAuditLog = async (log: Omit<BillingAuditLog, 'id'>) => {
+  const q = collection(db, 'billing_audit');
+  await addDoc(q, log);
+};
 
 export interface ReportFile {
   name: string;
@@ -682,6 +698,20 @@ export const importCustomersFromText = async (text: string) => {
     }
   }
   return customers.length;
+};
+
+export const subscribeToBillingAuditLogs = (callback: (logs: BillingAuditLog[]) => void) => {
+  const user = auth.currentUser;
+  if (!user) return () => {};
+  const q = query(
+    collection(db, 'billing_audit'),
+    where('ownerId', '==', user.uid)
+  );
+  return onSnapshot(q, (snapshot) => {
+    const logsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillingAuditLog));
+    logsData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    callback(logsData);
+  });
 };
 
 export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {

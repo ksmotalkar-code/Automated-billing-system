@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Customer, AppSettings, updateCustomer, saveSettings, Report, logAutomationError } from './db';
-import { db } from '../firebase';
+import { Customer, AppSettings, updateCustomer, saveSettings, Report, logAutomationError, saveBillingAuditLog } from './db';
+import { db, auth } from '../firebase';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { whatsappService } from '../services/whatsappService';
 import { createPortalLink } from './portal';
@@ -277,6 +277,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       needsSettingsUpdate = true;
 
       // Process in batches
+      let processedCount = 0;
+      let totalBilled = 0;
       for (let i = 0; i < activeCustomers.length; i += 200) {
         const batch = writeBatch(db);
         const chunk = activeCustomers.slice(i, i + 200);
@@ -288,6 +290,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
             invoiceSent: false,
             paymentNotified: false
           });
+          processedCount++;
+          totalBilled += settings.billingAmount;
 
           // If smart notifications are enabled, automatically text them their new bill
           if (automation.smartNotifications && automation.bulkProcessing) {
@@ -318,6 +322,20 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         }
         await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
       }
+
+      if (processedCount > 0 && auth.currentUser) {
+        try {
+          await saveBillingAuditLog({
+            ownerId: auth.currentUser.uid,
+            type: 'bill_generation',
+            description: 'Automated Billing Cycle',
+            affectedCustomersCount: processedCount,
+            totalAmount: totalBilled,
+            timestamp: new Date().toISOString(),
+            executedBy: 'system'
+          });
+        } catch(e) { console.error(e) }
+      }
     }
 
   // 2. Automatic Penalty Application
@@ -331,6 +349,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     updatedSettings.lastPenaltyDate = now.toISOString();
     needsSettingsUpdate = true;
     
+      let processedCount = 0;
+      let totalPenalties = 0;
       for (let i = 0; i < activeCustomers.length; i += 200) {
       const batch = writeBatch(db);
       const chunk = activeCustomers.slice(i, i + 200);
@@ -339,6 +359,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         batch.update(doc(db, 'customers', customer.id), {
           balance: customer.balance + settings.penaltyAmount
         });
+        processedCount++;
+        totalPenalties += settings.penaltyAmount;
         
         if (automation.bulkProcessing) {
           try {
@@ -367,6 +389,20 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
+    
+    if (processedCount > 0 && auth.currentUser) {
+      try {
+        await saveBillingAuditLog({
+          ownerId: auth.currentUser.uid,
+          type: 'penalty_application',
+          description: 'Automated Late Fee Penalty',
+          affectedCustomersCount: processedCount,
+          totalAmount: totalPenalties,
+          timestamp: new Date().toISOString(),
+          executedBy: 'system'
+        });
+      } catch(e) { console.error(e) }
+    }
   }
 
   // 3. Escalation Check
@@ -376,12 +412,14 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
     
     localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
+    let suspendProcessedCount = 0;
     for (let i = 0; i < suspendedCustomers.length; i += 200) {
       const batch = writeBatch(db);
       const chunk = suspendedCustomers.slice(i, i + 200);
       
       for (const customer of chunk) {
          batch.update(doc(db, 'customers', customer.id), { status: 'Suspended' });
+         suspendProcessedCount++;
          
          if (automation.bulkProcessing) {
            try {
@@ -410,6 +448,20 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         break; 
       }
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
+    }
+    
+    if (suspendProcessedCount > 0 && auth.currentUser) {
+      try {
+        await saveBillingAuditLog({
+          ownerId: auth.currentUser.uid,
+          type: 'auto_suspend',
+          description: 'Automated Account Suspension',
+          affectedCustomersCount: suspendProcessedCount,
+          totalAmount: 0,
+          timestamp: new Date().toISOString(),
+          executedBy: 'system'
+        });
+      } catch(e) { console.error(e) }
     }
   }
 

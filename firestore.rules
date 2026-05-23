@@ -127,6 +127,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    match /billing_audit/{auditId} {
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && (incoming().ownerId == request.auth.uid || isAdmin());
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     match /reports/{reportId} {
       allow read: if true; // Public viewable via portal (get and list)
       allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;

@@ -12,7 +12,8 @@ import {
   Languages,
   AlertTriangle,
   BookOpen,
-  MessageSquare
+  MessageSquare,
+  ClipboardList
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useState } from "react";
@@ -26,6 +27,7 @@ export const layers = [
   { id: "customers", label: "Customers", icon: Users, description: "Manage Accounts" },
   { id: "alerts", label: "Alerts & Notifications", icon: BellRing, description: "Monitor & Remind" },
   { id: "billing", label: "Invoices & Billing", icon: FileText, description: "Billing Cycles" },
+  { id: "audit", label: "Audit Trail", icon: ClipboardList, description: "Billing Logs" },
   { id: "payments", label: "Payments", icon: CreditCard, description: "Transaction History" },
   { id: "complaints", label: "Complaints", icon: AlertTriangle, description: "Manage Complaints" },
   { id: "reports", label: "Reports", icon: FileText, description: "Manage Broadcasts" },

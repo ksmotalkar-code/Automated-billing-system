@@ -9,6 +9,7 @@ import { DashboardView } from "./views/DashboardView";
 import { CustomersView } from "./views/CustomersView";
 import { AlertsView } from "./views/AlertsView";
 import { BillingView } from "./views/BillingView";
+import { BillingAuditView } from "./views/BillingAuditView";
 import { PaymentsView } from "./views/PaymentsView";
 import { SettingsView } from "./views/SettingsView";
 import { DataUploadView } from "./views/DataUploadView";
@@ -190,6 +191,7 @@ export default function App() {
       case "customers": return <CustomersView key="customers" />;
       case "alerts": return <AlertsView key="alerts" />;
       case "billing": return <BillingView key="billing" />;
+      case "audit": return <BillingAuditView key="audit" />;
       case "payments": return <PaymentsView key="payments" />;
       case "complaints": return <ComplaintsView key="complaints" />;
       case "reports": return <ReportsView key="reports" />;
