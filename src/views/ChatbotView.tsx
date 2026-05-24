@@ -21,23 +21,22 @@ export function ChatbotView() {
     const fetchSettings = async () => {
       const data = await getChatbotSettings();
       const defaultSystemCommands: ChatbotCommand[] = [
-        { id: "sysdlbill", buttonLabel: `📄 ${t('Download Bill')}`, triggerWord: t('Download Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
-        { id: "sysqrpay", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
-        { id: "sysbill", buttonLabel: `📄 ${t('My Bill')}`, triggerWord: t('My Bill'), response: t('Dear {{name}}, your current bill status is being generated. Your outstanding balance is Rs. {{balance}}.'), isActive: true },
-        { id: "sysbalance", buttonLabel: `💳 ${t('Check Balance')}`, triggerWord: t('Check Balance'), response: t('Hi {{name}}, your total remaining balance is Rs. {{balance}}. Please ensure payment by {{dueDate}}.'), isActive: true },
-        { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaint')}`, triggerWord: t('Complaint'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true },
-        { id: "sysreport", buttonLabel: `📊 ${t('Deep Report')}`, triggerWord: t('Deep Report'), response: t('Hello {{name}}, let me fetch your detailed usage report from our systems.'), isActive: true },
-        { id: "syswater", buttonLabel: `💧 ${t('Water Quality')}`, triggerWord: t('Water Quality'), response: t('Dear {{name}}, our water quality currently meets all regulatory standards. Safe and clean for drinking!'), isActive: true },
-        { id: "syssupply", buttonLabel: `🕒 ${t('Supply Timings')}`, triggerWord: t('Supply Timings'), response: t('Hi {{name}}, the water supply timings for your area are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.'), isActive: true },
-        { id: "syscontact", buttonLabel: `📞 ${t('Contact')}`, triggerWord: t('Contact'), response: t('Hello {{name}}, for any urgent queries, you can reach out to our office directly at 1800-123-4567.'), isActive: true },
-        { id: "sysnotify", buttonLabel: `🔔 ${t('Notifications')}`, triggerWord: t('Notifications'), response: t('Hi {{name}}, your recent alerts and notifications are available in the public portal dashboard.'), isActive: true },
-        { id: "sysusage", buttonLabel: `📝 ${t('Usage')}`, triggerWord: t('Usage'), response: t('Dear {{name}}, your consumption and usage history over the past months is currently being computed.'), isActive: true },
-        { id: "sysmaint", buttonLabel: `⚠️ ${t('Maintenance')}`, triggerWord: t('Maintenance'), response: t('Good news {{name}}, there is no scheduled maintenance for your zone currently.'), isActive: true }
+        { id: "sysdlbill", buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
+        { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
+        { id: "sysdlinvoice", buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Dear {{name}}, your latest invoice has been generated. Please find it attached below.'), isActive: true },
+        { id: "sysmonthly", buttonLabel: `📅 ${t('Monthly Report')}`, triggerWord: t('Monthly Report'), response: t('Which month\'s report do you need? (e.g. January 2026)'), isActive: true },
+        { id: "sysdeepreport", buttonLabel: `📊 ${t('Deep Detail Report')}`, triggerWord: t('Deep Detail Report'), response: t('Hello {{name}}, let me fetch your deep detailed usage report from our systems.'), isActive: true },
+        { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true }
       ];
 
       let mergedCommands = [];
       if (data && data.commands) {
-        mergedCommands = [...data.commands];
+        // Keep ONLY the commands that exist in our new default system list, or custom user added ones.
+        // But since user wants to "remove all rest of them", we will filter out old default system commands
+        // that are no longer in our list.
+        mergedCommands = data.commands.filter((c: any) => 
+          !c.id.startsWith('sys') || defaultSystemCommands.some(dsc => dsc.id === c.id)
+        );
       }
       
       for (const sys of defaultSystemCommands) {

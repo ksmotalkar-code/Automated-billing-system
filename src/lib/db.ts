@@ -105,12 +105,14 @@ export interface Complaint {
 export interface BillingAuditLog {
   id?: string;
   ownerId: string;
-  type: 'bill_generation' | 'penalty_application' | 'auto_suspend';
+  type: 'bill_generation' | 'penalty_application' | 'auto_suspend' | 'inquiry';
   description: string;
   affectedCustomersCount: number;
   totalAmount: number;
   timestamp: string;
   executedBy: 'system' | 'admin';
+  customerId?: string;
+  customerName?: string;
 }
 
 export const saveBillingAuditLog = async (log: Omit<BillingAuditLog, 'id'>) => {
@@ -139,6 +141,7 @@ export interface Report {
   folderId?: string | null;
   ownerId?: string;
   files?: ReportFile[];
+  assetLink?: string;
 }
 
 export interface Transaction {

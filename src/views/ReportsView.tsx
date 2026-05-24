@@ -18,6 +18,7 @@ export function ReportsView() {
   
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
+  const [newAssetLink, setNewAssetLink] = useState("");
 
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
@@ -69,11 +70,13 @@ export function ReportsView() {
       await addReport({
         title: newTitle.trim(),
         content: newContent.trim(),
+        assetLink: newAssetLink.trim(),
         files: []
       });
       setIsAddModalOpen(false);
       setNewTitle("");
       setNewContent("");
+      setNewAssetLink("");
     } catch (err) {
       console.error(err);
       showAlert('Logic Error', "Cluster rejected folder creation.");
@@ -245,7 +248,7 @@ export function ReportsView() {
                        <div>
                           <h3 className="font-black text-xl tracking-tight uppercase leading-none mb-1">{report.title}</h3>
                           <p className="text-[9px] font-bold neu-text-muted uppercase tracking-[0.15em] opacity-60">
-                             {report.files?.length || 0} Assets Allocated
+                             {report.files?.length || 0} Assets {report.assetLink ? ' • 1 Link' : ''}
                           </p>
                        </div>
                        <div className="flex gap-2">
@@ -333,17 +336,29 @@ export function ReportsView() {
             </div>
             
             <form onSubmit={handleCreateReport} className="space-y-6">
-              <div className="space-y-2">
-                <label className="block text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Directory Metadata</label>
-                <input
-                  type="text"
-                  required
-                  autoFocus
-                  value={newTitle}
-                  onChange={e => setNewTitle(e.target.value)}
-                  className="w-full px-6 py-5 neu-pressed rounded-3xl bg-transparent outline-none focus:ring-4 focus:ring-blue-500/10 text-xs font-black uppercase tracking-wider"
-                  placeholder="ARCHIVE_REFERENCE_ID"
-                />
+              <div className="space-y-6">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Directory Metadata</label>
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    value={newTitle}
+                    onChange={e => setNewTitle(e.target.value)}
+                    className="w-full px-6 py-5 neu-pressed rounded-3xl bg-transparent outline-none focus:ring-4 focus:ring-blue-500/10 text-xs font-black uppercase tracking-wider"
+                    placeholder="E.g. January 2026 Report"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black text-neutral-400 uppercase tracking-widest ml-1">Drive/Asset Link (Optional)</label>
+                  <input
+                    type="text"
+                    value={newAssetLink}
+                    onChange={e => setNewAssetLink(e.target.value)}
+                    className="w-full px-6 py-5 neu-pressed rounded-3xl bg-transparent outline-none focus:ring-4 focus:ring-blue-500/10 text-xs font-black uppercase tracking-wider"
+                    placeholder="https://drive.google.com/..."
+                  />
+                </div>
               </div>
               <div className="pt-6 flex gap-4">
                 <motion.button

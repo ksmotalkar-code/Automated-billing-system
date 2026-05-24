@@ -270,6 +270,7 @@ interface AppSettings {
   billingCycleMonths: number;
   penaltyAmount: number;
   penaltyDays: number;
+  publicPortalBaseUrl?: string;
   escalationDays?: number;
   autoSuspend?: boolean;
   defaultBillingDate?: string;
@@ -591,9 +592,12 @@ async function routeSystemIntent(
   let replyText = baseText;
   let matched = false;
   let attachments: any[] = [];
+  let action: string = "";
 
   if (
     msgLower === "download bill" ||
+    msgLower === "download my bill" ||
+    msgLower === "sysdlbill" ||
     msgLower === "system_dl_bill" ||
     msgLower.includes("invoice")
   ) {
@@ -704,66 +708,43 @@ ${cmdListText}`;
     matched = true;
   } else if (
     msgLower === "complaint" ||
+    msgLower === "complaints" ||
+    msgLower === "syscomplaint" ||
     msgLower === "system_complaint" ||
     msgLower.includes("register complaint") ||
     msgLower === "issue"
   ) {
     replyText =
       replyText ||
-      `Please describe your complaint in the next message. Just type "Complaint" followed by your issue in " " quotes.\n\nFor example:\nComplaint "My water pipe is leaking"`;
+      `Please describe your complaint in the next message.`;
     matched = true;
+    action = "complaint";
+  } else if (
+    msgLower === "monthly report" ||
+    msgLower === "sysmonthly" ||
+    msgLower.includes("monthly report")
+  ) {
+    replyText = replyText || "Which month's report do you need? (e.g. January 2026)";
+    matched = true;
+    action = "monthly_report";
   } else if (
     msgLower === "deep report" ||
     msgLower === "system_report" ||
     msgLower.includes("deep detail report") ||
     msgLower === "report"
   ) {
-    let hasReport = false;
-    let reportName = "";
-    let reportFiles: any[] = [];
-    const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
-    if (dbInstance) {
-      const reportsSnap = await dbInstance
-        .collection("reports")
-        .where("ownerId", "==", ownerId)
-        .limit(1)
-        .get();
-      if (!reportsSnap.empty) {
-        hasReport = true;
-        reportName = reportsSnap.docs[0].data().title;
-        reportFiles = reportsSnap.docs[0].data().files || [];
-      }
-    } else {
-      const reportsSnap = await getDocsClient(
-        queryClient(
-          collectionClient(clientDb, "reports"),
-          whereClient("ownerId", "==", ownerId),
-        ),
-      );
-      if (!reportsSnap.empty) {
-        hasReport = true;
-        reportName = reportsSnap.docs[0].data().title;
-        reportFiles = reportsSnap.docs[0].data().files || [];
-      }
-    }
-    if (hasReport) {
-      replyText =
-        replyText ||
-        `A deep detail report "${reportName}" is available for you!`;
-      if (reportFiles.length > 0) {
-        replyText += ` I have attached the report files for you to download below.`;
-        attachments = reportFiles.map((f) => ({
-          type: "file",
-          name: f.name,
-          data: f.data,
-        }));
-      } else {
-        replyText += ` You can view it securely from the reports section of this portal.`;
-      }
-    } else {
-      replyText = `Your PDF deep detail report is not ready yet. Please try again after some time.`;
-    }
+    replyText =
+      replyText ||
+      `Thank you for asking for a Deep Detail Report. Please specify the month and the corresponding bill or voucher number you are inquiring about.
+
+For Example - 
+1. January me Sekhupuria Gurdwara ke paas Jo pipe leak repair ki hai uska d joint kha se purchase Kiya or kitne ka aaya
+2. Feburary me Bleaching powder kitne rupay ka lekar aaye
+3. November me jo motor repair karvai thi usme jo new wire lagi. Motor khol kr dikhao ki lagi hai ya nhi.
+
+After submitting your inquiry, please wait for a response. We will inform you of the next steps within 24 working hours. Thank you.`;
     matched = true;
+    action = "deep_report";
   } else if (
     msgLower === "water quality" ||
     msgLower === "system_water_quality" ||
@@ -851,7 +832,7 @@ ${cmdListText}`;
       `Here is your personal portal link:\n${protocol}://${reqHost}/?portal=true&customerId=${custData.id}`;
     matched = true;
   }
-  return { matched, replyText, attachments };
+  return { matched, replyText, attachments, action };
 }
 
 async function getChatbotSettings(ownerId: string) {
@@ -3396,6 +3377,160 @@ async function startServer() {
                             timestamp: FieldValue.serverTimestamp(),
                           });
                       } catch (e) {}
+                      
+                      if (matchedCustomer.pendingMonthlyReport) {
+                        try {
+                          await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                            pendingMonthlyReport: false
+                          });
+                          
+                          // Convert user input to lower case for case-insensitive matching
+                          const requestedMonthYear = msgBody.trim().toLowerCase();
+                          
+                          // Search for the report
+                          const reportSnap = await dbInstance
+                            .collection("reports")
+                            .where("ownerId", "==", ownerId)
+                            .get();
+                            
+                          let foundReport = null;
+                          let reportFileUrl = "";
+                          let reportFileName = "";
+                          
+                          for (const doc of reportSnap.docs) {
+                            const r = doc.data();
+                            if (r.title && r.title.toLowerCase().includes(requestedMonthYear)) {
+                              foundReport = r;
+                              if (r.files && r.files.length > 0) {
+                                reportFileUrl = r.files[0].data;
+                                reportFileName = r.files[0].name || "Report.pdf";
+                              } else if (r.assetLink) {
+                                reportFileUrl = r.assetLink;
+                                reportFileName = "DriveLink";
+                              }
+                              break;
+                            }
+                          }
+                          
+                          let compResText = "";
+                          
+                          if (foundReport && reportFileUrl) {
+                            compResText = `Here is the requested report for ${requestedMonthYear}.`;
+                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                              role: "assistant",
+                              content: compResText,
+                              source: "whatsapp",
+                              timestamp: FieldValue.serverTimestamp(),
+                            });
+                            
+                            if (settings && settings.metaWhatsAppPhoneNumberId) {
+                               // Send the report file via WhatsApp
+                               if (reportFileName === "DriveLink" || reportFileUrl.includes("drive.google.com") || (!reportFileUrl.startsWith("data:") && reportFileUrl.startsWith("http"))) {
+                                  // Send as a link in text
+                                  compResText = `Here is the requested report for ${requestedMonthYear}:\n${reportFileUrl}`;
+                                  await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
+                               } else if (reportFileUrl.startsWith("data:")) {
+                                  const base64Data = reportFileUrl.split(',')[1];
+                                  await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText, base64Data, reportFileName);
+                               }
+                            }
+                          } else {
+                            compResText = `The report does not exist.`;
+                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                              role: "assistant",
+                              content: compResText,
+                              source: "whatsapp",
+                              timestamp: FieldValue.serverTimestamp(),
+                            });
+                            if (settings && settings.metaWhatsAppPhoneNumberId) {
+                              await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
+                            }
+                          }
+                          
+                          continue;
+                        } catch (e) {
+                          console.error("Error processing monthly report fetch:", e);
+                        }
+                      }
+                      
+                      if (matchedCustomer.pendingComplaint) {
+                        try {
+                          const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+                          await saveComplaintData(complaintId, {
+                            id: complaintId,
+                            customerId: matchedCustomer.id,
+                            ownerId: ownerId,
+                            customerName: matchedCustomer.name,
+                            mobileNumber: matchedCustomer.mobileNumber || "",
+                            category: "Service Request",
+                            message: "WhatsApp Complaint",
+                            description: msgBody,
+                            billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
+                            status: "Pending",
+                            priority: "Medium",
+                            createdAt: new Date().toISOString(),
+                            expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+                          });
+                          
+                          await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                            pendingComplaint: false
+                          });
+                          
+                          const compResText = `Thank you. Your complaint has been registered successfully. We will resolve it soon!`;
+                          
+                          await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                            role: "assistant",
+                            content: compResText,
+                            source: "whatsapp",
+                            timestamp: FieldValue.serverTimestamp(),
+                          });
+                          
+                          if (settings && settings.metaWhatsAppPhoneNumberId) {
+                            try {
+                              await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
+                            } catch (err) {}
+                          }
+                          continue; // skip further bot processing for this message
+                        } catch (e) {}
+                      }
+                      
+                      if (matchedCustomer.pendingDeepReportInquiry) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingDeepReportInquiry: false
+                           });
+                           
+                           const auditId = Math.random().toString(36).substr(2, 9);
+                           await dbInstance.collection("billing_audit").doc(auditId).set({
+                             id: auditId,
+                             ownerId: ownerId,
+                             type: 'inquiry',
+                             customerId: matchedCustomer.id,
+                             customerName: matchedCustomer.name,
+                             description: msgBody,
+                             affectedCustomersCount: 1,
+                             totalAmount: 0,
+                             timestamp: new Date().toISOString(),
+                             executedBy: 'system'
+                           });
+                           
+                           const compResText = `Thank you. The request has been submitted. We will inform you of the next steps within 24 working hours.`;
+                           
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                             role: "assistant",
+                             content: compResText,
+                             source: "whatsapp",
+                             timestamp: FieldValue.serverTimestamp(),
+                           });
+                           
+                           if (settings && settings.metaWhatsAppPhoneNumberId) {
+                             try {
+                               await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
+                             } catch (err) {}
+                           }
+                           continue; // skip further bot processing for this message
+                        } catch (e) {}
+                      }
                     }
 
                     const chatbotSettings = (await getChatbotSettings(
@@ -3462,6 +3597,26 @@ async function startServer() {
                         attachmentsToPass = intentRes.attachments;
                       }
                       handled = true;
+                      
+                      if (intentRes.action === "complaint" && dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingComplaint: true
+                           });
+                        } catch (e) {}
+                      } else if (intentRes.action === "monthly_report" && dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingMonthlyReport: true
+                           });
+                        } catch (e) {}
+                      } else if (intentRes.action === "deep_report" && dbInstance) {
+                         try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingDeepReportInquiry: true
+                           });
+                         } catch (e) {}
+                      }
                     } else if (hasCustomCommandMatched) {
                       handled = true;
                       if (matchedCommand?.mediaUrl) {

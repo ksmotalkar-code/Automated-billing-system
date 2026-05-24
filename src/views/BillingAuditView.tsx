@@ -35,6 +35,8 @@ export function BillingAuditView() {
         return <AlertCircle className="w-5 h-5 text-rose-500" />;
       case 'auto_suspend':
         return <ShieldAlert className="w-5 h-5 text-orange-500" />;
+      case 'inquiry':
+        return <ClipboardList className="w-5 h-5 text-emerald-500" />;
       default:
         return <ClipboardList className="w-5 h-5 text-gray-500" />;
     }
@@ -53,7 +55,7 @@ export function BillingAuditView() {
             <ClipboardList className="w-8 h-8 neu-accent" />
             Audit Trail
           </h1>
-          <p className="neu-text-muted mt-1">A chronological log of all generated bills and penalty applications.</p>
+          <p className="neu-text-muted mt-1">A chronological log of all generated bills, penalty applications, and specific inquiries.</p>
         </div>
       </div>
 
@@ -100,14 +102,22 @@ export function BillingAuditView() {
                             </span>
                           )}
                         </h4>
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm neu-text-muted mt-1">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm neu-text-muted mt-1 w-full max-w-full">
                           <span>{new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
-                          <span>&bull;</span>
-                          <span>Affected: {log.affectedCustomersCount}</span>
-                          <span>&bull;</span>
-                          <span className={log.type === 'penalty_application' ? 'text-rose-500 font-semibold' : 'text-blue-500 font-semibold'}>
-                            Amount: {formatCurrency(log.totalAmount)}
-                          </span>
+                          {log.type !== 'inquiry' && <span>&bull;</span>}
+                          {log.type !== 'inquiry' && <span>Affected: {log.affectedCustomersCount}</span>}
+                          {log.type !== 'inquiry' && <span>&bull;</span>}
+                          {log.type !== 'inquiry' && (
+                            <span className={log.type === 'penalty_application' ? 'text-rose-500 font-semibold' : 'text-blue-500 font-semibold'}>
+                              Amount: {formatCurrency(log.totalAmount)}
+                            </span>
+                          )}
+                          {log.type === 'inquiry' && log.customerName && (
+                            <>
+                              <span>&bull;</span>
+                              <span className="font-semibold text-emerald-600">From: {log.customerName}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>

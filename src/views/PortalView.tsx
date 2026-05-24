@@ -160,13 +160,17 @@ export function PortalView() {
   };
 
   const handleDeepDetailReport = () => {
-    if (latestReport && latestReport.files && latestReport.files.length > 0) {
-      const file = latestReport.files[0];
-      // Open file in new tab
-      const win = window.open();
-      if (win) {
-        win.document.write(`<iframe src="${file.data}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
-        win.document.title = file.name;
+    if (latestReport && ((latestReport.files && latestReport.files.length > 0) || latestReport.assetLink)) {
+      if (latestReport.assetLink) {
+         window.open(latestReport.assetLink, '_blank');
+      } else if (latestReport.files && latestReport.files.length > 0) {
+        const file = latestReport.files[0];
+        // Open file in new tab
+        const win = window.open();
+        if (win) {
+          win.document.write(`<iframe src="${file.data}" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>`);
+          win.document.title = file.name;
+        }
       }
     } else {
       // Humble personalized message
