@@ -65,102 +65,7 @@ function handleFirestoreError(
 const configPath = path.resolve(process.cwd(), "firebase-applet-config.json");
 const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
 
-const DEFAULT_SYSTEM_COMMANDS = [
-  {
-    id: "sysdlbill",
-    buttonLabel: "📄 Download Bill PDF",
-    triggerWord: "Download Bill",
-    response: "Here is your PDF bill.",
-    isActive: true,
-  },
-  {
-    id: "sysqrpay",
-    buttonLabel: "💰 QR For Payment",
-    triggerWord: "Pay Bill",
-    response: "Scan this UPI QR code to make your payment.",
-    isActive: true,
-  },
-  {
-    id: "sysbill",
-    buttonLabel: "📄 See My Bill",
-    triggerWord: "My Bill",
-    response: "Your current bill status is computed live.",
-    isActive: true,
-  },
-  {
-    id: "sysbalance",
-    buttonLabel: "💳 View Balance",
-    triggerWord: "Check Balance",
-    response: "Your total remaining balance is Rs. {{balance}}.",
-    isActive: true,
-  },
-  {
-    id: "syscomplaint",
-    buttonLabel: "🛠️ Register Complaint",
-    triggerWord: "Complaint",
-    response: "Please describe your complaint in the next message.",
-    isActive: true,
-  },
-  {
-    id: "sysreport",
-    buttonLabel: "📊 Deep Detail Report",
-    triggerWord: "Deep Report",
-    response: "Let me find your deep detail report.",
-    isActive: true,
-  },
-  {
-    id: "syswater",
-    buttonLabel: "💧 Water Quality",
-    triggerWord: "Water Quality",
-    response:
-      "Our water quality currently meets all regulatory standards. Safe for drinking!",
-    isActive: true,
-  },
-  {
-    id: "syssupply",
-    buttonLabel: "🕒 Supply Timings",
-    triggerWord: "Supply Timings",
-    response:
-      "Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.",
-    isActive: true,
-  },
-  {
-    id: "syscontact",
-    buttonLabel: "📞 Contact Us",
-    triggerWord: "Contact",
-    response: "Contact the Panchayat office at 1800-123-4567.",
-    isActive: true,
-  },
-  {
-    id: "sysnotify",
-    buttonLabel: "🔔 Notify History",
-    triggerWord: "Notifications",
-    response:
-      "Your recent notifications are available in your portal dashboard.",
-    isActive: true,
-  },
-  {
-    id: "sysusage",
-    buttonLabel: "📝 Usage History",
-    triggerWord: "Usage",
-    response: "Check the portal dashboard for your usage history.",
-    isActive: true,
-  },
-  {
-    id: "sysmaint",
-    buttonLabel: "⚠️ Maintenance Alerts",
-    triggerWord: "Maintenance",
-    response: "No scheduled maintenance for your zone currently.",
-    isActive: true,
-  },
-  {
-    id: "syslink",
-    buttonLabel: "🔗 Portal Link",
-    triggerWord: "Link",
-    response: "Here is your portal link.",
-    isActive: true,
-  },
-];
+
 
 function getAdminDb() {
   if (!admin.apps.length) return null;
@@ -490,13 +395,14 @@ async function generateInvoicePdf(
   lang: string = 'en'
 ): Promise<string> {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([600, 480]);
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  
+  let pgWidth = 600;
+  let pgHeight = 480;
+  let image;
+  let imgScale = 1;
 
   if (templateImage) {
     try {
-      let image;
       let imgData: any;
       if (templateImage.startsWith("http://") || templateImage.startsWith("https://")) {
         const res = await fetch(templateImage);
@@ -505,77 +411,59 @@ async function generateInvoicePdf(
         imgData = templateImage.split(',')[1] || templateImage;
       }
       
-      if (templateImage.includes('png') || templateImage.includes('.png')) {
-        image = await pdfDoc.embedPng(imgData);
-      } else {
-        image = await pdfDoc.embedJpg(imgData);
-      }
+      const isPng = templateImage.includes('png') || templateImage.includes('.png') || templateImage.startsWith('data:image/png');
+      image = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
       
-      const dims = image.scaleToFit(600, 480);
-      page.drawImage(image, {
-        x: page.getWidth() / 2 - dims.width / 2,
-        y: page.getHeight() / 2 - dims.height / 2,
-        width: dims.width,
-        height: dims.height,
-        opacity: 0.3, // Faint background so text is readable
-      });
+      const rawDims = image.scale(1);
+      pgWidth = rawDims.width;
+      pgHeight = rawDims.height;
+      imgScale = pgHeight / 480;
     } catch (e) {
       console.error("Failed to embed template image", e);
     }
   }
 
+  const page = pdfDoc.addPage([pgWidth, pgHeight]);
+  
+  if (image) {
+    page.drawImage(image, {
+      x: 0,
+      y: 0,
+      width: pgWidth,
+      height: pgHeight,
+    });
+  }
+
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const t = (k: string, p?: any) => getSvrT(lang, k, p);
 
+  const scaleY = (y: number) => pgHeight - ((480 - y) * imgScale);
+  const scaleX = (x: number) => x * imgScale;
+  const sSize = (size: number) => size * imgScale;
+
+  // We add background for text to ensure visibility if the template is dense
+  const drawTextBg = (text: string, x: number, y: number, size: number, fontFace: any, color: any) => {
+    page.drawText(text, { x, y, size, font: fontFace, color });
+  };
+
   if (amountPaid !== undefined && balance === 0) {
-    page.drawText(t('receipt'), {
-      x: 50,
-      y: 400,
-      size: 20,
-      font: fontBold,
-      color: rgb(0.1, 0.6, 0.2),
-    });
-    page.drawText(`${t('name')}: ${name}`, { x: 50, y: 340, size: 14, font });
-    page.drawText(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, {
-      x: 50,
-      y: 310,
-      size: 14,
-      font,
-      color: rgb(0.1, 0.6, 0.2),
-    });
-    page.drawText(`${t('balanceLabel')}: Rs. 0`, { x: 50, y: 280, size: 14, font });
+    drawTextBg(t('receipt'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0.1, 0.6, 0.2));
+    drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
+    drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.1, 0.6, 0.2));
+    drawTextBg(`${t('balanceLabel')}: Rs. 0`, scaleX(50), scaleY(280), sSize(14), font, rgb(0, 0, 0));
   } else {
-    page.drawText(t('invoice'), { x: 50, y: 400, size: 20, font: fontBold });
-    page.drawText(`${t('name')}: ${name}`, { x: 50, y: 340, size: 14, font });
-    page.drawText(`${t('balanceLabel')}: Rs. ${balance}`, {
-      x: 50,
-      y: 310,
-      size: 14,
-      font,
-      color: rgb(0.8, 0.1, 0.1),
-    });
+    drawTextBg(t('invoice'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0, 0, 0));
+    drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
+    drawTextBg(`${t('balanceLabel')}: Rs. ${balance}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.8, 0.1, 0.1));
     if (amountPaid) {
-      page.drawText(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, {
-        x: 50,
-        y: 280,
-        size: 12,
-        font,
-        color: rgb(0.1, 0.6, 0.2),
-      });
+      drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(280), sSize(12), font, rgb(0.1, 0.6, 0.2));
     }
   }
 
-  page.drawText(`${t('date')}: ${new Date().toLocaleDateString()}`, {
-    x: 50,
-    y: 200,
-    size: 12,
-    font
-  });
-  page.drawText(t('thankYou'), {
-    x: 50,
-    y: 150,
-    size: 12,
-    font
-  });
+  drawTextBg(`${t('date')}: ${new Date().toLocaleDateString()}`, scaleX(50), scaleY(200), sSize(12), font, rgb(0, 0, 0));
+  drawTextBg(t('thankYou'), scaleX(50), scaleY(150), sSize(12), font, rgb(0, 0, 0));
+
   return await pdfDoc.saveAsBase64({ dataUri: true });
 }
 
@@ -642,18 +530,10 @@ async function routeSystemIntent(
     msgLower === "help"
   ) {
     const userCommands = chatbotSettings?.commands || [];
-    const activeCommands = [...userCommands];
-
-    for (const sys of DEFAULT_SYSTEM_COMMANDS) {
-      if (!activeCommands.find((c: any) => c.triggerWord === sys.triggerWord)) {
-        if (sys.isActive) activeCommands.push(sys);
-      }
-    }
-
-    const activeFiltered = activeCommands.filter((c: any) => c.isActive);
+    const activeFiltered = userCommands.filter((c: any) => c.isActive);
 
     let cmdListText = activeFiltered
-      .map((cmd, idx) => {
+      .map((cmd: any, idx: number) => {
         let emoji = "🔹";
         switch (idx % 6) {
           case 0:
@@ -2924,18 +2804,8 @@ async function startServer() {
         }));
       }
 
-      // Merge DEFAULT_SYSTEM_COMMANDS into user commands if not present
-      const activeCommands = [...commands];
-      for (const sys of DEFAULT_SYSTEM_COMMANDS) {
-        if (
-          !activeCommands.find((c: any) => c.triggerWord === sys.triggerWord)
-        ) {
-          if (sys.isActive) activeCommands.push(sys);
-        }
-      }
-
       res.json({
-        commands: activeCommands.filter((c: any) => c.isActive),
+        commands: commands.filter((c: any) => c.isActive),
         history,
       });
     } catch (err: any) {
