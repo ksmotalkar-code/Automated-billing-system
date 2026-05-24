@@ -3070,30 +3070,21 @@ async function startServer() {
         return res.sendStatus(200);
       }
 
-      // Note: On Render, background processing works perfectly.
-      // Note: On Google Cloud Run free tier, background processing might pause unless "CPU is always allocated".
-      // Therefore, we process synchronously.
-      // We use a safety timeout to ensure Meta gets a 200 OK within its 15s window
-      // even if the database or API calls are slow.
-      const safetyTimeout = setTimeout(() => {
-        if (!res.headersSent) {
-          console.warn(
-            "[Webhook] Safety timeout reached (12s). Sending 200 to Meta early.",
-          );
-          res.sendStatus(200);
-        }
-      }, 12000);
+      // Send 200 OK immediately to prevent Meta from retrying
+      res.status(200).send("EVENT_RECEIVED");
 
-      const entries = body.entry || [];
+      // Process in background
+      (async () => {
+        const entries = body.entry || [];
 
-      try {
-        for (const entry of entries) {
-          const changes = entry.changes || [];
-          for (const change of changes) {
-            const messages = change.value?.messages || [];
-            for (const messageObj of messages) {
-              const msgId = messageObj.id;
-              if (msgId) {
+        try {
+          for (const entry of entries) {
+            const changes = entry.changes || [];
+            for (const change of changes) {
+              const messages = change.value?.messages || [];
+              for (const messageObj of messages) {
+                const msgId = messageObj.id;
+                if (msgId) {
                 if (processedMessageIds.includes(msgId)) {
                   console.log(`[Webhook] Ignoring duplicate message: ${msgId}`);
                   continue;
@@ -3102,19 +3093,26 @@ async function startServer() {
                 if (processedMessageIds.length > 2000)
                   processedMessageIds.shift();
 
-                // DB-backed deduplication to handle Cloud Run multi-instance scaling
+                // DB-backed deduplication with transaction to prevent race conditions
                 const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                 if (dbInstance) {
                   try {
                     const dedupRef = dbInstance.collection("webhook_dedup").doc(msgId);
-                    const dedupDoc = await dedupRef.get();
-                    if (dedupDoc.exists) {
-                      console.log(`[Webhook] Ignoring duplicate message (DB): ${msgId}`);
+                    const isDuplicate = await dbInstance.runTransaction(async (t) => {
+                      const doc = await t.get(dedupRef);
+                      if (doc.exists) {
+                        return true;
+                      }
+                      t.set(dedupRef, { timestamp: FieldValue.serverTimestamp() });
+                      return false;
+                    });
+                    
+                    if (isDuplicate) {
+                      console.log(`[Webhook] Ignoring duplicate message (DB Transaction): ${msgId}`);
                       continue;
                     }
-                    await dedupRef.set({ timestamp: FieldValue.serverTimestamp() });
                   } catch (e) {
-                    console.error("Dedup DB check failed:", e);
+                    console.error("Dedup DB transaction failed:", e);
                   }
                 }
               }
@@ -3685,19 +3683,15 @@ async function startServer() {
         }
       } catch (botErr) {
         console.error("Bot execution error", botErr);
-      } finally {
-        clearTimeout(safetyTimeout);
-        if (!res.headersSent) {
-          res.sendStatus(200);
-        }
       }
-    } catch (err) {
-      console.error("[Webhook] Handler error:", err);
-      if (!res.headersSent) {
-        res.sendStatus(200); // Always return 200 so Meta doesn't retry failed webhooks infinitely
-      }
+    })();
+  } catch (err) {
+    console.error("[Webhook] Handler error:", err);
+    if (!res.headersSent) {
+      res.sendStatus(200); // Always return 200 so Meta doesn't retry failed webhooks infinitely
     }
-  });
+  }
+});
 
   // WhatsApp Web JS Integration
   let whatsappWebStatus = {

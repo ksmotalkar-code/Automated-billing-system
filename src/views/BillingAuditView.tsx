@@ -1,15 +1,19 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { ClipboardList, AlertCircle, FileText, Settings, Key, ShieldAlert } from "lucide-react";
+import { ClipboardList, AlertCircle, FileText, Settings, Key, ShieldAlert, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useData } from "../contexts/DataContext";
-import { subscribeToBillingAuditLogs, BillingAuditLog } from "../lib/db";
+import { subscribeToBillingAuditLogs, BillingAuditLog, deleteAuditLog, clearAllAuditLogs } from "../lib/db";
 import { useTranslation } from "react-i18next";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 export function BillingAuditView() {
   const { t } = useTranslation();
   const [logs, setLogs] = useState<BillingAuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [logToDelete, setLogToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = subscribeToBillingAuditLogs((fetchedLogs) => {
@@ -18,6 +22,20 @@ export function BillingAuditView() {
     });
     return () => unsubscribe();
   }, []);
+
+  const handleClearAll = async () => {
+    setIsDeleting(true);
+    await clearAllAuditLogs();
+    setIsDeleting(false);
+    setShowClearConfirm(false);
+  };
+
+  const handleDeleteLog = async () => {
+    if (logToDelete) {
+      await deleteAuditLog(logToDelete);
+      setLogToDelete(null);
+    }
+  };
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -57,6 +75,16 @@ export function BillingAuditView() {
           </h1>
           <p className="neu-text-muted mt-1">A chronological log of all generated bills, penalty applications, and specific inquiries.</p>
         </div>
+        {logs.length > 0 && (
+          <button
+            onClick={() => setShowClearConfirm(true)}
+            disabled={isDeleting}
+            className="flex items-center gap-2 px-4 py-2 bg-rose-500 text-white rounded-xl font-semibold shadow-md active:scale-95 transition-all text-sm disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4" />
+            {isDeleting ? "Clearing..." : "Clear All"}
+          </button>
+        )}
       </div>
 
       <Card className="neu-flat border-none shadow-none">
@@ -83,7 +111,7 @@ export function BillingAuditView() {
                     key={log.id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className="flex flex-col sm:flex-row items-center justify-between p-4 neu-flat rounded-2xl group hover:shadow-lg transition-shadow"
+                    className="flex flex-col sm:flex-row items-center justify-between p-4 neu-flat rounded-2xl group hover:shadow-lg transition-shadow gap-4"
                   >
                     <div className="flex items-center gap-4 w-full">
                       <div className="p-3 bg-white/5 rounded-xl shadow-inner shrink-0">
@@ -121,6 +149,15 @@ export function BillingAuditView() {
                         </div>
                       </div>
                     </div>
+                    <div className="sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => setLogToDelete(log.id!)}
+                        className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors"
+                        title="Delete log"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
                   </motion.div>
                 ))}
               </AnimatePresence>
@@ -128,6 +165,28 @@ export function BillingAuditView() {
           )}
         </CardContent>
       </Card>
+      
+      <ConfirmModal
+        isOpen={showClearConfirm}
+        onClose={() => setShowClearConfirm(false)}
+        onConfirm={handleClearAll}
+        title="Clear Audit Trail"
+        message="Are you sure you want to delete all audit logs? This action cannot be undone."
+        confirmText="Clear All"
+        cancelText="Cancel"
+        isDestructive={true}
+      />
+      
+      <ConfirmModal
+        isOpen={!!logToDelete}
+        onClose={() => setLogToDelete(null)}
+        onConfirm={handleDeleteLog}
+        title="Delete Log"
+        message="Are you sure you want to delete this specific audit log entry? This cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDestructive={true}
+      />
     </motion.div>
   );
 }

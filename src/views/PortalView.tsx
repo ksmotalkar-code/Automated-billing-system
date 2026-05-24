@@ -386,7 +386,16 @@ export function PortalView() {
                  <FileText className="w-3.5 h-3.5" /> Deep Detail Report
               </button>
               {commands.map((cmd, idx) => (
-                <button key={idx} onClick={() => handleSendMessage(cmd.buttonLabel)} className="inline-flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12px] bg-[#f0f7ff] border border-blue-100 text-[#1a56db] font-medium transition-transform active:scale-95 active:bg-blue-100">
+                <button 
+                  key={idx} 
+                  onClick={() => {
+                    if (!chatLoading) {
+                      handleSendMessage(cmd.buttonLabel);
+                    }
+                  }} 
+                  className="inline-flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[12px] bg-[#f0f7ff] border border-blue-100 text-[#1a56db] font-medium transition-transform active:scale-95 active:bg-blue-100 disabled:opacity-50"
+                  disabled={chatLoading}
+                >
                    {cmd.buttonLabel}
                 </button>
               ))}
@@ -432,7 +441,9 @@ export function PortalView() {
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      handleSendMessage();
+                      if (!chatLoading) {
+                        handleSendMessage();
+                      }
                     }
                   }}
                   className="flex-1 bg-transparent border-none outline-none resize-none p-2.5 text-[14px] min-h-[44px] max-h-[120px] rounded-xl"

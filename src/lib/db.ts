@@ -720,6 +720,30 @@ export const subscribeToBillingAuditLogs = (callback: (logs: BillingAuditLog[]) 
   });
 };
 
+export const deleteAuditLog = async (logId: string) => {
+  try {
+    await deleteDoc(doc(db, 'billing_audit', logId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `billing_audit/${logId}`);
+  }
+};
+
+export const clearAllAuditLogs = async () => {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  try {
+    const q = query(collection(db, 'billing_audit'), where('ownerId', '==', user.uid));
+    const querySnapshot = await getDocs(q);
+    const batchList = writeBatch(db);
+    querySnapshot.docs.forEach((docSnap) => {
+      batchList.delete(docSnap.ref);
+    });
+    await batchList.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'billing_audit');
+  }
+};
+
 export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {
   const user = auth.currentUser;
   if (!user) return () => {};
