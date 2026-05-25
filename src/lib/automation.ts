@@ -30,7 +30,8 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
     
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text("VILLAGE - JHANDA KHURD (MANSA)", 105, 41, { align: 'center' });
+    doc.text("Village - Jhanda Khurd (Mansa)", 105, 41, { align: 'center' });
+    doc.text("Email - gp.jhandakhurd@gmail.com", 105, 47, { align: 'center' });
     
     const currentDate = new Date().toLocaleDateString();
     const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -81,26 +82,26 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
     
     // Row 1
     doc.setFont("helvetica", "bold");
-    doc.text("Pending Charges", colLeft + 2, startY + rowHeight + 7);
+    doc.text("Water Payable Charges", colLeft + 2, startY + rowHeight + 7);
     doc.setFont("helvetica", "normal");
     const currentCharges = settings.billingAmount || 200;
     doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight + 7);
     
     // Row 2
     doc.setFont("helvetica", "bold");
-    doc.text("Surcharge", colLeft + 2, startY + rowHeight * 2 + 7);
+    doc.text("Surcharges ( if any )", colLeft + 2, startY + rowHeight * 2 + 7);
     doc.setFont("helvetica", "normal");
     doc.text("0", verticalLineX + 2, startY + rowHeight * 2 + 7);
     
     // Row 3
     doc.setFont("helvetica", "bold");
-    doc.text("Total Amount Received", colLeft + 2, startY + rowHeight * 3 + 7);
+    doc.text("Total Payment Received", colLeft + 2, startY + rowHeight * 3 + 7);
     doc.setFont("helvetica", "normal");
     doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight * 3 + 7);
 
     // Row 4
     doc.setFont("helvetica", "bold");
-    doc.text("Balance Remaining", colLeft + 2, startY + rowHeight * 4 + 7);
+    doc.text("Total Payable", colLeft + 2, startY + rowHeight * 4 + 7);
     doc.setFont("helvetica", "normal");
     const balanceRemainingStr = customer.balance > 0 ? `${customer.balance}` : "None";
     doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 4 + 7);
