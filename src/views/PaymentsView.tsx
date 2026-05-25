@@ -147,12 +147,12 @@ export function PaymentsView() {
       if (settings.automation?.smartNotifications) {
         if (updatedCustomer.balance === 0) {
           const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
-          const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+          const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true);
           await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
           sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         } else {
           const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
-          const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+          const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true);
           sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         }
       } else if (updatedCustomer.balance === 0) {
@@ -213,7 +213,7 @@ export function PaymentsView() {
               // Background auto-notify for bulk manual payments
               if (settings.automation?.smartNotifications) {
                 const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
-                const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+                const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true);
                 sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode, true, 'receipt').catch(err => console.error("Auto notify error:", err));
               }
           }
@@ -263,12 +263,12 @@ export function PaymentsView() {
 
       if (updatedCustomer.balance === 0) {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true);
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
         sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       } else {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(receipt.amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings);
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true);
         sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       }
     } catch (error) {

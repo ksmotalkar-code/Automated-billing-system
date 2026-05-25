@@ -8,77 +8,292 @@ import { createPortalLink } from './portal';
 
 // ...
 
-export const generateInvoicePDF = (customer: Customer, settings: AppSettings) => {
-  const doc = new jsPDF({ compress: true });
+export const generateInvoicePDF = (customer: Customer, settings: AppSettings, isReceiptMode: boolean = false) => {
+  const doc = new jsPDF({ format: 'a4', unit: 'mm' });
   
-  const isPaid = customer.balance <= 0;
+  const isPaid = isReceiptMode || customer.balance <= 0;
+  
+  // Set default font
+  doc.setFont("helvetica");
 
-  // Header
-  doc.setFontSize(22);
-  doc.setTextColor(isPaid ? 34 : 40, isPaid ? 197 : 40, isPaid ? 94 : 40); // green if paid, dark if unpaid
-  doc.text(isPaid ? 'PAYMENT RECEIPT' : 'SMART BILLING INVOICE', 105, 20, { align: 'center' });
-  
-  doc.setFontSize(10);
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Date: ${new Date().toLocaleDateString()}`, 105, 30, { align: 'center' });
-
-  // Watermark
-  doc.setFontSize(60);
-  doc.setTextColor(isPaid ? 220 : 255, isPaid ? 255 : 220, isPaid ? 220 : 220); // faint green or red
-  doc.text(isPaid ? 'PAID' : 'UNPAID', 105, 150, { align: 'center', angle: -45 });
-  
-  // Company Info (Mock)
-  doc.setFontSize(12);
-  doc.setTextColor(40, 40, 40);
-  doc.text('Punjab Water Management Authority', 20, 45);
-  doc.setFontSize(10);
-  doc.text('Sector 17, Chandigarh, Punjab', 20, 50);
-  doc.text('Email: support@punjabwater.gov.in', 20, 55);
-  
-  // Customer Info
-  doc.setFontSize(12);
-  doc.text('BILL TO:', 140, 45);
-  doc.setFontSize(10);
-  doc.text(customer.name, 140, 50);
-  doc.text(`ID: ${customer.id}`, 140, 55);
-  doc.text(`Mobile: ${customer.mobileNumber}`, 140, 60);
-  
-  // Table
-  const tableData = isPaid ? [
-    ['Water Usage Charges', `${settings.billingCycleMonths} Months`, settings.billingAmount.toFixed(2)],
-    ['Payment Received', '-', `-${settings.billingAmount.toFixed(2)}`],
-    ['Total Payable', '-', '0.00'],
-  ] : [
-    ['Water Usage Charges', `${settings.billingCycleMonths} Months`, settings.billingAmount.toFixed(2)],
-    ['Previous/Late Outstanding', '-', (customer.balance - settings.billingAmount).toFixed(2)],
-    ['Total Payable', '-', customer.balance.toFixed(2)],
-  ];
-
-  autoTable(doc, {
-    startY: 75,
-    head: [['Description', 'Cycle', 'Amount (INR)']],
-    body: tableData,
-    theme: 'striped',
-    headStyles: { fillColor: isPaid ? [34, 197, 94] : [37, 99, 235] },
-  });
-  
-  // Footer
-  const finalY = (doc as any).lastAutoTable.finalY + 20;
-  doc.setFontSize(12);
-  if (!isPaid) {
-    doc.text('Payment Instructions:', 20, finalY);
+  if (isPaid) {
+    // ---------------------------------------------------------
+    // RECEIPT LAYOUT
+    // ---------------------------------------------------------
+    
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text("RECEIPT", 105, 25, { align: 'center' });
+    
+    doc.setFontSize(12);
+    doc.text("VILLAGE WATER & SANITATION COMMITTEE", 105, 35, { align: 'center' });
+    
     doc.setFontSize(10);
-    doc.text('1. Please pay via UPI using the QR code in the app.', 20, finalY + 7);
-    doc.text('2. Late payments will attract a penalty of INR ' + settings.penaltyAmount, 20, finalY + 12);
-  } else {
-    doc.text('Thank you for your timely payment!', 20, finalY);
+    doc.setFont("helvetica", "normal");
+    doc.text("VILLAGE - JHANDA KHURD (MANSA)", 105, 41, { align: 'center' });
+    
+    const currentDate = new Date().toLocaleDateString();
+    const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+    
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("Date:", 20, 60);
+    doc.setFont("helvetica", "normal");
+    doc.text(currentDate, 65, 60);
+    
+    doc.setFont("helvetica", "bold");
+    doc.text("Account No.:", 20, 70);
+    doc.setFont("helvetica", "normal");
+    doc.text(customer.id.substring(0, 8), 65, 70);
+    
+    doc.setFont("helvetica", "bold");
+    doc.text("Received From (Consumer's Name) :", 20, 80);
+    doc.setFont("helvetica", "normal");
+    doc.text(customer.name, 95, 80);
+    
+    doc.setFont("helvetica", "bold");
+    doc.text("Water Bill For Month :", 20, 90);
+    doc.setFont("helvetica", "normal");
+    doc.text(currentMonth, 70, 90);
+    
+    // Table positioning
+    const startY = 105;
+    const rowHeight = 10;
+    const colLeft = 20;
+    const colRight = 190;
+    const verticalLineX = 100;
+    
+    doc.rect(colLeft, startY, colRight - colLeft, rowHeight * 5); // Outline
+    
+    // Horizontal lines
+    doc.line(colLeft, startY + rowHeight, colRight, startY + rowHeight);
+    doc.line(colLeft, startY + rowHeight * 2, colRight, startY + rowHeight * 2);
+    doc.line(colLeft, startY + rowHeight * 3, colRight, startY + rowHeight * 3);
+    doc.line(colLeft, startY + rowHeight * 4, colRight, startY + rowHeight * 4);
+    
+    // Vertical line
+    doc.line(verticalLineX, startY, verticalLineX, startY + rowHeight * 5);
+    
+    // Headers
+    doc.setFont("helvetica", "normal");
+    doc.text("Description", colLeft + 2, startY + 7);
+    doc.text("Amount (Rs)", verticalLineX + 2, startY + 7);
+    
+    // Row 1
+    doc.setFont("helvetica", "bold");
+    doc.text("Pending Charges", colLeft + 2, startY + rowHeight + 7);
+    doc.setFont("helvetica", "normal");
+    const currentCharges = settings.billingAmount || 200;
+    doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight + 7);
+    
+    // Row 2
+    doc.setFont("helvetica", "bold");
+    doc.text("Surcharge", colLeft + 2, startY + rowHeight * 2 + 7);
+    doc.setFont("helvetica", "normal");
+    doc.text("0", verticalLineX + 2, startY + rowHeight * 2 + 7);
+    
+    // Row 3
+    doc.setFont("helvetica", "bold");
+    doc.text("Total Amount Received", colLeft + 2, startY + rowHeight * 3 + 7);
+    doc.setFont("helvetica", "normal");
+    doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight * 3 + 7);
+
+    // Row 4
+    doc.setFont("helvetica", "bold");
+    doc.text("Balance Remaining", colLeft + 2, startY + rowHeight * 4 + 7);
+    doc.setFont("helvetica", "normal");
+    const balanceRemainingStr = customer.balance > 0 ? `${customer.balance}` : "None";
+    doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 4 + 7);
+    
+    return doc.output('blob');
   }
+
+  // ---------------------------------------------------------
+  // BILL LAYOUT (Unpaid)
+  // ---------------------------------------------------------
+
+  // Main Border
+  doc.rect(5, 5, 200, 287); // Outer border
+  doc.rect(7, 7, 196, 283); // Inner border
+
+  // Header Title
+  doc.setFontSize(16);
+  doc.setFont("helvetica", "bold");
+  doc.text("GRAM PANCHAYAT WATER AND SANITATION COMMITTEE", 105, 18, { align: 'center' });
   
   doc.setFontSize(14);
-  doc.setTextColor(isPaid ? 34 : 37, isPaid ? 197 : 99, isPaid ? 94 : 235);
-  doc.text(`TOTAL DUE: INR ${isPaid ? '0.00' : customer.balance.toFixed(2)}`, 140, finalY + 10);
+  doc.text("VILLAGE JHANDA KHURD (MANSA)", 105, 25, { align: 'center' });
+  
+  // Bill Details
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "normal");
+  
+  const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+  
+  doc.text(`Bill No.: _________________`, 10, 45); // Left placeholder
+  doc.text(`Month: ${currentMonth}`, 10, 55); 
+  doc.text(`Account No.: ${customer.id.substring(0, 8)}`, 10, 65);
+  doc.text(`Consumer's Name and Address: ${customer.name}`, 10, 75);
+
+  // Border below consumer details
+  doc.line(7, 80, 203, 80);
+  doc.setLineDashPattern([2, 2], 0);
+  doc.line(7, 82, 203, 82);
+  doc.setLineDashPattern([], 0); // Reset dash
+
+  // Table Data
+  let previousBalance = customer.balance - settings.billingAmount;
+  if(previousBalance < 0) previousBalance = 0;
+  
+  // Surcharge application simple logic
+  // Assume if there is previous balance, they missed a 20% surcharge, 
+  // Let's denote pending amount from settings (or fallback logic)
+  const currentCharges = settings.billingAmount || 200;
+  let surcharge = 0;
+  if (previousBalance > 0) {
+      // 20% surcharge logic from rule 4
+      surcharge = previousBalance * 0.20; 
+  }
+  
+  let totalPayable = previousBalance + currentCharges + surcharge;
+  if (isPaid) {
+      previousBalance = 0;
+      surcharge = 0;
+      totalPayable = 0;
+  }
+
+  // Create Custom Table using basic lines and text to perfectly match the uploaded image structure.
+  const startY = 82;
+  const rowHeight = 12;
+  
+  // Table Columns Setup
+  const cols = [7, 20, 100, 140, 170, 203]; // X coordinates for vertical lines
+  
+  // Header Row
+  doc.rect(cols[0], startY, cols[5] - cols[0], rowHeight + 4); 
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "bold");
+  doc.text("Sr.", 10, startY + 8);
+  doc.text("Description", 50, startY + 8);
+  doc.text("Water Usage and", 102, startY + 6);
+  doc.text("Other Charges", 104, startY + 11);
+  doc.text("Surcharge", 145, startY + 8);
+  doc.text("Amount Payable", 172, startY + 6);
+  doc.text("After Due Date", 173, startY + 11);
+  
+  // Row 1: Previous Balance
+  const r1y = startY + rowHeight + 4;
+  doc.rect(cols[0], r1y, cols[5] - cols[0], rowHeight + 4);
+  doc.setFont("helvetica", "normal");
+  doc.text("1", 12, r1y + 6);
+  doc.text("Previous month's balance", 22, r1y + 6);
+  doc.text("(if any)", 22, r1y + 11);
+  doc.text(previousBalance > 0 ? `${previousBalance.toFixed(2)}/-` : "-", 115, r1y + 8);
+  
+  // Row 2: Water consumption
+  const r2y = r1y + rowHeight + 4;
+  doc.rect(cols[0], r2y, cols[5] - cols[0], rowHeight);
+  doc.text("2", 12, r2y + 8);
+  doc.text("Water consumption charges", 22, r2y + 8);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(`${currentCharges}/-`, 115, r2y + 8);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  
+  // Row 3: Amount Payable by due date
+  const r3y = r2y + rowHeight;
+  doc.rect(cols[0], r3y, cols[5] - cols[0], rowHeight + 4);
+  doc.text("3", 12, r3y + 6);
+  doc.text("Amount payable by", 22, r3y + 6);
+  doc.text("due date", 22, r3y + 11);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(surcharge > 0 ? `${surcharge.toFixed(0)}/-` : "-", 150, r3y + 8);
+  doc.text(isPaid ? "PAID" : `${totalPayable.toFixed(0)}/-`, 182, r3y + 8);
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  
+  // Row 4: Last date
+  const r4y = r3y + rowHeight + 4;
+  const dDate = new Date();
+  dDate.setDate(10); // Example static logic for 10th
+  dDate.setMonth(dDate.getMonth() + 1); // Next month
+  doc.rect(cols[0], r4y, cols[5] - cols[0], rowHeight);
+  doc.text("4", 12, r4y + 8);
+  doc.text("Last date for bill payment", 22, r4y + 8);
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text(`10 / ${dDate.getMonth() + 1 < 10 ? '0'+(dDate.getMonth()+1) : (dDate.getMonth()+1)} / ${dDate.getFullYear()}`, 110, r4y + 8);
+  
+  // Draw vertical lines for the table
+  const tableBottomY = r4y + rowHeight;
+  for (let i = 1; i < cols.length - 1; i++) {
+     doc.line(cols[i], startY, cols[i], tableBottomY);
+  }
+
+  // IMPORTANT INSTRUCTIONS Block
+  const instY = tableBottomY + 8;
+  doc.rect(7, instY - 8, 196, 120); // Instruction box total area
+  
+  doc.setFontSize(14);
+  doc.setFont("helvetica", "bold");
+  doc.text("IMPORTANT INSTRUCTIONS", 105, instY, { align: 'center' });
+  
+  doc.setFontSize(10);
+  doc.setFont("helvetica", "normal");
+  const margin = 10;
+  const lineSpacing = 6;
+  let textY = instY + 8;
+  
+  const text1 = "1. The bill must be presented at the time of making the payment.";
+  const text2 = "2. Even in the event of a dispute or correction regarding the bill, payment must\nbe made every month by the specified due date. If an error is found, the\ncorrection will be adjusted in the next month's bill sent to the consumer after\na settlement.";
+  const text3 = `3. The disconnection fee is 200/- Rupees and the reconnection fee is 500/- Rs.`; 
+  const text4 = "4. If this bill is not paid by the due date, a 20% surcharge will be added, and if\nthe payment is not made within 10 days of the bill's due date, the connection\nwill be cut without any notice.";
+  const text5 = "5. The bill can be paid at the Gram Panchayat office on any working day from\n8 AM to 5 PM.";
+  const text6 = "6. Households with previous bill arrears are informed by the Chairman and the\nentire Gram Panchayat to deposit their arrears by the last date. Otherwise, the\nconnection will be cut.";
+
+  doc.text(text1, margin, textY);
+  textY += lineSpacing;
+  
+  let split2 = doc.splitTextToSize(text2, 185);
+  doc.text(split2, margin, textY);
+  textY += split2.length * 5;
+  
+  let split3 = doc.splitTextToSize(text3, 185);
+  doc.text(split3, margin, textY);
+  textY += split3.length * 5;
+  
+  let split4 = doc.splitTextToSize(text4, 185);
+  doc.text(split4, margin, textY);
+  textY += split4.length * 5;
+  
+  let split5 = doc.splitTextToSize(text5, 185);
+  doc.text(split5, margin, textY);
+  textY += split5.length * 5;
+  
+  let split6 = doc.splitTextToSize(text6, 185);
+  doc.text(split6, margin, textY);
   
   
+  // Footer / Signature
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "bold");
+  doc.text("SIGNATURE", 195, instY + 110, { align: "right" });
+  
+  // Very bottom footer
+  doc.setFontSize(8);
+  doc.setFont("helvetica", "normal");
+  doc.text("Rattan Press Sardulgarh - 70098-62629", 7, 296);
+
+  // Watermark logic for "PAID"
+  if (isPaid) {
+    doc.setFontSize(80);
+    doc.setTextColor(220, 255, 220); // very faint green
+    // We adjust the alpha/transparency theoretically via faint color
+    doc.text("PAID", 105, 150, { align: 'center', angle: -45 });
+  }
+
   return doc.output('blob');
 };
 
