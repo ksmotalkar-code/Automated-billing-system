@@ -109,10 +109,13 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   const balanceRemainingStr = customer.balance > 0 ? `${customer.balance.toFixed(2)}` : "None";
   doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 4 + 7);
   
+  doc.setFontSize(80);
   if (isPaid) {
-    doc.setFontSize(80);
     doc.setTextColor(220, 255, 220); // very faint green
     doc.text("PAID", 105, 170, { align: 'center', angle: -45 });
+  } else {
+    doc.setTextColor(255, 220, 220); // very faint red
+    doc.text("UNPAID", 105, 170, { align: 'center', angle: -45 });
   }
   
   return doc.output('blob');
