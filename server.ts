@@ -392,77 +392,105 @@ async function generateInvoicePdf(
   balance: number,
   amountPaid?: number,
   templateImage?: string | null,
-  lang: string = 'en'
+  lang: string = 'en',
+  customerId: string = 'N/A',
+  billingAmount: number = 200
 ): Promise<string> {
   const pdfDoc = await PDFDocument.create();
   
-  let pgWidth = 600;
-  let pgHeight = 480;
-  let image;
-  let imgScale = 1;
-
-  if (templateImage) {
-    try {
-      let imgData: any;
-      if (templateImage.startsWith("http://") || templateImage.startsWith("https://")) {
-        const res = await fetch(templateImage);
-        imgData = await res.arrayBuffer();
-      } else {
-        imgData = templateImage.split(',')[1] || templateImage;
-      }
-      
-      const isPng = templateImage.includes('png') || templateImage.includes('.png') || templateImage.startsWith('data:image/png');
-      image = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
-      
-      const rawDims = image.scale(1);
-      pgWidth = rawDims.width;
-      pgHeight = rawDims.height;
-      imgScale = pgHeight / 480;
-    } catch (e) {
-      console.error("Failed to embed template image", e);
-    }
-  }
-
-  const page = pdfDoc.addPage([pgWidth, pgHeight]);
+  // A4 size
+  const pgWidth = 595.28;
+  const pgHeight = 841.89;
   
-  if (image) {
-    page.drawImage(image, {
-      x: 0,
-      y: 0,
-      width: pgWidth,
-      height: pgHeight,
-    });
-  }
-
+  const page = pdfDoc.addPage([pgWidth, pgHeight]);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const t = (k: string, p?: any) => getSvrT(lang, k, p);
-
-  const scaleY = (y: number) => pgHeight - ((480 - y) * imgScale);
-  const scaleX = (x: number) => x * imgScale;
-  const sSize = (size: number) => size * imgScale;
-
-  // We add background for text to ensure visibility if the template is dense
-  const drawTextBg = (text: string, x: number, y: number, size: number, fontFace: any, color: any) => {
-    page.drawText(text, { x, y, size, font: fontFace, color });
-  };
-
-  if (amountPaid !== undefined && balance === 0) {
-    drawTextBg(t('receipt'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0.1, 0.6, 0.2));
-    drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
-    drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.1, 0.6, 0.2));
-    drawTextBg(`${t('balanceLabel')}: Rs. 0`, scaleX(50), scaleY(280), sSize(14), font, rgb(0, 0, 0));
+  
+  const isPaid = balance <= 0 || (amountPaid !== undefined && balance === 0);
+  
+  // Watermark
+  if (isPaid) {
+     page.drawText("PAID", { x: 200, y: 350, size: 80, font: fontBold, color: rgb(0.86, 1, 0.86), rotate: { type: 'degrees', angle: 45 } });
   } else {
-    drawTextBg(t('invoice'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0, 0, 0));
-    drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
-    drawTextBg(`${t('balanceLabel')}: Rs. ${balance}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.8, 0.1, 0.1));
-    if (amountPaid) {
-      drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(280), sSize(12), font, rgb(0.1, 0.6, 0.2));
-    }
+     page.drawText("UNPAID", { x: 150, y: 350, size: 80, font: fontBold, color: rgb(1, 0.86, 0.86), rotate: { type: 'degrees', angle: 45 } });
   }
 
-  drawTextBg(`${t('date')}: ${new Date().toLocaleDateString()}`, scaleX(50), scaleY(200), sSize(12), font, rgb(0, 0, 0));
-  drawTextBg(t('thankYou'), scaleX(50), scaleY(150), sSize(12), font, rgb(0, 0, 0));
+  // Draw Header
+  const title = isPaid ? "RECEIPT" : "WATER BILL";
+  const titleW = fontBold.widthOfTextAtSize(title, 16);
+  page.drawText(title, { x: (pgWidth - titleW) / 2, y: pgHeight - 70, size: 16, font: fontBold, color: rgb(0,0,0) });
+  
+  const subtitle1 = "VILLAGE WATER & SANITATION COMMITTEE";
+  const st1W = font.widthOfTextAtSize(subtitle1, 12);
+  page.drawText(subtitle1, { x: (pgWidth - st1W) / 2, y: pgHeight - 100, size: 12, font, color: rgb(0,0,0) });
+
+  const subtitle2 = "Village - Jhanda Khurd (Mansa)";
+  const st2W = font.widthOfTextAtSize(subtitle2, 10);
+  page.drawText(subtitle2, { x: (pgWidth - st2W) / 2, y: pgHeight - 116, size: 10, font, color: rgb(0,0,0) });
+
+  const subtitle3 = "Email - gp.jhandakhurd@gmail.com";
+  const st3W = font.widthOfTextAtSize(subtitle3, 10);
+  page.drawText(subtitle3, { x: (pgWidth - st3W) / 2, y: pgHeight - 132, size: 10, font, color: rgb(0,0,0) });
+
+  // Details
+  const currentDate = new Date().toLocaleDateString();
+  const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+  
+  page.drawText("Date:", { x: 50, y: pgHeight - 170, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(currentDate, { x: 150, y: pgHeight - 170, size: 11, font, color: rgb(0,0,0) });
+  
+  page.drawText("Account No.:", { x: 50, y: pgHeight - 190, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(String(customerId).substring(0, 8), { x: 150, y: pgHeight - 190, size: 11, font, color: rgb(0,0,0) });
+
+  const nameLbl = isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :";
+  page.drawText(nameLbl, { x: 50, y: pgHeight - 210, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(name, { x: isPaid ? 250 : 170, y: pgHeight - 210, size: 11, font, color: rgb(0,0,0) });
+
+  page.drawText("Water Bill For Month :", { x: 50, y: pgHeight - 230, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(currentMonth, { x: 180, y: pgHeight - 230, size: 11, font, color: rgb(0,0,0) });
+
+  // Table
+  const tableY = pgHeight - 270;
+  const col1X = 50;
+  const col2X = 300;
+  const colWidth = 545.28 - 100; 
+  const rowHeight = 30;
+  
+  // Draw table lines
+  page.drawRectangle({ x: col1X, y: tableY - (rowHeight * 4), width: colWidth, height: rowHeight * 5, borderColor: rgb(0,0,0), borderWidth: 1 });
+  page.drawLine({ start: { x: col1X, y: tableY }, end: { x: col1X + colWidth, y: tableY }, thickness: 1, color: rgb(0,0,0) });
+  page.drawLine({ start: { x: col1X, y: tableY - rowHeight }, end: { x: col1X + colWidth, y: tableY - rowHeight }, thickness: 1, color: rgb(0,0,0) });
+  page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 2) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 2) }, thickness: 1, color: rgb(0,0,0) });
+  page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 3) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 3) }, thickness: 1, color: rgb(0,0,0) });
+  page.drawLine({ start: { x: col2X, y: tableY + rowHeight }, end: { x: col2X, y: tableY - (rowHeight * 4) }, thickness: 1, color: rgb(0,0,0) });
+
+  // Column Headers
+  page.drawText("Description", { x: col1X + 10, y: tableY + 10, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText("Amount (Rs)", { x: col2X + 10, y: tableY + 10, size: 11, font: fontBold, color: rgb(0,0,0) });
+
+  const currentCharges = billingAmount;
+  let previousBalance = balance - currentCharges;
+  if (previousBalance < 0) previousBalance = 0;
+  let surcharge = previousBalance > 0 ? previousBalance * 0.20 : 0;
+
+  let totalPayable = balance;
+
+  // Row 1
+  page.drawText("Water Payable Charges", { x: col1X + 10, y: tableY - 20, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(`${currentCharges}`, { x: col2X + 10, y: tableY - 20, size: 11, font, color: rgb(0,0,0) });
+
+  // Row 2
+  page.drawText("Surcharges ( if any )", { x: col1X + 10, y: tableY - 50, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(isPaid ? "0" : `${surcharge.toFixed(2)}`, { x: col2X + 10, y: tableY - 50, size: 11, font, color: rgb(0,0,0) });
+
+  // Row 3
+  page.drawText("Total Payment Received", { x: col1X + 10, y: tableY - 80, size: 11, font: fontBold, color: rgb(0,0,0) });
+  page.drawText(isPaid ? `${currentCharges}` : "0", { x: col2X + 10, y: tableY - 80, size: 11, font, color: rgb(0,0,0) });
+
+  // Row 4
+  page.drawText("Total Payable", { x: col1X + 10, y: tableY - 110, size: 11, font: fontBold, color: rgb(0,0,0) });
+  const balanceRemainingStr = totalPayable > 0 ? `${totalPayable.toFixed(2)}` : "None";
+  page.drawText(balanceRemainingStr, { x: col2X + 10, y: tableY - 110, size: 11, font, color: rgb(0,0,0) });
 
   return await pdfDoc.saveAsBase64({ dataUri: true });
 }
@@ -500,7 +528,9 @@ async function routeSystemIntent(
         amt, 
         undefined, 
         adminSettings?.billTemplateImage,
-        lang
+        lang,
+        custData.id,
+        adminSettings?.billingAmount
       );
       attachments.push({ type: "file", name: "Invoice.pdf", data: b64Pdf });
     } catch (e) {
@@ -967,7 +997,9 @@ async function startServer() {
                         0,
                         amountPaid,
                         settings?.billTemplateImage,
-                        lang
+                        lang,
+                        customer?.id,
+                        settings?.billingAmount
                       );
                       
                       let finalTemplateParams: any[] = [
@@ -1686,127 +1718,16 @@ async function startServer() {
               let mediaName = "Invoice.pdf";
               if (newBalance > 0) {
                 try {
-                  const pdfDoc = await PDFDocument.create();
-                  const page = pdfDoc.addPage([595.28, 841.89]); // A4
-                  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-                  const boldFont = await pdfDoc.embedFont(
-                    StandardFonts.HelveticaBold,
+                  const b64PdfTemp = await generateInvoicePdf(
+                    customer.name || "Customer",
+                    newBalance,
+                    undefined,
+                    settings.billTemplateImage,
+                    settings.preferredLanguage || 'en',
+                    cDoc.id,
+                    settings.billingAmount
                   );
-
-                  page.drawText("SMART BILLING INVOICE", {
-                    x: 200,
-                    y: 800,
-                    size: 18,
-                    font: boldFont,
-                    color: rgb(0.1, 0.4, 0.8),
-                  });
-                  page.drawText(
-                    `Invoice Date: ${new Date().toLocaleDateString()}`,
-                    { x: 220, y: 780, size: 10, font },
-                  );
-
-                  page.drawText("BILL TO:", {
-                    x: 50,
-                    y: 730,
-                    size: 12,
-                    font: boldFont,
-                  });
-                  page.drawText(customer.name, {
-                    x: 50,
-                    y: 715,
-                    size: 12,
-                    font,
-                  });
-                  page.drawText(`ID: ${customer.id || "N/A"}`, {
-                    x: 50,
-                    y: 700,
-                    size: 12,
-                    font,
-                  });
-                  page.drawText(`Mobile: ${customer.mobileNumber || "N/A"}`, {
-                    x: 50,
-                    y: 685,
-                    size: 12,
-                    font,
-                  });
-
-                  page.drawText(
-                    `Billing Cycle: ${settings.billingCycleMonths || 1} Months`,
-                    { x: 50, y: 640, size: 12, font },
-                  );
-                  page.drawText(
-                    `Current Bill: Rs. ${(settings.billingAmount || 0).toFixed(2)}`,
-                    { x: 50, y: 620, size: 12, font },
-                  );
-                  page.drawText(
-                    `Previous Outstanding: Rs. ${(customer.balance || 0).toFixed(2)}`,
-                    { x: 50, y: 600, size: 12, font },
-                  );
-
-                  page.drawText("TOTAL PAYABLE:", {
-                    x: 50,
-                    y: 560,
-                    size: 14,
-                    font: boldFont,
-                  });
-                  page.drawText(`Rs. ${newBalance.toFixed(2)}`, {
-                    x: 200,
-                    y: 560,
-                    size: 14,
-                    font: boldFont,
-                    color: rgb(0.8, 0.1, 0.1),
-                  });
-
-                  // Embed QR Code if available
-                  if (settings.upiQrCodeImage) {
-                    try {
-                      let qrBytes: any;
-                      if (settings.upiQrCodeImage.startsWith("http://") || settings.upiQrCodeImage.startsWith("https://")) {
-                        const res = await fetch(settings.upiQrCodeImage);
-                        qrBytes = await res.arrayBuffer();
-                      } else {
-                        const qrData = settings.upiQrCodeImage.split(",")[1] || settings.upiQrCodeImage;
-                        qrBytes = Buffer.from(qrData, "base64");
-                      }
-                      
-                      let qrImage;
-                      if (settings.upiQrCodeImage.includes("png")) {
-                        qrImage = await pdfDoc.embedPng(qrBytes);
-                      } else {
-                        qrImage = await pdfDoc.embedJpg(qrBytes);
-                      }
-
-                      page.drawText("SCAN TO PAY VIA UPI:", {
-                        x: 220,
-                        y: 350,
-                        size: 12,
-                        font: boldFont,
-                      });
-                      page.drawImage(qrImage, {
-                        x: 220,
-                        y: 180,
-                        width: 150,
-                        height: 150,
-                      });
-                      page.drawText("Secure Payment Guarantee", {
-                        x: 240,
-                        y: 160,
-                        size: 8,
-                        font,
-                        color: rgb(0.5, 0.5, 0.5),
-                      });
-                    } catch (qrErr) {
-                      console.error("[Automation] QR Embedding failed:", qrErr);
-                    }
-                  } else {
-                    page.drawText(
-                      "Payment Method: Please use UPI or Cash at Panchayat Office.",
-                      { x: 50, y: 400, size: 10, font },
-                    );
-                  }
-
-                  const pdfBytes = await pdfDoc.save();
-                  mediaBase64 = Buffer.from(pdfBytes).toString("base64");
+                  mediaBase64 = b64PdfTemp.includes(',') ? b64PdfTemp.split(',')[1] : b64PdfTemp;
                 } catch (e: any) {
                   console.error(
                     `[Automation] Failed to generate PDF for ${customer.name}: ${e.message}`,
@@ -2407,7 +2328,9 @@ async function startServer() {
         testCustBalance,
         undefined,
         settings?.billTemplateImage,
-        lang
+        lang,
+        testCustId,
+        settings?.billingAmount
       );
 
       const message = lang === 'hi' 
