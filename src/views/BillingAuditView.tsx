@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { ClipboardList, AlertCircle, FileText, Settings, Key, ShieldAlert, Trash2 } from "lucide-react";
+import { ClipboardList, AlertCircle, FileText, Settings, Key, ShieldAlert, Trash2, MessageCircle, X, Paperclip, Send } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { useRef } from "react";
+import { sendWhatsAppNotification } from "../lib/automation";
 import { useData } from "../contexts/DataContext";
 import { subscribeToBillingAuditLogs, BillingAuditLog, deleteAuditLog, clearAllAuditLogs } from "../lib/db";
 import { useTranslation } from "react-i18next";
@@ -13,7 +15,16 @@ export function BillingAuditView() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const { customers, settings } = useData();
   const [logToDelete, setLogToDelete] = useState<string | null>(null);
+  const [messageModalLog, setMessageModalLog] = useState<BillingAuditLog | null>(null);
+  const [notifyMessage, setNotifyMessage] = useState("");
+  const [selectedMethod, setSelectedMethod] = useState("api");
+  const [attachmentLink, setAttachmentLink] = useState("");
+  const [isSendingNotify, setIsSendingNotify] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<{ isOpen: boolean; title: string; message: string }>({ isOpen: false, title: "", message: "" });
+
+  const showAlert = (title: string, message: string) => setAlertConfig({ isOpen: true, title, message });
 
   useEffect(() => {
     const unsubscribe = subscribeToBillingAuditLogs((fetchedLogs) => {
@@ -34,6 +45,56 @@ export function BillingAuditView() {
     if (logToDelete) {
       await deleteAuditLog(logToDelete);
       setLogToDelete(null);
+    }
+  };
+
+  const openMessageModal = (log: BillingAuditLog) => {
+    setMessageModalLog(log);
+    setNotifyMessage(`Regarding log: ${log.description}`);
+    setSelectedMethod(settings?.metaWhatsAppApiKey ? "api" : "web");
+    setAttachmentLink("");
+    setIsSendingNotify(false);
+  };
+
+  const handleSendMessage = async () => {
+    if (!messageModalLog || !messageModalLog.customerId) return;
+    
+    const customer = customers.find(c => c.id === messageModalLog.customerId);
+    if (!customer) {
+      showAlert("Error", "Associated customer not found in active records.");
+      return;
+    }
+
+    setIsSendingNotify(true);
+    try {
+      const tempSettings = { ...settings!, preferredNotificationMethod: selectedMethod };
+      
+      let finalMessage = notifyMessage;
+      if (attachmentLink.trim()) {
+        finalMessage += `\n\nDocument Link: ${attachmentLink.trim()}`;
+      }
+      
+      const result = await sendWhatsAppNotification(
+        customer, 
+        finalMessage, 
+        tempSettings, 
+        undefined, 
+        undefined, 
+        selectedMethod !== "api",
+        true, 
+        'custom'
+      );
+      
+      if (result.success) {
+        showAlert("Success", `Message sent to ${customer.name}${result.fellBackToManual ? ' (opened in WhatsApp App)' : ''}.`);
+        setMessageModalLog(null);
+      } else {
+        showAlert("Failed", result.error || "Failed to send message.");
+      }
+    } catch (e: any) {
+      showAlert("Error", e.message || "Unknown error occurred.");
+    } finally {
+      setIsSendingNotify(false);
     }
   };
 
@@ -149,7 +210,16 @@ export function BillingAuditView() {
                         </div>
                       </div>
                     </div>
-                    <div className="sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <div className="flex sm:opacity-0 sm:group-hover:opacity-100 transition-opacity gap-2">
+                      {log.customerId && (
+                        <button
+                          onClick={() => openMessageModal(log)}
+                          className="p-2 text-emerald-500 hover:bg-emerald-50 rounded-xl transition-colors"
+                          title="Send WhatsApp Message"
+                        >
+                          <MessageCircle className="w-5 h-5" />
+                        </button>
+                      )}
                       <button
                         onClick={() => setLogToDelete(log.id!)}
                         className="p-2 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors"
@@ -186,6 +256,91 @@ export function BillingAuditView() {
         confirmText="Delete"
         cancelText="Cancel"
         isDestructive={true}
+      />
+
+      {!!messageModalLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="neu-bg p-6 rounded-2xl w-full max-w-md shadow-2xl border border-white/20"
+          >
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-xl font-bold">Message Customer</h3>
+                <p className="text-xs neu-text-muted">Sending to {messageModalLog.customerName || 'Customer'}</p>
+              </div>
+              <button 
+                onClick={() => setMessageModalLog(null)}
+                className="p-2 hover:bg-black/10 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                  Your Message
+                </label>
+                <textarea
+                  value={notifyMessage}
+                  onChange={e => setNotifyMessage(e.target.value)}
+                  disabled={isSendingNotify}
+                  placeholder="Type your message here..."
+                  className="w-full h-32 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-emerald-500/50 mb-2 disabled:opacity-50"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                  Attachment Link (Optional)
+                </label>
+                <textarea
+                  value={attachmentLink}
+                  onChange={e => setAttachmentLink(e.target.value)}
+                  disabled={isSendingNotify}
+                  placeholder="Paste a Google Drive or document link here..."
+                  className="w-full h-16 px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium resize-none focus:ring-2 focus:ring-blue-500/50 mb-2 disabled:opacity-50"
+                />
+              </div>
+
+              <div className="pt-2">
+                <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                  WhatsApp Method
+                </label>
+                <select
+                  value={selectedMethod}
+                  onChange={(e) => setSelectedMethod(e.target.value)}
+                  disabled={isSendingNotify}
+                  className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none focus:ring-2 focus:ring-blue-500/50 appearance-none disabled:opacity-50"
+                >
+                  <option value="api">API: Automated WhatsApp Cloud</option>
+                  <option value="web">Manual: WhatsApp App / Web</option>
+                </select>
+              </div>
+
+              <button
+                onClick={handleSendMessage}
+                disabled={!notifyMessage.trim() || isSendingNotify}
+                className="w-full flex items-center justify-center gap-2 mt-4 px-6 py-3 bg-emerald-500 text-white rounded-xl font-bold shadow-[0_4px_14px_0_rgba(16,185,129,0.39)] hover:shadow-[0_6px_20px_rgba(16,185,129,0.23)] hover:bg-emerald-600 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100 disabled:hover:shadow-none"
+              >
+                {isSendingNotify ? <span className="animate-pulse">Sending...</span> : <><Send className="w-5 h-5" /> Send WhatsApp</>}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      <ConfirmModal
+        isOpen={alertConfig.isOpen}
+        onClose={() => setAlertConfig(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={() => setAlertConfig(prev => ({ ...prev, isOpen: false }))}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        confirmText="OK"
+        showCancel={false}
       />
     </motion.div>
   );

@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
 import express from "express";
 import path from "path";
 import cors from "cors";
@@ -171,6 +171,8 @@ interface AutomationSettings {
 
 interface AppSettings {
   upiQrCodeImage: string | null;
+  billTemplateImage?: string | null;
+  preferredLanguage?: string;
   billingAmount: number;
   billingCycleMonths: number;
   penaltyAmount: number;
@@ -468,9 +470,9 @@ async function generateInvoicePdf(
   } else {
     // Watermark
     if (isPaid) {
-       page.drawText("PAID", { x: 200, y: 350, size: 80, font: fontBold, color: rgb(0.86, 1, 0.86), rotate: { type: 'degrees', angle: 45 } });
+       page.drawText("PAID", { x: 200, y: 350, size: 80, font: fontBold, color: rgb(0.86, 1, 0.86), rotate: degrees(45) });
     } else {
-       page.drawText("UNPAID", { x: 150, y: 350, size: 80, font: fontBold, color: rgb(1, 0.86, 0.86), rotate: { type: 'degrees', angle: 45 } });
+       page.drawText("UNPAID", { x: 150, y: 350, size: 80, font: fontBold, color: rgb(1, 0.86, 0.86), rotate: degrees(45) });
     }
 
     // Draw Header
