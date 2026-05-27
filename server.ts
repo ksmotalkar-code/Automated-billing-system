@@ -695,9 +695,53 @@ ${cmdListText}`;
     msgLower === "sysmonthly" ||
     msgLower.includes("monthly report")
   ) {
-    replyText = replyText || "Which month's report do you need? (e.g. January 2026)";
-    matched = true;
-    action = "monthly_report";
+    let extractMonth = msgLower.replace("monthly report", "").replace("for", "").trim();
+    if (extractMonth.length > 2) {
+       const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
+       let foundReport = null;
+       let reportFileUrl = "";
+       let reportFileName = "";
+       
+       if (dbInstance) {
+           const reportSnap = await dbInstance
+             .collection("reports")
+             .where("ownerId", "==", ownerId)
+             .get();
+           
+           for (const doc of reportSnap.docs) {
+             const r = doc.data();
+             if (r.title && r.title.toLowerCase().includes(extractMonth)) {
+               foundReport = r;
+               if (r.files && r.files.length > 0) {
+                 reportFileUrl = r.files[0].data;
+                 reportFileName = r.files[0].name || "Report.pdf";
+               } else if (r.assetLink) {
+                 reportFileUrl = r.assetLink;
+                 reportFileName = "DriveLink";
+               }
+               break;
+             }
+           }
+       }
+       if (foundReport && reportFileUrl) {
+           replyText = `Here is the requested report for ${extractMonth}.`;
+           if (reportFileName === "DriveLink" || reportFileUrl.includes("drive.google.com") || (!reportFileUrl.startsWith("data:") && reportFileUrl.startsWith("http"))) {
+               replyText = `Here is the requested report for ${extractMonth}:\n${reportFileUrl}`;
+           } else if (reportFileUrl.startsWith("data:")) {
+               const base64Data = reportFileUrl.split(',')[1] || reportFileUrl;
+               attachments.push({ type: "file", name: reportFileName, data: base64Data });
+           }
+           matched = true;
+           action = "monthly_report_resolved";
+       } else {
+           replyText = `The report for ${extractMonth} could not be found.`;
+           matched = true;
+       }
+    } else {
+      replyText = replyText || "Which month's report do you need? (e.g. January 2026)";
+      matched = true;
+      action = "monthly_report";
+    }
   } else if (
     msgLower === "deep report" ||
     msgLower === "system_report" ||
