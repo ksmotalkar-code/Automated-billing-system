@@ -1,5 +1,6 @@
 {
   "name": "Gram Panchayat GP. Jhanda Khurd",
   "description": "Gram Panchayat GP. Jhanda Khurd - Automated Billing System.",
-  "requestFramePermissions": ["camera"]
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
