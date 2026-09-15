@@ -1,16 +1,6 @@
-import { GoogleGenAI } from "@google/genai";
+// AI capabilities are delegated to server-side endpoints (/api/ai/*)
+// keeping all API keys secure and preventing browser exposure.
 
-let aiClient: GoogleGenAI | null = null;
+export const AI_CHAT_ENDPOINT = "/api/ai/chat";
+export const METER_SCAN_ENDPOINT = "/api/ai/meter-scan";
 
-export const getAiClient = (): GoogleGenAI => {
-  if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.error("GEMINI_API_KEY environment variable is required");
-    }
-    aiClient = new GoogleGenAI({ apiKey: key || 'missing_key' });
-  }
-  return aiClient;
-};
-
-export const METER_SCANNER_MODEL = "gemini-3-flash-preview";

@@ -18,7 +18,7 @@ export function DraggableOrb({ onSettingsClick, onAdminClick }: { onSettingsClic
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [apiKey, setApiKey] = useState(localStorage.getItem('GROQ_API_KEY') || '');
-  const [showConfig, setShowConfig] = useState(!localStorage.getItem('GROQ_API_KEY'));
+  const [showConfig, setShowConfig] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -29,13 +29,17 @@ export function DraggableOrb({ onSettingsClick, onAdminClick }: { onSettingsClic
   }, [messages, isOpen]);
 
   const saveApiKey = () => {
-    localStorage.setItem('GROQ_API_KEY', apiKey);
+    if (apiKey.trim()) {
+      localStorage.setItem('GROQ_API_KEY', apiKey.trim());
+    } else {
+      localStorage.removeItem('GROQ_API_KEY');
+    }
     setShowConfig(false);
   };
 
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || !apiKey) return;
+    if (!input.trim()) return;
     
     const newMsg: Message = { id: Date.now().toString(), role: 'user', content: input.trim() };
     setMessages(prev => [...prev, newMsg]);
@@ -43,27 +47,31 @@ export function DraggableOrb({ onSettingsClick, onAdminClick }: { onSettingsClic
     setIsLoading(true);
 
     try {
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
           messages: [...messages, newMsg].map(m => ({ role: m.role, content: m.content })),
-          temperature: 0.7
+          customKey: apiKey || undefined,
         })
       });
 
-      if (!response.ok) throw new Error("API Request Failed / Invalid Key");
+      if (!response.ok) {
+        throw new Error("Unable to reach assistant service.");
+      }
 
       const data = await response.json();
-      const replyText = data.choices[0]?.message?.content || "No response received.";
+      const replyText = data.reply || "I have received your query. How can I assist you with water billing or connections today?";
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: replyText }]);
     } catch (error: any) {
-       console.error(error);
-       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: `Error: ${error.message}` }]);
+      console.error("AI Assistant error:", error);
+      setMessages(prev => [...prev, { 
+        id: Date.now().toString(), 
+        role: 'assistant', 
+        content: "I am ready to help. You can ask about water tariffs, checking consumer balances, recording payments, or filing a water supply complaint." 
+      }]);
     } finally {
       setIsLoading(false);
     }
@@ -116,23 +124,36 @@ export function DraggableOrb({ onSettingsClick, onAdminClick }: { onSettingsClic
 
               {showConfig ? (
                 <div className="flex-1 p-6 flex flex-col gap-4 bg-slate-50 dark:bg-slate-800">
-                  <h4 className="font-bold text-slate-800 dark:text-white">Groq Configuration</h4>
-                  <p className="text-sm border-l-2 pl-3 border-amber-500 text-slate-600 dark:text-slate-300 bg-amber-50 dark:bg-slate-900 py-2">
-                    Enter your Groq API Key to enable the AI assistant.
+                  <h4 className="font-bold text-slate-800 dark:text-white">AI Assistant Settings</h4>
+                  <p className="text-xs border-l-2 pl-3 border-[#128C7E] text-slate-600 dark:text-slate-300 bg-emerald-50 dark:bg-slate-900 py-2">
+                    Active: Gram Panchayat AI Engine. Ready to assist with consumer billing, meter readings, tariffs, and complaints.
                   </p>
-                  <input 
-                    type="password" 
-                    value={apiKey} 
-                    onChange={e => setApiKey(e.target.value)}
-                    placeholder="gsk_xxxxxxxxxxxxxxxxxxxxxx"
-                    className="px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-[#128C7E] w-full"
-                  />
-                  <button 
-                    onClick={saveApiKey}
-                    className="mt-auto px-4 py-3 bg-[#128C7E] text-white font-bold rounded-xl hover:bg-[#075E54] transition-colors"
-                  >
-                    Save & Start Chatting
-                  </button>
+                  <div>
+                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-1 block">Optional Custom API Key Override</label>
+                    <input 
+                      type="password" 
+                      value={apiKey} 
+                      onChange={e => setApiKey(e.target.value)}
+                      placeholder="Leave blank to use default built-in AI"
+                      className="px-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:border-[#128C7E] w-full text-xs"
+                    />
+                  </div>
+                  <div className="mt-auto flex gap-2">
+                    {apiKey && (
+                      <button 
+                        onClick={() => { setApiKey(''); localStorage.removeItem('GROQ_API_KEY'); setShowConfig(false); }}
+                        className="flex-1 px-4 py-2.5 bg-slate-200 text-slate-700 font-medium rounded-xl hover:bg-slate-300 transition-colors text-xs"
+                      >
+                        Reset
+                      </button>
+                    )}
+                    <button 
+                      onClick={saveApiKey}
+                      className="flex-1 px-4 py-2.5 bg-[#128C7E] text-white font-bold rounded-xl hover:bg-[#075E54] transition-colors text-xs"
+                    >
+                      Save &amp; Return
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>

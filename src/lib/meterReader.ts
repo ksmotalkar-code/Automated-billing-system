@@ -1,6 +1,3 @@
-import { getAiClient, METER_SCANNER_MODEL } from "./gemini";
-import { Type } from "@google/genai";
-
 export interface MeterReadingResult {
   reading: number;
   confidence: number;
@@ -10,47 +7,19 @@ export interface MeterReadingResult {
 
 export const analyzeMeterImage = async (base64Image: string): Promise<MeterReadingResult> => {
   try {
-    const ai = getAiClient();
-    const response = await ai.models.generateContent({
-      model: METER_SCANNER_MODEL,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: "image/jpeg",
-              data: base64Image
-            }
-          },
-          {
-            text: "Analyze this image of a meter (water/electric/gas). Identify the numerical reading and the type of meter. provide result in JSON."
-          }
-        ]
+    const response = await fetch("/api/ai/meter-scan", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            reading: {
-              type: Type.NUMBER,
-              description: "The numerical value displayed on the meter dials or digital display."
-            },
-            meterType: {
-              type: Type.STRING,
-              enum: ["water", "electric", "gas", "unknown"],
-              description: "The category of utility meter identified."
-            },
-            confidence: {
-              type: Type.NUMBER,
-              description: "A value between 0 and 1 representing the certainty of the reading."
-            }
-          },
-          required: ["reading", "meterType", "confidence"]
-        }
-      }
+      body: JSON.stringify({ image: base64Image }),
     });
 
-    const result = JSON.parse(response.text || "{}");
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const result = await response.json();
     return result as MeterReadingResult;
   } catch (error) {
     console.error("Meter analysis error:", error);
@@ -58,7 +27,7 @@ export const analyzeMeterImage = async (base64Image: string): Promise<MeterReadi
       reading: 0,
       confidence: 0,
       meterType: 'unknown',
-      error: error instanceof Error ? error.message : "Failed to analyze meter image"
+      error: error instanceof Error ? error.message : "Failed to analyze meter image",
     };
   }
 };

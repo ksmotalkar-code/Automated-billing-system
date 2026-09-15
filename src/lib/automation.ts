@@ -63,19 +63,21 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   const colRight = 190;
   const verticalLineX = 100;
   
-  doc.rect(colLeft, startY, colRight - colLeft, rowHeight * 5); // Outline
+  doc.rect(colLeft, startY, colRight - colLeft, rowHeight * 6); // Outline
   
   // Horizontal lines
   doc.line(colLeft, startY + rowHeight, colRight, startY + rowHeight);
   doc.line(colLeft, startY + rowHeight * 2, colRight, startY + rowHeight * 2);
   doc.line(colLeft, startY + rowHeight * 3, colRight, startY + rowHeight * 3);
   doc.line(colLeft, startY + rowHeight * 4, colRight, startY + rowHeight * 4);
+  doc.line(colLeft, startY + rowHeight * 5, colRight, startY + rowHeight * 5);
   
   // Vertical line
-  doc.line(verticalLineX, startY, verticalLineX, startY + rowHeight * 5);
+  doc.line(verticalLineX, startY, verticalLineX, startY + rowHeight * 6);
   
   // Headers
   doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
   doc.text("Description", colLeft + 2, startY + 7);
   doc.text("Amount (Rs)", verticalLineX + 2, startY + 7);
   
@@ -84,30 +86,45 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   if (previousBalance < 0) previousBalance = 0;
   let surcharge = previousBalance > 0 ? previousBalance * 0.20 : 0;
   
-  // Row 1
+  // Row 1 - Water consumption charges for last two months
+  const descConsumption = "Water consumption charges for last two months";
+  let consumptionFontSize = 9.5;
+  doc.setFontSize(consumptionFontSize);
+  while (consumptionFontSize > 7 && doc.getTextWidth(descConsumption) > (verticalLineX - colLeft - 4)) {
+    consumptionFontSize -= 0.5;
+    doc.setFontSize(consumptionFontSize);
+  }
   doc.setFont("helvetica", "bold");
-  doc.text("Water Payable Charges", colLeft + 2, startY + rowHeight + 7);
+  doc.text(descConsumption, colLeft + 2, startY + rowHeight + 7);
   doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
   doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight + 7);
   
-  // Row 2
+  // Row 2 - Water Payable Charges
   doc.setFont("helvetica", "bold");
-  doc.text("Surcharges ( if any )", colLeft + 2, startY + rowHeight * 2 + 7);
+  doc.setFontSize(11);
+  doc.text("Water Payable Charges", colLeft + 2, startY + rowHeight * 2 + 7);
   doc.setFont("helvetica", "normal");
-  doc.text(isPaid ? "0" : `${surcharge.toFixed(2)}`, verticalLineX + 2, startY + rowHeight * 2 + 7);
+  doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight * 2 + 7);
   
-  // Row 3
+  // Row 3 - Surcharges ( if any )
   doc.setFont("helvetica", "bold");
-  doc.text("Total Payment Received", colLeft + 2, startY + rowHeight * 3 + 7);
+  doc.text("Surcharges ( if any )", colLeft + 2, startY + rowHeight * 3 + 7);
   doc.setFont("helvetica", "normal");
-  doc.text(isPaid ? `${currentCharges}` : "0", verticalLineX + 2, startY + rowHeight * 3 + 7);
-
-  // Row 4
+  doc.text(isPaid ? "0" : `${surcharge.toFixed(2)}`, verticalLineX + 2, startY + rowHeight * 3 + 7);
+  
+  // Row 4 - Total Payment Received
   doc.setFont("helvetica", "bold");
-  doc.text("Total Payable", colLeft + 2, startY + rowHeight * 4 + 7);
+  doc.text("Total Payment Received", colLeft + 2, startY + rowHeight * 4 + 7);
+  doc.setFont("helvetica", "normal");
+  doc.text(isPaid ? `${currentCharges}` : "0", verticalLineX + 2, startY + rowHeight * 4 + 7);
+
+  // Row 5 - Total Payable
+  doc.setFont("helvetica", "bold");
+  doc.text("Total Payable", colLeft + 2, startY + rowHeight * 5 + 7);
   doc.setFont("helvetica", "normal");
   const balanceRemainingStr = customer.balance > 0 ? `${customer.balance.toFixed(2)}` : "None";
-  doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 4 + 7);
+  doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 5 + 7);
   
   doc.setFontSize(80);
   if (isPaid) {

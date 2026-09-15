@@ -4,6 +4,7 @@ import path from "path";
 import cors from "cors";
 import helmet from "helmet";
 import compression from "compression";
+import { GoogleGenAI, Type } from "@google/genai";
 import admin from "firebase-admin";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 // Support for Client SDK Fallback (Service User Pattern)
@@ -516,13 +517,14 @@ async function generateInvoicePdf(
     const colWidth = 545.28 - 100; 
     const rowHeight = 30;
     
-    // Draw table lines
-    page.drawRectangle({ x: col1X, y: tableY - (rowHeight * 4), width: colWidth, height: rowHeight * 5, borderColor: rgb(0,0,0), borderWidth: 1 });
+    // Draw table lines: 1 header + 5 rows = 6 rows total
+    page.drawRectangle({ x: col1X, y: tableY - (rowHeight * 5), width: colWidth, height: rowHeight * 6, borderColor: rgb(0,0,0), borderWidth: 1 });
     page.drawLine({ start: { x: col1X, y: tableY }, end: { x: col1X + colWidth, y: tableY }, thickness: 1, color: rgb(0,0,0) });
     page.drawLine({ start: { x: col1X, y: tableY - rowHeight }, end: { x: col1X + colWidth, y: tableY - rowHeight }, thickness: 1, color: rgb(0,0,0) });
     page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 2) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 2) }, thickness: 1, color: rgb(0,0,0) });
     page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 3) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 3) }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col2X, y: tableY + rowHeight }, end: { x: col2X, y: tableY - (rowHeight * 4) }, thickness: 1, color: rgb(0,0,0) });
+    page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 4) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 4) }, thickness: 1, color: rgb(0,0,0) });
+    page.drawLine({ start: { x: col2X, y: tableY + rowHeight }, end: { x: col2X, y: tableY - (rowHeight * 5) }, thickness: 1, color: rgb(0,0,0) });
 
     // Column Headers
     page.drawText("Description", { x: col1X + 10, y: tableY + 10, size: 11, font: fontBold, color: rgb(0,0,0) });
@@ -535,22 +537,31 @@ async function generateInvoicePdf(
 
     let totalPayable = balance;
 
-    // Row 1
-    page.drawText("Water Payable Charges", { x: col1X + 10, y: tableY - 20, size: 11, font: fontBold, color: rgb(0,0,0) });
+    // Row 1 - Water consumption charges for last two months
+    const descConsumption = "Water consumption charges for last two months";
+    let descSize = 10;
+    while (descSize > 7 && fontBold.widthOfTextAtSize(descConsumption, descSize) > (col2X - col1X - 20)) {
+      descSize -= 0.5;
+    }
+    page.drawText(descConsumption, { x: col1X + 10, y: tableY - 20, size: descSize, font: fontBold, color: rgb(0,0,0) });
     page.drawText(`${currentCharges}`, { x: col2X + 10, y: tableY - 20, size: 11, font, color: rgb(0,0,0) });
 
-    // Row 2
-    page.drawText("Surcharges ( if any )", { x: col1X + 10, y: tableY - 50, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(isPaid ? "0" : `${surcharge.toFixed(2)}`, { x: col2X + 10, y: tableY - 50, size: 11, font, color: rgb(0,0,0) });
+    // Row 2 - Water Payable Charges
+    page.drawText("Water Payable Charges", { x: col1X + 10, y: tableY - 50, size: 11, font: fontBold, color: rgb(0,0,0) });
+    page.drawText(`${currentCharges}`, { x: col2X + 10, y: tableY - 50, size: 11, font, color: rgb(0,0,0) });
 
-    // Row 3
-    page.drawText("Total Payment Received", { x: col1X + 10, y: tableY - 80, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(isPaid ? `${currentCharges}` : "0", { x: col2X + 10, y: tableY - 80, size: 11, font, color: rgb(0,0,0) });
+    // Row 3 - Surcharges ( if any )
+    page.drawText("Surcharges ( if any )", { x: col1X + 10, y: tableY - 80, size: 11, font: fontBold, color: rgb(0,0,0) });
+    page.drawText(isPaid ? "0" : `${surcharge.toFixed(2)}`, { x: col2X + 10, y: tableY - 80, size: 11, font, color: rgb(0,0,0) });
 
-    // Row 4
-    page.drawText("Total Payable", { x: col1X + 10, y: tableY - 110, size: 11, font: fontBold, color: rgb(0,0,0) });
+    // Row 4 - Total Payment Received
+    page.drawText("Total Payment Received", { x: col1X + 10, y: tableY - 110, size: 11, font: fontBold, color: rgb(0,0,0) });
+    page.drawText(isPaid ? `${currentCharges}` : "0", { x: col2X + 10, y: tableY - 110, size: 11, font, color: rgb(0,0,0) });
+
+    // Row 5 - Total Payable
+    page.drawText("Total Payable", { x: col1X + 10, y: tableY - 140, size: 11, font: fontBold, color: rgb(0,0,0) });
     const balanceRemainingStr = totalPayable > 0 ? `${totalPayable.toFixed(2)}` : "None";
-    page.drawText(balanceRemainingStr, { x: col2X + 10, y: tableY - 110, size: 11, font, color: rgb(0,0,0) });
+    page.drawText(balanceRemainingStr, { x: col2X + 10, y: tableY - 140, size: 11, font, color: rgb(0,0,0) });
   }
 
   return await pdfDoc.saveAsBase64({ dataUri: true });
@@ -958,6 +969,152 @@ async function startServer() {
   // API Routes (Before Vite Middleware)
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
+  });
+
+  // Server-side Gemini AI Client
+  let geminiClient: GoogleGenAI | null = null;
+  function getGeminiClient(): GoogleGenAI {
+    if (!geminiClient) {
+      geminiClient = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      });
+    }
+    return geminiClient;
+  }
+
+  // AI Assistant Chat Route (Full-stack proxy eliminating client-side API key errors)
+  app.post("/api/ai/chat", async (req, res) => {
+    try {
+      const { messages, customKey } = req.body;
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        return res.status(400).json({ error: "Invalid messages payload" });
+      }
+
+      // Optional user-specified Groq override
+      if (customKey && typeof customKey === "string" && customKey.startsWith("gsk_")) {
+        try {
+          const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${customKey}`,
+            },
+            body: JSON.stringify({
+              model: "llama-3.3-70b-versatile",
+              messages: messages.map((m: any) => ({ role: m.role, content: m.content })),
+              temperature: 0.7,
+            }),
+          });
+          if (groqRes.ok) {
+            const gData = await groqRes.json();
+            const reply = gData.choices?.[0]?.message?.content;
+            if (reply) {
+              return res.json({ reply });
+            }
+          }
+        } catch (groqErr) {
+          console.warn("Custom key request failed, falling back to server Gemini:", groqErr);
+        }
+      }
+
+      // Default & primary: Google Gemini API (gemini-3.8-flash)
+      const ai = getGeminiClient();
+      const contents = messages.map((m: any) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: String(m.content || "") }],
+      }));
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents,
+        config: {
+          systemInstruction:
+            "You are the official Gram Panchayat Water Committee AI Assistant for GP. Jhanda Khurd. Assist residents and administrators with water billing questions, meter readings, tariffs, payment acknowledgments, leak complaints, and village water schedules. Be concise, polite, accurate, and helpful.",
+          temperature: 0.7,
+        },
+      });
+
+      const reply = response.text || "I have received your query. How else can I help you regarding water connections or billing?";
+      return res.json({ reply });
+    } catch (err: any) {
+      console.error("Server AI Chat error:", err);
+      return res.status(200).json({
+        reply: "Hello! I am your Water Committee Assistant. I am here to help you check pending bills, record payments, or file a complaint regarding water supply.",
+        error: err?.message,
+      });
+    }
+  });
+
+  // Server-side Meter Scanning Route
+  app.post("/api/ai/meter-scan", async (req, res) => {
+    try {
+      const { image } = req.body;
+      if (!image) {
+        return res.status(400).json({ error: "Missing image payload" });
+      }
+
+      const base64Data = image.includes(",") ? image.split(",")[1] : image;
+      const ai = getGeminiClient();
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: "image/jpeg",
+                data: base64Data,
+              },
+            },
+            {
+              text: "Analyze this image of a utility meter (water/electric/gas). Identify the numerical reading displayed and the meter type. Output strictly in JSON format.",
+            },
+          ],
+        },
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              reading: {
+                type: Type.NUMBER,
+                description: "Numerical reading on the meter display or dials.",
+              },
+              meterType: {
+                type: Type.STRING,
+                enum: ["water", "electric", "gas", "unknown"],
+                description: "Type of meter identified.",
+              },
+              confidence: {
+                type: Type.NUMBER,
+                description: "Confidence level between 0 and 1.",
+              },
+            },
+            required: ["reading", "meterType", "confidence"],
+          },
+        },
+      });
+
+      const parsed = JSON.parse(response.text || "{}");
+      return res.json({
+        reading: typeof parsed.reading === "number" ? parsed.reading : 0,
+        meterType: parsed.meterType || "water",
+        confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.9,
+      });
+    } catch (err: any) {
+      console.error("Server Meter Scan error:", err);
+      return res.status(200).json({
+        reading: 0,
+        meterType: "unknown",
+        confidence: 0,
+        error: err?.message || "Failed to scan meter",
+      });
+    }
   });
 
   // Webhook for Web Portal Uploads (bypass storage rules)
