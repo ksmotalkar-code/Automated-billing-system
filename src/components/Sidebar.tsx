@@ -64,7 +64,8 @@ interface SidebarProps {
 export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle, setUiStyle, isExpanded, setIsExpanded, appLogoImage }: SidebarProps) {
   const [showThemes, setShowThemes] = useState(false);
   const { t, i18n } = useTranslation();
-  const { isInstallable, promptInstall } = usePWAInstall();
+  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   const toggleLanguage = () => {
     const langs = ['en', 'hi', 'pa'];
@@ -314,24 +315,64 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
           )}
         </motion.button>
 
-        {isInstallable && (
+        {!isInstalled && isInstallable && (
           <motion.button 
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={promptInstall}
+            onClick={install}
             className={cn(
               "w-full flex items-center gap-3 p-3 mt-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-colors group relative",
               !isExpanded && "justify-center"
             )}
           >
             <Download className={cn("shrink-0", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
-            {isExpanded && <span>Install Desktop App</span>}
+            {isExpanded && <span>Install App</span>}
             {!isExpanded && (
               <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
-                Install Desktop App
+                Install App
               </div>
             )}
           </motion.button>
+        )}
+
+        {!isInstalled && isIOS && (
+          <>
+            <motion.button 
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={() => setShowIOSGuide(true)}
+              className={cn(
+                "w-full flex items-center gap-3 p-3 mt-3 neu-flat rounded-xl text-sm font-bold transition-colors group relative",
+                !isExpanded && "justify-center"
+              )}
+            >
+              <Download className={cn("shrink-0", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
+              {isExpanded && <span>Install on iOS</span>}
+              {!isExpanded && (
+                <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
+                  Install on iOS
+                </div>
+              )}
+            </motion.button>
+
+            {showIOSGuide && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+                <div className="w-full max-w-sm rounded-xl neu-base p-6 shadow-xl">
+                  <h3 className="text-lg font-bold">Install on iPhone / iPad</h3>
+                  <p className="mt-2 text-sm opacity-80 leading-relaxed">
+                    1. Tap the <strong>Share</strong> button in the Safari toolbar.<br /><br />
+                    2. Scroll down and tap <strong>Add to Home Screen</strong>.
+                  </p>
+                  <button
+                    onClick={() => setShowIOSGuide(false)}
+                    className="mt-6 w-full rounded-lg bg-blue-600 text-white font-bold py-2 hover:bg-blue-700"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </motion.div>

@@ -5,136 +5,181 @@ import { db, auth } from '../firebase';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { whatsappService } from '../services/whatsappService';
 import { createPortalLink } from './portal';
+import { DEFAULT_VWSC_LOGO_BASE64 } from './sealLogo';
 
-// ...
-
-export const generateInvoicePDF = (customer: Customer, settings: AppSettings, isReceiptMode: boolean = false) => {
+export const generateInvoicePDF = (customer: Customer, settings: AppSettings, isReceiptMode: boolean = false, paymentAmount: number = 0) => {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
   
+  const paymentReceived = paymentAmount || 0;
   const isPaid = isReceiptMode || customer.balance <= 0;
   
-  // Set default font
-  doc.setFont("helvetica");
+  // 1. Header with Official Circular Emblem & Serif Typography
+  const logoToUse = settings.appLogoImage || DEFAULT_VWSC_LOGO_BASE64;
+  if (logoToUse) {
+    try {
+      doc.addImage(logoToUse, 'PNG', 16, 10, 24, 24);
+    } catch (e) {
+      console.warn("Could not embed logo in PDF", e);
+    }
+  }
 
-  // ---------------------------------------------------------
-  // UNIFIED LAYOUT for both RECEIPT and BILL
-  // ---------------------------------------------------------
-  
+  // Header Title beside Logo
+  doc.setFont("times", "bold");
   doc.setFontSize(16);
+  doc.setTextColor(15, 23, 42); // dark navy/black
+  doc.text("VILLAGE WATER & SANITATION COMMITTEE", 46, 20);
+
+  doc.setFont("times", "normal");
+  doc.setFontSize(11);
+  doc.text("VILLAGE - JHANDA KHURD (MANSA)", 46, 28);
+
+  // Top Solid Horizontal Divider Line (spanning across the page)
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.8);
+  doc.line(14, 38, 196, 38);
+
+  // 2. Document Title (Centered as in reference)
   doc.setFont("helvetica", "bold");
-  doc.text(isPaid ? "RECEIPT" : "WATER BILL", 105, 25, { align: 'center' });
-  
-  doc.setFontSize(12);
-  doc.text("VILLAGE WATER & SANITATION COMMITTEE", 105, 35, { align: 'center' });
-  
-  doc.setFontSize(10);
-  doc.setFont("helvetica", "normal");
-  doc.text("Village - Jhanda Khurd (Mansa)", 105, 41, { align: 'center' });
-  doc.text("Email - gp.jhandakhurd@gmail.com", 105, 47, { align: 'center' });
-  
+  doc.setFontSize(16);
+  doc.setTextColor(0, 0, 0);
+  const docTitle = isPaid ? "RECEIPT" : "WATER BILL";
+  doc.text(docTitle, 105, 50, { align: 'center' });
+
+  // 3. Metadata Key-Value Block
   const currentDate = new Date().toLocaleDateString();
   const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-  
-  doc.setFontSize(11);
+
+  doc.setFontSize(10.5);
+  // Row 1: Date
   doc.setFont("helvetica", "bold");
   doc.text("Date:", 20, 60);
   doc.setFont("helvetica", "normal");
   doc.text(currentDate, 65, 60);
-  
-  doc.setFont("helvetica", "bold");
-  doc.text("Account No.:", 20, 70);
-  doc.setFont("helvetica", "normal");
-  doc.text(customer.id.substring(0, 8), 65, 70);
-  
-  doc.setFont("helvetica", "bold");
-  doc.text(isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :", 20, 80);
-  doc.setFont("helvetica", "normal");
-  doc.text(customer.name, 95, 80);
-  
-  doc.setFont("helvetica", "bold");
-  doc.text("Water Bill For Month :", 20, 90);
-  doc.setFont("helvetica", "normal");
-  doc.text(currentMonth, 70, 90);
-  
-  // Table positioning
-  const startY = 105;
-  const rowHeight = 10;
-  const colLeft = 20;
-  const colRight = 190;
-  const verticalLineX = 100;
-  
-  doc.rect(colLeft, startY, colRight - colLeft, rowHeight * 6); // Outline
-  
-  // Horizontal lines
-  doc.line(colLeft, startY + rowHeight, colRight, startY + rowHeight);
-  doc.line(colLeft, startY + rowHeight * 2, colRight, startY + rowHeight * 2);
-  doc.line(colLeft, startY + rowHeight * 3, colRight, startY + rowHeight * 3);
-  doc.line(colLeft, startY + rowHeight * 4, colRight, startY + rowHeight * 4);
-  doc.line(colLeft, startY + rowHeight * 5, colRight, startY + rowHeight * 5);
-  
-  // Vertical line
-  doc.line(verticalLineX, startY, verticalLineX, startY + rowHeight * 6);
-  
-  // Headers
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Description", colLeft + 2, startY + 7);
-  doc.text("Amount (Rs)", verticalLineX + 2, startY + 7);
-  
-  const currentCharges = settings.billingAmount || 200;
-  let previousBalance = customer.balance - currentCharges;
-  if (previousBalance < 0) previousBalance = 0;
-  let surcharge = previousBalance > 0 ? previousBalance * 0.20 : 0;
-  
-  // Row 1 - Water consumption charges for last two months
-  const descConsumption = "Water consumption charges for last two months";
-  let consumptionFontSize = 9.5;
-  doc.setFontSize(consumptionFontSize);
-  while (consumptionFontSize > 7 && doc.getTextWidth(descConsumption) > (verticalLineX - colLeft - 4)) {
-    consumptionFontSize -= 0.5;
-    doc.setFontSize(consumptionFontSize);
-  }
-  doc.setFont("helvetica", "bold");
-  doc.text(descConsumption, colLeft + 2, startY + rowHeight + 7);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight + 7);
-  
-  // Row 2 - Water Payable Charges
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(11);
-  doc.text("Water Payable Charges", colLeft + 2, startY + rowHeight * 2 + 7);
-  doc.setFont("helvetica", "normal");
-  doc.text(`${currentCharges}`, verticalLineX + 2, startY + rowHeight * 2 + 7);
-  
-  // Row 3 - Surcharges ( if any )
-  doc.setFont("helvetica", "bold");
-  doc.text("Surcharges ( if any )", colLeft + 2, startY + rowHeight * 3 + 7);
-  doc.setFont("helvetica", "normal");
-  doc.text(isPaid ? "0" : `${surcharge.toFixed(2)}`, verticalLineX + 2, startY + rowHeight * 3 + 7);
-  
-  // Row 4 - Total Payment Received
-  doc.setFont("helvetica", "bold");
-  doc.text("Total Payment Received", colLeft + 2, startY + rowHeight * 4 + 7);
-  doc.setFont("helvetica", "normal");
-  doc.text(isPaid ? `${currentCharges}` : "0", verticalLineX + 2, startY + rowHeight * 4 + 7);
 
-  // Row 5 - Total Payable
+  // Row 2: Account No.
   doc.setFont("helvetica", "bold");
-  doc.text("Total Payable", colLeft + 2, startY + rowHeight * 5 + 7);
+  doc.text("Account No.:", 20, 68);
   doc.setFont("helvetica", "normal");
-  const balanceRemainingStr = customer.balance > 0 ? `${customer.balance.toFixed(2)}` : "None";
-  doc.text(balanceRemainingStr, verticalLineX + 2, startY + rowHeight * 5 + 7);
-  
-  doc.setFontSize(80);
-  if (isPaid) {
-    doc.setTextColor(220, 255, 220); // very faint green
-    doc.text("PAID", 105, 170, { align: 'center', angle: -45 });
-  } else {
-    doc.setTextColor(255, 220, 220); // very faint red
-    doc.text("UNPAID", 105, 170, { align: 'center', angle: -45 });
+  const acctRaw = customer.id ? customer.id.substring(0, 8).toUpperCase() : "N/A";
+  const acctDisplay = acctRaw.startsWith("CUST-") ? acctRaw : `CUST-${acctRaw.substring(0, 4)}`;
+  doc.text(acctDisplay, 65, 68);
+
+  // Row 3: Consumer Name
+  doc.setFont("helvetica", "bold");
+  const nameLabel = isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :";
+  doc.text(nameLabel, 20, 76);
+  doc.setFont("helvetica", "normal");
+  const nameX = isPaid ? 90 : 65;
+
+  let displayName = customer.name || "";
+  if (doc.getTextWidth(displayName) > (190 - nameX)) {
+    while (doc.getTextWidth(displayName + "...") > (190 - nameX) && displayName.length > 5) {
+      displayName = displayName.slice(0, -1);
+    }
+    displayName += "...";
   }
-  
+  doc.text(displayName, nameX, 76);
+
+  // Row 4: Water Bill For Month
+  doc.setFont("helvetica", "bold");
+  doc.text("Water Bill For Month :", 20, 84);
+  doc.setFont("helvetica", "normal");
+  doc.text(currentMonth, 65, 84);
+
+  // 4. Financial Calculation (Reconstruct exact forward ledger math)
+  const currentCharges = settings.billingAmount || 200;
+  const totalDueBeforePayment = customer.balance + paymentReceived;
+  let previousBalanceAndSurcharge = totalDueBeforePayment - currentCharges;
+  if (previousBalanceAndSurcharge < 0) previousBalanceAndSurcharge = 0;
+
+  const arrears = previousBalanceAndSurcharge / 1.2;
+  const surcharge = arrears > 0 ? arrears * 0.20 : 0;
+  const waterPayableCharges = currentCharges + arrears;
+
+  // 5. 5-Row Exact Table Layout Geometry
+  const startY = 94;
+  const rowHeight = 9.5;
+  const colLeft = 20;
+  const colRight = 190; // Spans full content width 170mm (20mm to 190mm)
+  const verticalLineX = 130; // Description width 110mm, Amount width 60mm
+  const totalRows = 6; // 1 header + 5 data rows
+
+  // 6. Watermark (Centered perfectly inside the table boundary)
+  const watermarkCenterX = (colLeft + colRight) / 2; // 105mm (exact center of page)
+  const watermarkCenterY = startY + (rowHeight * totalRows) / 2; // 122.5mm (exact center of table)
+
+  if (isPaid || customer.balance <= 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(55);
+    doc.setTextColor(190, 245, 205); // soft faint pastel green
+    doc.text("PAID", watermarkCenterX, watermarkCenterY, { align: 'center', angle: 35 });
+  } else if (paymentReceived > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(30);
+    doc.setTextColor(254, 240, 190); // soft faint yellow/orange
+    doc.text("PARTIAL PAYMENT", watermarkCenterX, watermarkCenterY, { align: 'center', angle: 22 });
+  } else {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(55);
+    doc.setTextColor(254, 215, 215); // soft faint red/salmon pink matching the reference screenshot
+    doc.text("UNPAID", watermarkCenterX, watermarkCenterY, { align: 'center', angle: 35 });
+  }
+
+  // Draw Table Outer Rectangle
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.3);
+  doc.rect(colLeft, startY, colRight - colLeft, rowHeight * totalRows);
+
+  // Horizontal row dividers
+  for (let i = 1; i < totalRows; i++) {
+    doc.line(colLeft, startY + (rowHeight * i), colRight, startY + (rowHeight * i));
+  }
+  // Vertical column divider
+  doc.line(verticalLineX, startY, verticalLineX, startY + (rowHeight * totalRows));
+
+  // Table Headers
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(10.5);
+  doc.setTextColor(0, 0, 0);
+  doc.text("Description", colLeft + 4, startY + 6.5);
+  doc.text("Amount (Rs)", verticalLineX + 4, startY + 6.5);
+
+  // Row 1: Water consumption charges for last two months
+  doc.setFont("helvetica", "bold");
+  doc.text("Water consumption charges for last two months", colLeft + 4, startY + rowHeight + 6.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(String(Math.round(currentCharges)), verticalLineX + 4, startY + rowHeight + 6.5);
+
+  // Row 2: Water Payable Charges
+  doc.setFont("helvetica", "bold");
+  doc.text("Water Payable Charges", colLeft + 4, startY + (rowHeight * 2) + 6.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(String(Math.round(waterPayableCharges)), verticalLineX + 4, startY + (rowHeight * 2) + 6.5);
+
+  // Row 3: Surcharges ( if any )
+  doc.setFont("helvetica", "bold");
+  doc.text("Surcharges ( if any )", colLeft + 4, startY + (rowHeight * 3) + 6.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(surcharge > 0 ? surcharge.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 3) + 6.5);
+
+  // Row 4: Total Payment Received
+  doc.setFont("helvetica", "bold");
+  doc.text("Total Payment Received", colLeft + 4, startY + (rowHeight * 4) + 6.5);
+  doc.setFont("helvetica", "normal");
+  doc.text(paymentReceived > 0 ? paymentReceived.toFixed(2) : "0", verticalLineX + 4, startY + (rowHeight * 4) + 6.5);
+
+  // Row 5: Total Payable
+  doc.setFont("helvetica", "bold");
+  doc.text("Total Payable", colLeft + 4, startY + (rowHeight * 5) + 6.5);
+  doc.setFont("helvetica", "normal");
+  const totalPayableStr = (customer.balance <= 0 && isPaid) ? "None" : customer.balance.toFixed(2);
+  doc.text(totalPayableStr, verticalLineX + 4, startY + (rowHeight * 5) + 6.5);
+
+  // 7. Bottom Solid Horizontal Divider Line (edge to edge)
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.8);
+  doc.line(14, 163, 196, 163);
+
   return doc.output('blob');
 };
 

@@ -12,14 +12,22 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico', 'pwa-192x192.svg', 'pwa-512x512.svg'],
+        includeAssets: ['favicon.ico.jpg', 'pwa-192x192.svg', 'pwa-512x512.svg'],
+        devOptions: {
+          enabled: false,
+          type: 'module',
+        },
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
         },
         manifest: {
-          name: 'Gram Panchayat GP. Jhanda Khurd Automated Billing',
-          short_name: 'GP. Jhanda Khurd',
-          description: 'A powerful automated billing application',
+          id: '/',
+          start_url: '/',
+          scope: '/',
+          name: 'Panchayat Water Billing',
+          short_name: 'WaterBill',
+          description: 'A powerful automated billing application for Gram Panchayat',
           theme_color: '#1a202c',
           background_color: '#1a202c',
           display: 'standalone',
@@ -27,13 +35,20 @@ export default defineConfig(({mode}) => {
             {
               src: 'pwa-192x192.svg',
               sizes: '192x192',
-              type: 'image/svg+xml'
+              type: 'image/svg+xml',
+              purpose: 'any'
             },
             {
               src: 'pwa-512x512.svg',
               sizes: '512x512',
               type: 'image/svg+xml',
-              purpose: 'any maskable'
+              purpose: 'any'
+            },
+            {
+              src: 'pwa-512x512.svg',
+              sizes: '512x512',
+              type: 'image/svg+xml',
+              purpose: 'maskable'
             }
           ]
         }

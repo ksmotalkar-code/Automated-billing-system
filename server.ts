@@ -440,7 +440,23 @@ async function generateInvoicePdf(
 
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const timesBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
   const isPaid = balance <= 0 || (amountPaid !== undefined && balance === 0);
+
+  // Attempt to load official VWSC emblem if no full-page image template
+  let sealImage: any = null;
+  if (!image) {
+    const sealPath = path.join(process.cwd(), 'public', 'vwsc_seal.png');
+    if (fs.existsSync(sealPath)) {
+      try {
+        const sealBytes = fs.readFileSync(sealPath);
+        sealImage = await pdfDoc.embedPng(sealBytes);
+      } catch (embErr) {
+        console.warn("Could not embed seal PNG in server PDF:", embErr);
+      }
+    }
+  }
 
   if (image) {
     // Legacy support for user's uploaded template 
@@ -469,99 +485,253 @@ async function generateInvoicePdf(
     drawTextBg(`${t('date')}: ${new Date().toLocaleDateString()}`, scaleX(50), scaleY(200), sSize(12), font, rgb(0, 0, 0));
     drawTextBg(t('thankYou'), scaleX(50), scaleY(150), sSize(12), font, rgb(0, 0, 0));
   } else {
-    // Watermark
-    if (isPaid) {
-       page.drawText("PAID", { x: 200, y: 350, size: 80, font: fontBold, color: rgb(0.86, 1, 0.86), rotate: degrees(45) });
-    } else {
-       page.drawText("UNPAID", { x: 150, y: 350, size: 80, font: fontBold, color: rgb(1, 0.86, 0.86), rotate: degrees(45) });
+    // 1. Header with Official Emblem & Serif Typography
+    if (sealImage) {
+      page.drawImage(sealImage, { x: 45, y: pgHeight - 92, width: 68, height: 68 });
     }
 
-    // Draw Header
+    // Header Title beside Logo
+    page.drawText("VILLAGE WATER & SANITATION COMMITTEE", {
+      x: 130,
+      y: pgHeight - 56,
+      size: 16,
+      font: timesBold,
+      color: rgb(0.06, 0.09, 0.16)
+    });
+
+    page.drawText("VILLAGE - JHANDA KHURD (MANSA)", {
+      x: 130,
+      y: pgHeight - 78,
+      size: 11,
+      font: timesRoman,
+      color: rgb(0.06, 0.09, 0.16)
+    });
+
+    // Top Solid Horizontal Divider Line
+    page.drawLine({
+      start: { x: 38, y: pgHeight - 106 },
+      end: { x: 557, y: pgHeight - 106 },
+      thickness: 2,
+      color: rgb(0, 0, 0)
+    });
+
+    // 2. Document Title (Centered as in reference)
     const title = isPaid ? "RECEIPT" : "WATER BILL";
     const titleW = fontBold.widthOfTextAtSize(title, 16);
-    page.drawText(title, { x: (pgWidth - titleW) / 2, y: pgHeight - 70, size: 16, font: fontBold, color: rgb(0,0,0) });
-    
-    const subtitle1 = "VILLAGE WATER & SANITATION COMMITTEE";
-    const st1W = font.widthOfTextAtSize(subtitle1, 12);
-    page.drawText(subtitle1, { x: (pgWidth - st1W) / 2, y: pgHeight - 100, size: 12, font, color: rgb(0,0,0) });
+    page.drawText(title, {
+      x: (pgWidth - titleW) / 2,
+      y: pgHeight - 138,
+      size: 16,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
 
-    const subtitle2 = "Village - Jhanda Khurd (Mansa)";
-    const st2W = font.widthOfTextAtSize(subtitle2, 10);
-    page.drawText(subtitle2, { x: (pgWidth - st2W) / 2, y: pgHeight - 116, size: 10, font, color: rgb(0,0,0) });
-
-    const subtitle3 = "Email - gp.jhandakhurd@gmail.com";
-    const st3W = font.widthOfTextAtSize(subtitle3, 10);
-    page.drawText(subtitle3, { x: (pgWidth - st3W) / 2, y: pgHeight - 132, size: 10, font, color: rgb(0,0,0) });
-
-    // Details
+    // 3. Metadata Key-Value Block
     const currentDate = new Date().toLocaleDateString();
     const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-    
-    page.drawText("Date:", { x: 50, y: pgHeight - 170, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(currentDate, { x: 150, y: pgHeight - 170, size: 11, font, color: rgb(0,0,0) });
-    
-    page.drawText("Account No.:", { x: 50, y: pgHeight - 190, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(String(customerId).substring(0, 8), { x: 150, y: pgHeight - 190, size: 11, font, color: rgb(0,0,0) });
+    const acctRaw = customerId && customerId !== 'N/A' ? String(customerId).substring(0, 8).toUpperCase() : 'N/A';
+    const acctDisplay = acctRaw.startsWith("CUST-") ? acctRaw : `CUST-${acctRaw.substring(0, 4)}`;
+
+    page.drawText("Date:", { x: 56, y: pgHeight - 165, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
+    page.drawText(currentDate, { x: 155, y: pgHeight - 165, size: 10.5, font, color: rgb(0, 0, 0) });
+
+    page.drawText("Account No.:", { x: 56, y: pgHeight - 188, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
+    page.drawText(acctDisplay, { x: 155, y: pgHeight - 188, size: 10.5, font, color: rgb(0, 0, 0) });
 
     const nameLbl = isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :";
-    page.drawText(nameLbl, { x: 50, y: pgHeight - 210, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(name, { x: isPaid ? 250 : 170, y: pgHeight - 210, size: 11, font, color: rgb(0,0,0) });
-
-    page.drawText("Water Bill For Month :", { x: 50, y: pgHeight - 230, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(currentMonth, { x: 180, y: pgHeight - 230, size: 11, font, color: rgb(0,0,0) });
-
-    // Table
-    const tableY = pgHeight - 270;
-    const col1X = 50;
-    const col2X = 300;
-    const colWidth = 545.28 - 100; 
-    const rowHeight = 30;
+    const nameX = isPaid ? 250 : 180;
+    page.drawText(nameLbl, { x: 56, y: pgHeight - 211, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
     
-    // Draw table lines: 1 header + 5 rows = 6 rows total
-    page.drawRectangle({ x: col1X, y: tableY - (rowHeight * 5), width: colWidth, height: rowHeight * 6, borderColor: rgb(0,0,0), borderWidth: 1 });
-    page.drawLine({ start: { x: col1X, y: tableY }, end: { x: col1X + colWidth, y: tableY }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col1X, y: tableY - rowHeight }, end: { x: col1X + colWidth, y: tableY - rowHeight }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 2) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 2) }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 3) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 3) }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col1X, y: tableY - (rowHeight * 4) }, end: { x: col1X + colWidth, y: tableY - (rowHeight * 4) }, thickness: 1, color: rgb(0,0,0) });
-    page.drawLine({ start: { x: col2X, y: tableY + rowHeight }, end: { x: col2X, y: tableY - (rowHeight * 5) }, thickness: 1, color: rgb(0,0,0) });
+    let displayName = name || "";
+    while (font.widthOfTextAtSize(displayName, 10.5) > (539 - nameX) && displayName.length > 5) {
+      displayName = displayName.slice(0, -1);
+    }
+    page.drawText(displayName, { x: nameX, y: pgHeight - 211, size: 10.5, font, color: rgb(0, 0, 0) });
+
+    page.drawText("Water Bill For Month :", { x: 56, y: pgHeight - 234, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
+    page.drawText(currentMonth, { x: 180, y: pgHeight - 234, size: 10.5, font, color: rgb(0, 0, 0) });
+
+    // 4. Financial Calculations
+    const currentCharges = billingAmount;
+    const paymentReceived2 = amountPaid || 0;
+    const totalDueBeforePayment = balance + paymentReceived2;
+    let previousBalanceAndSurcharge = totalDueBeforePayment - currentCharges;
+    if (previousBalanceAndSurcharge < 0) previousBalanceAndSurcharge = 0;
+
+    const arrears = previousBalanceAndSurcharge / 1.2;
+    const surcharge = arrears > 0 ? arrears * 0.20 : 0;
+    const waterPayableCharges = currentCharges + arrears;
+
+    // 5. 5-Row Exact Table Layout Geometry
+    const tableY = pgHeight - 264;
+    const col1X = 56;
+    const colWidth = 483; // Spans 483pt from 56 to 539 (A4 right margin)
+    const col2X = 376; // Description width 320pt, Amount width 163pt
+    const rowHeight = 26;
+    const totalDataRows = 5;
+
+    // 6. Watermark across Table (Centered inside table bounds)
+    const centerX = col1X + colWidth / 2; // 297.5 pt (center of page)
+    const centerY = tableY + rowHeight - (rowHeight * (totalDataRows + 1)) / 2; // center of table
+
+    if (balance <= 0 || isPaid) {
+      const wPaid = fontBold.widthOfTextAtSize("PAID", 55);
+      const angle = 35;
+      const rad = angle * (Math.PI / 180);
+      page.drawText("PAID", {
+        x: centerX - (wPaid / 2) * Math.cos(rad),
+        y: centerY - (wPaid / 2) * Math.sin(rad),
+        size: 55,
+        font: fontBold,
+        color: rgb(0.74, 0.96, 0.8),
+        rotate: degrees(angle)
+      });
+    } else if (paymentReceived2 > 0) {
+      const wPartial = fontBold.widthOfTextAtSize("PARTIAL PAYMENT", 30);
+      const angle = 22;
+      const rad = angle * (Math.PI / 180);
+      page.drawText("PARTIAL PAYMENT", {
+        x: centerX - (wPartial / 2) * Math.cos(rad),
+        y: centerY - (wPartial / 2) * Math.sin(rad),
+        size: 30,
+        font: fontBold,
+        color: rgb(0.99, 0.94, 0.74),
+        rotate: degrees(angle)
+      });
+    } else {
+      const wUnpaid = fontBold.widthOfTextAtSize("UNPAID", 55);
+      const angle = 35;
+      const rad = angle * (Math.PI / 180);
+      page.drawText("UNPAID", {
+        x: centerX - (wUnpaid / 2) * Math.cos(rad),
+        y: centerY - (wUnpaid / 2) * Math.sin(rad),
+        size: 55,
+        font: fontBold,
+        color: rgb(1, 0.84, 0.84),
+        rotate: degrees(angle)
+      });
+    }
+
+    // Outer Border
+    page.drawRectangle({
+      x: col1X,
+      y: tableY - (rowHeight * totalDataRows),
+      width: colWidth,
+      height: rowHeight * (totalDataRows + 1),
+      borderColor: rgb(0, 0, 0),
+      borderWidth: 1
+    });
+
+    // Horizontal Dividers
+    for (let i = 0; i < totalDataRows; i++) {
+      page.drawLine({
+        start: { x: col1X, y: tableY - (rowHeight * i) },
+        end: { x: col1X + colWidth, y: tableY - (rowHeight * i) },
+        thickness: 1,
+        color: rgb(0, 0, 0)
+      });
+    }
+
+    // Vertical Divider
+    page.drawLine({
+      start: { x: col2X, y: tableY + rowHeight },
+      end: { x: col2X, y: tableY - (rowHeight * totalDataRows) },
+      thickness: 1,
+      color: rgb(0, 0, 0)
+    });
 
     // Column Headers
-    page.drawText("Description", { x: col1X + 10, y: tableY + 10, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText("Amount (Rs)", { x: col2X + 10, y: tableY + 10, size: 11, font: fontBold, color: rgb(0,0,0) });
+    page.drawText("Description", { x: col1X + 10, y: tableY + 8, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
+    page.drawText("Amount (Rs)", { x: col2X + 10, y: tableY + 8, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
-    const currentCharges = billingAmount;
-    let previousBalance = balance - currentCharges;
-    if (previousBalance < 0) previousBalance = 0;
-    let surcharge = previousBalance > 0 ? previousBalance * 0.20 : 0;
+    // Row 1: Water consumption charges for last two months
+    page.drawText("Water consumption charges for last two months", {
+      x: col1X + 10,
+      y: tableY - 18,
+      size: 10,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
+    page.drawText(String(Math.round(currentCharges)), {
+      x: col2X + 10,
+      y: tableY - 18,
+      size: 10.5,
+      font,
+      color: rgb(0, 0, 0)
+    });
 
-    let totalPayable = balance;
+    // Row 2: Water Payable Charges
+    page.drawText("Water Payable Charges", {
+      x: col1X + 10,
+      y: tableY - 44,
+      size: 10.5,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
+    page.drawText(String(Math.round(waterPayableCharges)), {
+      x: col2X + 10,
+      y: tableY - 44,
+      size: 10.5,
+      font,
+      color: rgb(0, 0, 0)
+    });
 
-    // Row 1 - Water consumption charges for last two months
-    const descConsumption = "Water consumption charges for last two months";
-    let descSize = 10;
-    while (descSize > 7 && fontBold.widthOfTextAtSize(descConsumption, descSize) > (col2X - col1X - 20)) {
-      descSize -= 0.5;
-    }
-    page.drawText(descConsumption, { x: col1X + 10, y: tableY - 20, size: descSize, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(`${currentCharges}`, { x: col2X + 10, y: tableY - 20, size: 11, font, color: rgb(0,0,0) });
+    // Row 3: Surcharges ( if any )
+    page.drawText("Surcharges ( if any )", {
+      x: col1X + 10,
+      y: tableY - 70,
+      size: 10.5,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
+    page.drawText(surcharge > 0 ? surcharge.toFixed(2) : "0.00", {
+      x: col2X + 10,
+      y: tableY - 70,
+      size: 10.5,
+      font,
+      color: rgb(0, 0, 0)
+    });
 
-    // Row 2 - Water Payable Charges
-    page.drawText("Water Payable Charges", { x: col1X + 10, y: tableY - 50, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(`${currentCharges}`, { x: col2X + 10, y: tableY - 50, size: 11, font, color: rgb(0,0,0) });
+    // Row 4: Total Payment Received
+    page.drawText("Total Payment Received", {
+      x: col1X + 10,
+      y: tableY - 96,
+      size: 10.5,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
+    page.drawText(paymentReceived2 > 0 ? paymentReceived2.toFixed(2) : "0", {
+      x: col2X + 10,
+      y: tableY - 96,
+      size: 10.5,
+      font,
+      color: rgb(0, 0, 0)
+    });
 
-    // Row 3 - Surcharges ( if any )
-    page.drawText("Surcharges ( if any )", { x: col1X + 10, y: tableY - 80, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(isPaid ? "0" : `${surcharge.toFixed(2)}`, { x: col2X + 10, y: tableY - 80, size: 11, font, color: rgb(0,0,0) });
+    // Row 5: Total Payable
+    page.drawText("Total Payable", {
+      x: col1X + 10,
+      y: tableY - 122,
+      size: 10.5,
+      font: fontBold,
+      color: rgb(0, 0, 0)
+    });
+    const totalPayableStr = (balance <= 0 && isPaid) ? "None" : balance.toFixed(2);
+    page.drawText(totalPayableStr, {
+      x: col2X + 10,
+      y: tableY - 122,
+      size: 10.5,
+      font,
+      color: rgb(0, 0, 0)
+    });
 
-    // Row 4 - Total Payment Received
-    page.drawText("Total Payment Received", { x: col1X + 10, y: tableY - 110, size: 11, font: fontBold, color: rgb(0,0,0) });
-    page.drawText(isPaid ? `${currentCharges}` : "0", { x: col2X + 10, y: tableY - 110, size: 11, font, color: rgb(0,0,0) });
-
-    // Row 5 - Total Payable
-    page.drawText("Total Payable", { x: col1X + 10, y: tableY - 140, size: 11, font: fontBold, color: rgb(0,0,0) });
-    const balanceRemainingStr = totalPayable > 0 ? `${totalPayable.toFixed(2)}` : "None";
-    page.drawText(balanceRemainingStr, { x: col2X + 10, y: tableY - 140, size: 11, font, color: rgb(0,0,0) });
+    // 7. Bottom Solid Horizontal Divider Line
+    page.drawLine({
+      start: { x: 38, y: tableY - 160 },
+      end: { x: 557, y: tableY - 160 },
+      thickness: 2,
+      color: rgb(0, 0, 0)
+    });
   }
 
   return await pdfDoc.saveAsBase64({ dataUri: true });
@@ -1505,10 +1675,16 @@ async function startServer() {
         if (bodyParams.length > 0) {
           components.push({
             type: "body",
-            parameters: bodyParams.map((p) => ({
-              type: "text",
-              text: String(p.value || p),
-            })),
+            parameters: bodyParams.map((p) => {
+              let textVal = String(p.value || p);
+              if (textVal.length > 30) {
+                textVal = textVal.substring(0, 27) + "...";
+              }
+              return {
+                type: "text",
+                text: textVal,
+              };
+            }),
           });
         }
 

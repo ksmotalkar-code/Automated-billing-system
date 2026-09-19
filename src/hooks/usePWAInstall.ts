@@ -1,32 +1,35 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
-// Extend the Event interface for the specific beforeinstallprompt event
-export interface BeforeInstallPromptEvent extends Event {
-  readonly platforms: string[];
-  readonly userChoice: Promise<{
-    outcome: 'accepted' | 'dismissed';
-    platform: string;
-  }>;
-  prompt(): Promise<void>;
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
 }
 
 export function usePWAInstall() {
-  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
+    // Detect standalone mode (already installed)
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+    setIsInstalled(isStandalone);
+
+    // Detect iOS devices
+    const userAgent = window.navigator.userAgent.toLowerCase();
+    const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
+    setIsIOS(isIOSDevice);
+
     const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent browser from automatically showing the prompt
       e.preventDefault();
-      // Save the event so it can be triggered later.
-      setInstallPrompt(e as BeforeInstallPromptEvent);
-      setIsInstallable(true);
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
 
     const handleAppInstalled = () => {
-      setIsInstallable(false);
-      setInstallPrompt(null);
-      console.log('PWA was installed successfully');
+      setIsInstalled(true);
+      setDeferredPrompt(null);
     };
 
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
@@ -38,19 +41,22 @@ export function usePWAInstall() {
     };
   }, []);
 
-  const promptInstall = async () => {
-    if (!installPrompt) {
-      return;
-    }
-    // Show the installation prompt
-    installPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await installPrompt.userChoice;
+  const install = async () => {
+    if (!deferredPrompt) return false;
+    await deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
     if (outcome === 'accepted') {
-      setIsInstallable(false);
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+      return true;
     }
-    setInstallPrompt(null);
+    return false;
   };
 
-  return { isInstallable, promptInstall };
+  return {
+    isInstallable: !!deferredPrompt,
+    isInstalled,
+    isIOS,
+    install,
+  };
 }
