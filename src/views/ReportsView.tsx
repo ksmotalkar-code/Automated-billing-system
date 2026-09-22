@@ -4,10 +4,11 @@ import { Report, addReport, deleteReport, Customer, AppSettings } from "../lib/d
 import { useData } from "../contexts/DataContext";
 import { shareReportToCustomers } from "../lib/automation";
 import { updateDoc, doc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, auth } from '../firebase';
 import { motion, AnimatePresence } from "motion/react";
 import { FileText, Plus, Share2, Loader2, Link as LinkIcon, AlertCircle, Upload, File as FileIcon, Trash2, FolderClosed, MoreHorizontal, Copy, CheckCircle2, CloudUpload } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { uploadImageToStorage } from "../lib/storage";
 
 export function ReportsView() {
   const { reports, customers, settings } = useData();
@@ -94,54 +95,37 @@ export function ReportsView() {
 
      setIsSharing(reportId);
 
-     const reader = new FileReader();
-     reader.onloadend = async () => {
-       try {
-         const base64data = reader.result as string;
-         const reportRef = doc(db, 'reports', reportId);
-         const report = reports.find(r => r.id === reportId);
-         const existingFiles = report?.files || [];
-         
-         let fileUrl = base64data;
-         try {
-             // We dynamically import storage specific things here if not already at top, wait import at top is better
-             const { ref, uploadString, getDownloadURL } = await import('firebase/storage');
-             const { storage, auth } = await import('../firebase');
-             const { v4: uuidv4 } = await import('uuid');
-             const storageRef = ref(storage, `reports/${auth.currentUser?.uid || 'anon'}/${uuidv4()}_${file.name}`);
-             await uploadString(storageRef, base64data, 'data_url');
-             fileUrl = await getDownloadURL(storageRef);
-         } catch(e) {
-             console.error("Storage upload failed", e);
-         }
-         
-         const updatedReport = {
-            ...report!,
-            files: [...existingFiles, { name: file.name, type: file.type, data: fileUrl }]
-         };
+     try {
+       const fileUrl = await uploadImageToStorage(file, 'reports', auth.currentUser?.uid, `${Date.now()}_${file.name}`);
+       const reportRef = doc(db, 'reports', reportId);
+       const report = reports.find(r => r.id === reportId);
+       const existingFiles = report?.files || [];
+       
+       const updatedReport = {
+          ...report!,
+          files: [...existingFiles, { name: file.name, type: file.type, data: fileUrl }]
+       };
 
-         await updateDoc(reportRef, {
-            files: updatedReport.files
-         });
-         
-         if (settings?.automation?.autoShareReports) {
-             let recipients = customers;
-             if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active');
-             else if (shareGroup === 'Overdue') recipients = customers.filter(c => c.balance > 0);
-             
-             if (recipients.length > 0) {
-                await shareReportToCustomers(updatedReport, recipients, settings);
-                showAlert('Automation', "Buffer shared based on active daemon rules.");
-             }
-         }
-       } catch (err) {
-         console.error(err);
-         showAlert('Stream Error', "Failed to transmit or bifurcate data.");
-       } finally {
-         setIsSharing(null);
+       await updateDoc(reportRef, {
+          files: updatedReport.files
+       });
+       
+       if (settings?.automation?.autoShareReports) {
+           let recipients = customers;
+           if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active');
+           else if (shareGroup === 'Overdue') recipients = customers.filter(c => c.balance > 0);
+           
+           if (recipients.length > 0) {
+              await shareReportToCustomers(updatedReport, recipients, settings);
+              showAlert('Automation', "Buffer shared based on active daemon rules.");
+           }
        }
-     };
-     reader.readAsDataURL(file);
+     } catch (err) {
+       console.error(err);
+       showAlert('Stream Error', "Failed to transmit or bifurcate data.");
+     } finally {
+       setIsSharing(null);
+     }
   };
 
   const handleShare = async (report: Report) => {

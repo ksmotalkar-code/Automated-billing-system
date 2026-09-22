@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces } from "lucide-react";
 import { motion } from "motion/react";
-import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings } from "../lib/db";
+import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings, deleteBillTemplateImage } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { Trash2, LogOut, MessageCircle, Loader2, X, Info } from "lucide-react";
@@ -11,6 +11,7 @@ import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
 import { getLogs, clearLogs, LogEntry } from '../lib/logger';
 import { CommandManagerWrapper } from '../components/CommandManager';
+import { uploadImageToStorage, deleteImageFromStorage } from '../lib/storage';
 
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -377,12 +378,17 @@ export function SettingsView() {
           
           if (broadcastAttachment) {
             mediaName = broadcastAttachment.name;
-            mediaBase64 = await new Promise((resolve, reject) => {
-               const reader = new FileReader();
-               reader.onloadend = () => resolve(reader.result as string);
-               reader.onerror = reject;
-               reader.readAsDataURL(broadcastAttachment);
-            });
+            try {
+              mediaBase64 = await uploadImageToStorage(broadcastAttachment, 'broadcasts', auth.currentUser?.uid);
+            } catch (uploadErr) {
+              console.warn("Storage upload for broadcast attachment failed, using fallback reader", uploadErr);
+              mediaBase64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result as string);
+                reader.onerror = reject;
+                reader.readAsDataURL(broadcastAttachment);
+              });
+            }
           }
 
           const resp = await fetch('/api/wa/broadcast', {
@@ -1269,7 +1275,7 @@ export function SettingsView() {
                                 setSettings({...settings, appLogoImage: compressedData});
                               } catch (err) {
                                 console.error("Compression failed", err);
-                                alert("Failed to process image. Please try a smaller image.");
+                                showAlert("Image Processing Error", "Failed to process image. Please try a smaller image.");
                               }
                             }
                           }}
@@ -1279,16 +1285,33 @@ export function SettingsView() {
                   </div>
 
                   <div className="space-y-4">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Bill Template Image</label>
-                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Bill Template Image</label>
+                      {settings.billTemplateImage && (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
+                          Custom Image Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 relative overflow-hidden">
                       {settings.billTemplateImage ? (
-                        <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                        <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden shadow-lg border border-white/10 bg-black/5 flex items-center justify-center">
                           <img src={settings.billTemplateImage} alt="Template" className="w-full h-full object-contain" />
                           <button 
-                            onClick={() => setSettings({...settings, billTemplateImage: null})}
-                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                setSettings({...settings, billTemplateImage: null});
+                                await deleteBillTemplateImage();
+                              } catch (err) {
+                                console.error("Failed to delete bill template image:", err);
+                              }
+                            }}
+                            className="absolute top-2 right-2 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-lg transition-all flex items-center gap-1.5 text-xs font-semibold"
+                            title="Remove Template Image"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remove</span>
                           </button>
                         </div>
                       ) : (
@@ -1296,46 +1319,89 @@ export function SettingsView() {
                            <div className="w-16 h-16 rounded-2xl neu-flat flex items-center justify-center text-emerald-600">
                              <UploadCloud className="w-8 h-8" />
                            </div>
-                           <div className="text-center">
+                           <div className="text-center max-w-xs">
                              <p className="text-[10px] font-black uppercase tracking-widest text-[#1e1e2d]">No Template Uploaded</p>
-                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Uplaod your bill image (Header/Footer layout)</p>
+                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Using official VWSC vector layout (Header, Logo & Table). Upload only if using a custom layout.</p>
                            </div>
                         </div>
                       )}
-                      <label className="cursor-pointer px-6 py-3 bg-[var(--accent)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 hover:opacity-90 transition-all">
-                        {settings.billTemplateImage ? "Change Image" : "Upload Template"}
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              try {
-                                const compressedData = await compressImage(file, 800, 0.7);
-                                setSettings({...settings, billTemplateImage: compressedData});
-                              } catch (err) {
-                                console.error("Compression failed", err);
-                                alert("Failed to process image. Please try a smaller image.");
+                      <div className="flex items-center gap-3">
+                        <label className="cursor-pointer px-6 py-3 bg-[var(--accent)] text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-[var(--accent)]/20 hover:opacity-90 transition-all">
+                          {settings.billTemplateImage ? "Change Image" : "Upload Template"}
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                try {
+                                  const storageUrl = await uploadImageToStorage(file, 'templates', auth.currentUser?.uid);
+                                  const updated = { ...settings, billTemplateImage: storageUrl };
+                                  setSettings(updated);
+                                  await saveSettings(updated);
+                                } catch (err) {
+                                  console.error("Storage upload failed", err);
+                                  showAlert("Upload Error", "Failed to upload image to Cloud Storage. Please verify storage configuration.");
+                                }
                               }
-                            }
-                          }}
-                        />
-                      </label>
+                            }}
+                          />
+                        </label>
+                        {settings.billTemplateImage && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const oldUrl = settings.billTemplateImage;
+                                setSettings({...settings, billTemplateImage: null});
+                                await deleteBillTemplateImage();
+                                if (oldUrl) await deleteImageFromStorage(oldUrl);
+                              } catch (err) {
+                                console.error("Failed to delete bill template image:", err);
+                              }
+                            }}
+                            className="px-4 py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-4">
-                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Payment QR Code</label>
-                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 group relative overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Payment QR Code</label>
+                      {settings.upiQrCodeImage && (
+                        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                          Cloud Storage Active
+                        </span>
+                      )}
+                    </div>
+                    <div className="p-6 neu-pressed rounded-3xl flex flex-col items-center justify-center gap-4 relative overflow-hidden">
                       {settings.upiQrCodeImage ? (
-                        <div className="relative w-full aspect-square max-w-[200px] rounded-xl overflow-hidden shadow-lg border border-white/10">
+                        <div className="relative w-full aspect-square max-w-[200px] rounded-xl overflow-hidden shadow-lg border border-white/10 bg-white p-2">
                           <img src={settings.upiQrCodeImage} alt="UPI QR" className="w-full h-full object-contain" />
                           <button 
-                            onClick={() => setSettings({...settings, upiQrCodeImage: null})}
-                            className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const oldUrl = settings.upiQrCodeImage;
+                                const updated = { ...settings, upiQrCodeImage: null };
+                                setSettings(updated);
+                                await saveSettings(updated);
+                                if (oldUrl) await deleteImageFromStorage(oldUrl);
+                              } catch (err) {
+                                console.error("Failed to remove QR code:", err);
+                              }
+                            }}
+                            className="absolute top-2 right-2 px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded-lg shadow-lg transition-all flex items-center gap-1 text-xs font-semibold"
+                            title="Remove QR Code"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Remove</span>
                           </button>
                         </div>
                       ) : (
@@ -1345,30 +1411,54 @@ export function SettingsView() {
                            </div>
                            <div className="text-center">
                              <p className="text-[10px] font-black uppercase tracking-widest text-[#1e1e2d]">No UPI QR Uploaded</p>
-                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Used for customer dynamic scan & pay</p>
+                             <p className="text-[9px] neu-text-muted font-bold mt-1 uppercase tracking-tighter opacity-70">Stored in Google Cloud Bucket for dynamic customer scan & pay</p>
                            </div>
                         </div>
                       )}
-                      <label className="cursor-pointer px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all">
-                        {settings.upiQrCodeImage ? "Change QR" : "Upload QR Code"}
-                        <input 
-                          type="file" 
-                          accept="image/*" 
-                          className="hidden" 
-                          onChange={async (e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              try {
-                                const compressedData = await compressImage(file, 400, 0.7);
-                                setSettings({...settings, upiQrCodeImage: compressedData});
-                              } catch (err) {
-                                console.error("Compression failed", err);
-                                alert("Failed to process image. Please try a smaller image.");
+                      <div className="flex items-center gap-3">
+                        <label className="cursor-pointer px-6 py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:opacity-90 transition-all">
+                          {settings.upiQrCodeImage ? "Change QR" : "Upload QR Code"}
+                          <input 
+                            type="file" 
+                            accept="image/*" 
+                            className="hidden" 
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                try {
+                                  const storageUrl = await uploadImageToStorage(file, 'qr-codes', auth.currentUser?.uid);
+                                  const updated = { ...settings, upiQrCodeImage: storageUrl };
+                                  setSettings(updated);
+                                  await saveSettings(updated);
+                                } catch (err) {
+                                  console.error("Storage upload failed", err);
+                                  showAlert("Upload Error", "Failed to upload QR code to Cloud Storage. Please verify storage configuration.");
+                                }
                               }
-                            }
-                          }}
-                        />
-                      </label>
+                            }}
+                          />
+                        </label>
+                        {settings.upiQrCodeImage && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                const oldUrl = settings.upiQrCodeImage;
+                                const updated = { ...settings, upiQrCodeImage: null };
+                                setSettings(updated);
+                                await saveSettings(updated);
+                                if (oldUrl) await deleteImageFromStorage(oldUrl);
+                              } catch (err) {
+                                console.error("Failed to remove QR code:", err);
+                              }
+                            }}
+                            className="px-4 py-3 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>

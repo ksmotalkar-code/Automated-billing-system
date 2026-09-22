@@ -65,7 +65,7 @@ export function DataUploadView() {
         const data = await selectedFile.arrayBuffer();
         const workbook = XLSX.read(data);
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
         setParsedData(jsonData);
         setStatus({ type: 'success', message: `Successfully parsed ${jsonData.length} rows.` });
         setParsingLoading(false);
@@ -85,18 +85,72 @@ export function DataUploadView() {
 
   const openStagingFromParsedData = () => {
     const records = parsedData.map(row => {
-      let name = String(row['Name'] || row['name'] || row['Customer Name'] || row['customer'] || row.raw || "").trim();
-      let mobile = String(row['Mobile'] || row['mobile'] || row['Phone'] || row['Mobile Number'] || row['phone'] || "0000000000").trim();
-      let balanceStr = String(row['Balance'] || row['balance'] || row['Amount'] || row['amount'] || "0").replace(/[^0-9.-]+/g,"");
-      let balance = parseFloat(balanceStr) || 0;
-      let status = String(row['Status'] || row['status'] || "Active").trim();
-      
-      const cleanMobile = mobile.replace(/\D/g, '');
-      const isMissingMobile = !cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000';
+      const keys = Object.keys(row);
+      const findVal = (regex: RegExp) => {
+        const key = keys.find(k => regex.test(k.trim()));
+        return key !== undefined ? row[key] : undefined;
+      };
 
-      if (status.toLowerCase().includes('suspend') || isMissingMobile) {
-        status = 'Suspended';
-        mobile = '0000000000';
+      // 1. Name detection
+      let name = String(
+        findVal(/^(name|customer\s*name|customer|resident|consumer\s*name|consumer|client|account\s*name)$/i) || 
+        row['Name'] || row['name'] || row['Customer Name'] || row['customer'] || row.raw || ""
+      ).trim();
+
+      // 2. Mobile detection
+      let rawMobile = String(
+        findVal(/^(mobile|phone|contact|mobile\s*number|phone\s*number|contact\s*number|cell|cell\s*number|tel|whatsapp)$/i) || 
+        row['Mobile'] || row['mobile'] || row['Phone'] || row['Mobile Number'] || row['phone'] || ""
+      ).trim();
+
+      const cleanMobile = rawMobile.replace(/\D/g, '');
+      const isMissingMobile = !cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000';
+      const mobile = isMissingMobile ? "0000000000" : cleanMobile.slice(-10);
+
+      // 3. Balance detection
+      let balanceStr = String(
+        findVal(/^(balance|amount|due|outstanding|arrears|total\s*due|pending|bill\s*amount)$/i) || 
+        row['Balance'] || row['balance'] || row['Amount'] || row['amount'] || "0"
+      ).replace(/[^0-9.-]+/g, "");
+      let balance = parseFloat(balanceStr) || 0;
+
+      // 4. Smart Status detection & normalization
+      const rawStatusVal = findVal(/^(status|account\s*status|customer\s*status|conn(?:ection)?\s*status|meter\s*status|state|condition|is_?active|status\s*description)$/i);
+      let statusStr = String(
+        rawStatusVal !== undefined ? rawStatusVal : (row['Status'] || row['status'] || row['STATUS'] || "")
+      ).trim().toLowerCase();
+
+      // Check for suspended/inactive/closed states
+      const isSuspended = 
+        statusStr.includes('suspend') ||
+        statusStr.includes('inactiv') ||
+        statusStr.includes('deactiv') ||
+        statusStr.includes('clos') ||
+        statusStr.includes('disconnect') ||
+        statusStr.includes('cut') ||
+        statusStr.includes('hold') ||
+        statusStr.includes('block') ||
+        statusStr.includes('stop') ||
+        statusStr.includes('cancel') ||
+        statusStr.includes('disable') ||
+        statusStr.includes('off') ||
+        statusStr === '0' ||
+        statusStr === 'no' ||
+        statusStr === 'false' ||
+        isMissingMobile;
+
+      const isFaulty = 
+        statusStr.includes('fault') || 
+        statusStr.includes('defect') || 
+        statusStr.includes('broken') || 
+        statusStr.includes('tamper') || 
+        statusStr.includes('error');
+
+      let finalStatus: 'Active' | 'Suspended' | 'Faulty' = 'Active';
+      if (isFaulty) {
+        finalStatus = 'Faulty';
+      } else if (isSuspended) {
+        finalStatus = 'Suspended';
       }
 
       return {
@@ -104,7 +158,7 @@ export function DataUploadView() {
         name: name,
         mobileNumber: mobile,
         balance: balance,
-        status: status as any,
+        status: finalStatus,
         ownerId: auth.currentUser?.uid,
         createdAt: new Date().toISOString()
       };
@@ -486,10 +540,17 @@ export function DataUploadView() {
                           <select 
                             value={c.status} 
                             onChange={e => updateField('status', e.target.value)} 
-                            className="w-full bg-white/5 outline-none px-2 py-1.5 rounded-lg border border-transparent focus:border-indigo-500 transition text-xs"
+                            className={`w-full outline-none px-2 py-1.5 rounded-lg border text-xs font-bold transition ${
+                              c.status === 'Active' 
+                                ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30' 
+                                : c.status === 'Suspended'
+                                ? 'bg-red-500/10 text-red-700 border-red-500/30'
+                                : 'bg-amber-500/10 text-amber-700 border-amber-500/30'
+                            }`}
                           >
-                            <option value="Active">Active</option>
-                            <option value="Inactive">Inactive</option>
+                            <option value="Active" className="text-emerald-700 bg-white">Active</option>
+                            <option value="Suspended" className="text-red-700 bg-white">Suspended</option>
+                            <option value="Faulty" className="text-amber-700 bg-white">Faulty</option>
                           </select>
                         </td>
                       </tr>

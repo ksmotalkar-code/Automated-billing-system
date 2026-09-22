@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit, addDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit, addDoc, deleteField } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -576,9 +576,26 @@ export const saveSettings = async (settings: AppSettings) => {
   if (!user) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Writes temporarily disabled.");
   try {
-    await setDoc(doc(db, 'settings', user.uid), { ...settings, ownerId: user.uid });
+    const payload: any = { ...settings, ownerId: user.uid };
+    // If billTemplateImage is empty or null, guarantee it is stored as null rather than leftover data
+    if (!payload.billTemplateImage) {
+      payload.billTemplateImage = null;
+    }
+    await setDoc(doc(db, 'settings', user.uid), payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `settings/${user.uid}`);
+  }
+};
+
+export const deleteBillTemplateImage = async () => {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  try {
+    await updateDoc(doc(db, 'settings', user.uid), {
+      billTemplateImage: deleteField()
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `settings/${user.uid}`);
   }
 };
 
@@ -803,10 +820,16 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
         ];
       }
       
+      // Ensure billTemplateImage is explicitly null if undefined or empty
+      if (!data.billTemplateImage) {
+        data.billTemplateImage = null;
+      }
+      
       callback(data);
     } else {
       callback({
         upiQrCodeImage: null,
+        billTemplateImage: null,
         billingAmount: 200,
         billingCycleMonths: 2,
         penaltyAmount: 40,

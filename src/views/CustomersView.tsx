@@ -289,17 +289,65 @@ export function CustomersView() {
 
       const parsedCustomers = jsonData.map(row => {
           const keys = Object.keys(row);
-          const nameKey = keys.find(k => k.toLowerCase().includes('name') || k.toLowerCase().includes('customer')) || keys[0];
-          const mobileKey = keys.find(k => k.toLowerCase().includes('mobile') || k.toLowerCase().includes('phone') || k.toLowerCase().includes('number') || k.toLowerCase().includes('contact')) || (keys.length > 1 ? keys[1] : keys[0]);
-          const balanceKey = keys.find(k => k.toLowerCase().includes('balance') || k.toLowerCase().includes('due') || k.toLowerCase().includes('amount')) || (keys.length > 2 ? keys[2] : "");
-          const statusKey = keys.find(k => k.toLowerCase().includes('status') || k.toLowerCase().includes('state')) || "";
+          const findVal = (regex: RegExp) => {
+            const key = keys.find(k => regex.test(k.trim()));
+            return key !== undefined ? row[key] : undefined;
+          };
+
+          const rawName = findVal(/^(name|customer\s*name|customer|resident|consumer\s*name|consumer|client|account\s*name)$/i);
+          const name = String(rawName !== undefined ? rawName : (row.Name || row.name || row.Customer || "Unnamed")).trim() || "Unnamed";
+
+          const rawMobile = findVal(/^(mobile|phone|contact|mobile\s*number|phone\s*number|contact\s*number|cell|cell\s*number|tel|whatsapp)$/i);
+          const rawMobileStr = String(rawMobile !== undefined ? rawMobile : (row.Mobile || row.mobile || row.Phone || row.mobileNumber || "")).trim();
+          const cleanMobile = rawMobileStr.replace(/\D/g, '');
+          const isMissingMobile = !cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000';
+          const mobileNumber = isMissingMobile ? "0000000000" : cleanMobile.slice(-10);
+
+          const rawBalance = findVal(/^(balance|amount|due|outstanding|arrears|total\s*due|pending|bill\s*amount)$/i);
+          const balanceStr = String(rawBalance !== undefined ? rawBalance : (row.Balance || row.balance || "0")).replace(/[^0-9.-]+/g, "");
+          const balance = parseFloat(balanceStr) || 0;
+
+          const rawStatus = findVal(/^(status|account\s*status|customer\s*status|conn(?:ection)?\s*status|meter\s*status|state|condition|is_?active|status\s*description)$/i);
+          const statusStr = String(rawStatus !== undefined ? rawStatus : (row.Status || row.status || "")).trim().toLowerCase();
+
+          const isSuspended = 
+            statusStr.includes('suspend') ||
+            statusStr.includes('inactiv') ||
+            statusStr.includes('deactiv') ||
+            statusStr.includes('clos') ||
+            statusStr.includes('disconnect') ||
+            statusStr.includes('cut') ||
+            statusStr.includes('hold') ||
+            statusStr.includes('block') ||
+            statusStr.includes('stop') ||
+            statusStr.includes('cancel') ||
+            statusStr.includes('disable') ||
+            statusStr.includes('off') ||
+            statusStr === '0' ||
+            statusStr === 'no' ||
+            statusStr === 'false' ||
+            isMissingMobile;
+
+          const isFaulty = 
+            statusStr.includes('fault') || 
+            statusStr.includes('defect') || 
+            statusStr.includes('broken') || 
+            statusStr.includes('tamper') || 
+            statusStr.includes('error');
+
+          let finalStatus: 'Active' | 'Suspended' | 'Faulty' = 'Active';
+          if (isFaulty) {
+            finalStatus = 'Faulty';
+          } else if (isSuspended) {
+            finalStatus = 'Suspended';
+          }
 
           return {
               id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
-              name: String(row[nameKey] || row.Name || row.name || row.Customer || "Unnamed").trim() || "Unnamed",
-              mobileNumber: String(row[mobileKey] || row.Mobile || row.mobile || row.Phone || row.mobileNumber || "0000000000").trim() || "0000000000",
-              balance: parseFloat(row[balanceKey] || row.Balance || row.balance || "0") || 0,
-              status: (row[statusKey] || row.Status || row.status || "Active").toString().toLowerCase() === "suspended" ? "Suspended" : "Active",
+              name,
+              mobileNumber,
+              balance,
+              status: finalStatus,
               ownerId: auth.currentUser?.uid,
               createdAt: new Date().toISOString()
           };
@@ -632,7 +680,7 @@ export function CustomersView() {
   const handleShareLink = async (e: React.MouseEvent, customer: Customer) => {
     e.stopPropagation();
     if (!settings) {
-      alert("Settings not loaded yet.");
+      showAlert("Notice", "System settings are still loading. Please wait a moment.");
       return;
     }
     
@@ -1567,7 +1615,8 @@ export function CustomersView() {
                      <tr className="text-xs text-slate-500 uppercase bg-black/5">
                         <th className="p-3 rounded-tl-xl">Name</th>
                         <th className="p-3">Mobile</th>
-                        <th className="p-3 rounded-tr-xl">Balance</th>
+                        <th className="p-3">Balance</th>
+                        <th className="p-3 rounded-tr-xl">Status</th>
                      </tr>
                   </thead>
                   <tbody>
@@ -1601,6 +1650,23 @@ export function CustomersView() {
                               onChange={e => updateField('balance', e.target.value)} 
                               className="w-full bg-transparent outline-none p-1 border-b border-transparent focus:border-indigo-500 transition"
                             />
+                          </td>
+                          <td className="p-2">
+                            <select 
+                              value={c.status} 
+                              onChange={e => updateField('status', e.target.value)} 
+                              className={`outline-none px-2 py-1 rounded-lg border text-xs font-bold transition ${
+                                c.status === 'Active' 
+                                  ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30' 
+                                  : c.status === 'Suspended'
+                                  ? 'bg-red-500/10 text-red-700 border-red-500/30'
+                                  : 'bg-amber-500/10 text-amber-700 border-amber-500/30'
+                              }`}
+                            >
+                              <option value="Active">Active</option>
+                              <option value="Suspended">Suspended</option>
+                              <option value="Faulty">Faulty</option>
+                            </select>
                           </td>
                         </tr>
                       );

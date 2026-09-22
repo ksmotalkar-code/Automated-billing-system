@@ -11,6 +11,7 @@ import { MeterScanner } from "../components/MeterScanner";
 import { MeterReadingResult } from "../lib/meterReader";
 import { writeBatch, doc } from "firebase/firestore";
 import { db, auth } from "../firebase";
+import { uploadImageToStorage } from "../lib/storage";
 
 export function BillingView() {
   const { t } = useTranslation();
@@ -155,16 +156,17 @@ export function BillingView() {
     return `INV-${new Date().getFullYear()}-${customerId.replace('CUST-', '').substring(0, 4)}`;
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        const newSettings = { ...settings, upiQrCodeImage: base64String } as AppSettings;
-        saveSettings(newSettings);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const storageUrl = await uploadImageToStorage(file, 'qr-codes', auth.currentUser?.uid);
+        const newSettings = { ...settings, upiQrCodeImage: storageUrl } as AppSettings;
+        await saveSettings(newSettings);
+      } catch (err) {
+        console.error("Storage upload failed for UPI QR:", err);
+        showAlert("Upload Error", "Failed to upload QR code to Google Cloud Storage. Please verify storage configuration.");
+      }
     }
   };
 

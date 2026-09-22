@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2 } from "lucide-react";
+import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2, Banknote, RefreshCw, Smartphone } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -22,6 +22,7 @@ export function PaymentsView() {
   const [selectedReceipt, setSelectedReceipt] = useState<PaymentReceipt | null>(null);
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<string>("");
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'upi'>('cash');
   const [transactionId, setTransactionId] = useState<string>("");
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<string[]>([]);
   const [isBulkConfirmModalOpen, setIsBulkConfirmModalOpen] = useState(false);
@@ -31,6 +32,11 @@ export function PaymentsView() {
   
   const [isConfirming, setIsConfirming] = useState(false);
   const [isActioningReceipt, setIsActioningReceipt] = useState<string | null>(null);
+
+  const generateCashReceiptId = () => {
+    const timestamp = Date.now().toString().slice(-6);
+    return `CASH-${timestamp}`;
+  };
 
   const [confirmConfig, setConfirmConfig] = useState<{
     isOpen: boolean;
@@ -103,8 +109,10 @@ export function PaymentsView() {
 
   const handleOpenPayment = (customer: Customer) => {
     setSelectedCustomer(customer);
-    setPaymentAmount(customer.balance > 0 ? customer.balance.toString() : "");
-    setTransactionId("");
+    const initialAmount = customer.balance > 0 ? customer.balance.toString() : "0";
+    setPaymentAmount(initialAmount);
+    setPaymentMode('cash');
+    setTransactionId(generateCashReceiptId());
     setIsPaymentModalOpen(true);
   };
 
@@ -113,21 +121,22 @@ export function PaymentsView() {
     
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0) {
-      showAlert("Invalid Amount", "Please enter a valid payment amount.");
+      showAlert("Invalid Amount", "Please enter a valid payment amount greater than ₹0.");
       return;
     }
 
     if (!transactionId.trim()) {
-      showAlert("Missing ID", "Please enter the Transaction ID.");
+      showAlert("Missing ID", "Please enter a Transaction ID or Cash Receipt Number.");
       return;
     }
 
     setIsConfirming(true);
     try {
-      // Update customer balance
+      // Calculate updated balance
+      const newBalance = Math.max(0, selectedCustomer.balance - amount);
       const updatedCustomer = {
         ...selectedCustomer,
-        balance: Math.max(0, selectedCustomer.balance - amount)
+        balance: newBalance
       };
       
       await updateCustomer(updatedCustomer);
@@ -140,22 +149,24 @@ export function PaymentsView() {
       });
 
       setIsPaymentModalOpen(false);
-      const paymentStatusText = updatedCustomer.balance === 0 ? "fully paid, account in good standing" : `active with remaining balance of ${formatCurrency(updatedCustomer.balance)}`;
-      showAlert("Payment Confirmed", `Payment of ${formatCurrency(amount)} confirmed successfully! The customer's balance has been updated and their status is potentially adjusted to reflect their ${paymentStatusText}.`);
+      const paymentStatusText = newBalance === 0 
+        ? "fully settled with zero remaining balance" 
+        : `recorded with remaining balance of ${formatCurrency(newBalance)}`;
+      showAlert("Payment Recorded", `Payment of ${formatCurrency(amount)} (${paymentMode === 'cash' ? 'Cash at Counter' : 'UPI/Online'}) processed successfully! The customer's account is ${paymentStatusText}.`);
 
       // Automatically send invoice or receipt if enabled
       if (settings.automation?.smartNotifications) {
-        if (updatedCustomer.balance === 0) {
-          const message = `Dear ${updatedCustomer.name}, your water bill has been fully PAID. Thank you for your promptness! Attached is your official invoice.`;
+        if (newBalance === 0) {
+          const message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received and fully SETTLED. Thank you! Attached is your official receipt.`;
           const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
           await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         } else {
-          const message = `Dear ${updatedCustomer.name}, we have received a partial payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
+          const message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(newBalance)}. Attached is your updated receipt.`;
           const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         }
-      } else if (updatedCustomer.balance === 0) {
+      } else if (newBalance === 0) {
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false });
       }
     } catch (error) {
@@ -631,83 +642,276 @@ export function PaymentsView() {
       {/* Payment QR Modal */}
       <AnimatePresence>
         {isPaymentModalOpen && selectedCustomer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-md bg-[var(--bg-color)] rounded-2xl shadow-2xl border border-[var(--shadow-light)] overflow-hidden my-8"
+              className="w-full max-w-lg bg-[var(--bg-color)] rounded-2xl shadow-2xl border border-[var(--shadow-light)] overflow-hidden my-6"
             >
-              <div className="flex items-center justify-between p-4 border-b border-[var(--shadow-dark)]">
-                <h3 className="text-lg font-bold">Process Payment</h3>
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 sm:p-5 border-b border-[var(--shadow-dark)]">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-emerald-500/10 text-emerald-600 rounded-lg">
+                    <CreditCard className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-bold">Receive Payment</h3>
+                    <p className="text-xs neu-text-muted">Gram Panchayat Water Billing Collection</p>
+                  </div>
+                </div>
                 <button 
                   onClick={() => setIsPaymentModalOpen(false)}
-                  className="p-1 rounded-full hover:bg-black/10 transition-colors"
+                  className="p-1.5 rounded-full hover:bg-black/10 transition-colors"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
               
-              <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-h-[80vh] overflow-y-auto">
-                <div className="text-center space-y-1">
-                  <p className="text-sm neu-text-muted">Customer</p>
-                  <p className="font-bold text-lg">{selectedCustomer.name}</p>
-                  <p className="text-xs neu-text-muted">{selectedCustomer.id}</p>
+              <div className="p-4 sm:p-6 space-y-5 max-h-[82vh] overflow-y-auto">
+                {/* Customer Snapshot */}
+                <div className="p-3.5 neu-pressed rounded-xl flex items-center justify-between">
+                  <div>
+                    <p className="text-xs neu-text-muted font-medium">Customer Account</p>
+                    <p className="font-bold text-base">{selectedCustomer.name}</p>
+                    <p className="text-xs neu-text-muted">ID: <span className="font-mono">{selectedCustomer.id}</span> | Mob: {selectedCustomer.mobileNumber}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs neu-text-muted font-medium">Current Outstanding</p>
+                    <p className="font-bold text-lg text-rose-600">{formatCurrency(selectedCustomer.balance)}</p>
+                  </div>
                 </div>
 
-                <div className="space-y-2">
+                {/* Payment Method Switcher */}
+                <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
-                    Payment Amount (INR)
+                    Payment Method
                   </label>
-                  <input
-                    type="number"
-                    value={paymentAmount}
-                    disabled
-                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-center text-2xl font-bold opacity-70 cursor-not-allowed"
-                    placeholder="0"
-                  />
+                  <div className="grid grid-cols-2 gap-2 p-1 neu-pressed rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentMode('cash');
+                        if (!transactionId || transactionId.startsWith('UPI-')) {
+                          setTransactionId(generateCashReceiptId());
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                        paymentMode === 'cash' 
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30' 
+                          : 'neu-flat hover:text-emerald-600'
+                      }`}
+                    >
+                      <Banknote className="w-4 h-4" /> Cash on Counter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentMode('upi');
+                        if (transactionId.startsWith('CASH-')) {
+                          setTransactionId('');
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                        paymentMode === 'upi' 
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30' 
+                          : 'neu-flat hover:text-emerald-600'
+                      }`}
+                    >
+                      <Smartphone className="w-4 h-4" /> UPI / Online QR
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex flex-col items-center justify-center p-4 sm:p-6 neu-flat rounded-2xl bg-white">
-                  {settings.upiQrCodeImage ? (
-                    <img 
-                      src={settings.upiQrCodeImage} 
-                      alt="UPI QR Code" 
-                      className="w-32 h-32 sm:w-48 sm:h-48 object-contain"
+                {/* Editable Payment Amount Input */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
+                      Received Amount (INR ₹)
+                    </label>
+                    <span className="text-xs font-medium text-emerald-600">Editable (Supports Partial or Full)</span>
+                  </div>
+                  
+                  <div className="relative">
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl font-bold text-slate-400">₹</span>
+                    <input
+                      type="number"
+                      step="any"
+                      min="1"
+                      value={paymentAmount}
+                      onChange={(e) => setPaymentAmount(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-2xl font-bold text-center focus:ring-2 focus:ring-emerald-500 transition-all"
+                      placeholder="Enter amount..."
                     />
-                  ) : (
-                    <div className="w-32 h-32 sm:w-48 sm:h-48 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl text-center p-2 sm:p-4">
-                      <QrCode className="w-6 h-6 sm:w-8 sm:h-8 text-slate-400 mb-2" />
-                      <p className="text-[10px] sm:text-sm text-slate-500 font-medium leading-tight">No QR Code Configured</p>
-                      <p className="text-[8px] sm:text-xs text-slate-400 mt-1">Please upload in Settings</p>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentAmount(selectedCustomer.balance > 0 ? selectedCustomer.balance.toString() : "0")}
+                      className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                    >
+                      Full (₹{selectedCustomer.balance})
+                    </button>
+                    {selectedCustomer.balance > 100 && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentAmount("100")}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                      >
+                        ₹100
+                      </button>
+                    )}
+                    {selectedCustomer.balance > 200 && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentAmount("200")}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                      >
+                        ₹200
+                      </button>
+                    )}
+                    {selectedCustomer.balance > 500 && (
+                      <button
+                        type="button"
+                        onClick={() => setPaymentAmount("500")}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                      >
+                        ₹500
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Real-time Ledger Calculation Preview */}
+                {(() => {
+                  const numAmount = parseFloat(paymentAmount) || 0;
+                  const newBalance = Math.max(0, selectedCustomer.balance - numAmount);
+                  const isFullSettlement = numAmount >= selectedCustomer.balance && selectedCustomer.balance > 0;
+                  const isPartial = numAmount > 0 && numAmount < selectedCustomer.balance;
+
+                  return (
+                    <div className="p-3.5 rounded-xl border border-[var(--shadow-light)] bg-black/5 space-y-2">
+                      <div className="flex justify-between text-xs">
+                        <span className="neu-text-muted">Total Outstanding:</span>
+                        <span className="font-semibold">{formatCurrency(selectedCustomer.balance)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="neu-text-muted">Paying Now:</span>
+                        <span className="font-bold text-emerald-600">- {formatCurrency(numAmount)}</span>
+                      </div>
+                      <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="font-bold">Remaining Balance:</span>
+                        <span className={`font-bold ${newBalance === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                          {formatCurrency(newBalance)}
+                        </span>
+                      </div>
+
+                      <div className="pt-1">
+                        {isFullSettlement && (
+                          <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-100/70 dark:bg-emerald-900/30 px-2.5 py-1.5 rounded-lg font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span>Full Settlement: Account will be marked in good standing.</span>
+                          </div>
+                        )}
+                        {isPartial && (
+                          <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-100/70 dark:bg-amber-900/30 px-2.5 py-1.5 rounded-lg font-medium">
+                            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                            <span>Partial Payment: Remaining ₹{newBalance} rolls forward as arrears.</span>
+                          </div>
+                        )}
+                        {numAmount <= 0 && (
+                          <p className="text-xs text-rose-500 font-medium">Please enter an amount greater than ₹0.</p>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  <p className="mt-2 sm:mt-4 text-[10px] sm:text-xs font-medium text-center text-gray-500">
-                    Scan with any UPI app to pay
-                  </p>
-                </div>
+                  );
+                })()}
 
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
-                    Transaction ID / UTR
-                  </label>
-                  <input
-                    type="text"
-                    value={transactionId}
-                    onChange={(e) => setTransactionId(e.target.value)}
-                    className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
-                    placeholder="Paste transaction ID here..."
-                  />
-                </div>
+                {/* Mode Specific Details */}
+                {paymentMode === 'upi' ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-col items-center justify-center p-4 neu-flat rounded-2xl bg-white">
+                      {settings.upiQrCodeImage ? (
+                        <img 
+                          src={settings.upiQrCodeImage} 
+                          alt="UPI QR Code" 
+                          className="w-32 h-32 sm:w-44 sm:h-44 object-contain"
+                        />
+                      ) : (
+                        <div className="w-32 h-32 sm:w-44 sm:h-44 flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl text-center p-2">
+                          <QrCode className="w-6 h-6 text-slate-400 mb-1" />
+                          <p className="text-xs text-slate-500 font-medium">No QR Configured</p>
+                          <p className="text-[10px] text-slate-400">Upload in Settings</p>
+                        </div>
+                      )}
+                      <p className="mt-2 text-xs font-medium text-center text-gray-500">
+                        Ask villager to scan with GPay / PhonePe / Paytm
+                      </p>
+                    </div>
 
-                <button 
-                  onClick={handleConfirmPayment}
-                  disabled={isConfirming}
-                  className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
-                >
-                  {isConfirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                  {isConfirming ? "Confirming..." : "Confirm Payment Received"}
-                </button>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
+                        Bank UTR / UPI Transaction Reference
+                      </label>
+                      <input
+                        type="text"
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                        className="w-full px-4 py-2.5 neu-pressed rounded-xl bg-transparent outline-none text-sm font-medium"
+                        placeholder="Enter 12-digit UTR or Reference..."
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
+                        Cash Receipt / Voucher Number
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setTransactionId(generateCashReceiptId())}
+                        className="text-xs font-medium text-emerald-600 hover:underline flex items-center gap-1"
+                      >
+                        <RefreshCw className="w-3 h-3" /> New Receipt ID
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={transactionId}
+                        onChange={(e) => setTransactionId(e.target.value)}
+                        className="w-full px-4 py-2.5 neu-pressed rounded-xl bg-transparent outline-none text-sm font-mono font-medium"
+                        placeholder="e.g. CASH-123456"
+                      />
+                    </div>
+                    <p className="text-[11px] neu-text-muted italic ml-1">
+                      Counter staff collects physical cash and issues an official receipt.
+                    </p>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <div className="pt-2 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsPaymentModalOpen(false)}
+                    className="w-1/3 py-3 neu-flat rounded-xl font-bold text-sm hover:bg-black/5 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleConfirmPayment}
+                    disabled={isConfirming || !paymentAmount || parseFloat(paymentAmount) <= 0}
+                    className="w-2/3 py-3 bg-emerald-600 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-500/30 hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isConfirming ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
+                    {isConfirming ? "Recording..." : `Confirm ₹${parseFloat(paymentAmount) || 0}`}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>

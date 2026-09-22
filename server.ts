@@ -406,7 +406,13 @@ async function generateInvoicePdf(
   let image: any = null;
   let imgScale = 1;
 
-  if (templateImage) {
+  if (
+    templateImage &&
+    typeof templateImage === "string" &&
+    templateImage.trim().length > 20 &&
+    templateImage !== "null" &&
+    templateImage !== "undefined"
+  ) {
     try {
       let imgData: any;
       if (templateImage.startsWith("http://") || templateImage.startsWith("https://")) {
@@ -1307,7 +1313,10 @@ async function startServer() {
       const buffer = Buffer.from(base64Data, "base64");
 
       await file.save(buffer, {
-        metadata: { contentType },
+        metadata: { 
+          contentType,
+          cacheControl: 'public, max-age=31536000, immutable'
+        },
       });
 
       const signedUrls = await file.getSignedUrl({
@@ -1319,6 +1328,106 @@ async function startServer() {
     } catch (err: any) {
       console.error("Failed to upload via API", err);
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Universal Cloud Storage Upload Endpoint (Stores directly in GCS bucket to eliminate Firestore costs)
+  app.post("/api/upload-image", async (req, res) => {
+    try {
+      const { ownerId, base64Image, folder, fileName } = req.body;
+      if (!base64Image) {
+        return res.status(400).json({ error: "Missing base64Image payload" });
+      }
+
+      // If already a valid HTTPS URL (e.g. already stored in GCS), return immediately to avoid redundant writes
+      if (typeof base64Image === 'string' && (base64Image.startsWith('http://') || base64Image.startsWith('https://'))) {
+        return res.json({ success: true, imageUrl: base64Image });
+      }
+
+      const targetFolder = folder || 'images';
+      const targetOwner = ownerId || 'general';
+      const fileId = fileName || `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      let contentType = "image/jpeg";
+      let extension = "jpg";
+      if (typeof base64Image === 'string' && base64Image.startsWith("data:")) {
+        const mime = base64Image.split(";")[0].split(":")[1];
+        if (mime) {
+          contentType = mime;
+          if (mime.includes("png")) extension = "png";
+          else if (mime.includes("webp")) extension = "webp";
+          else if (mime.includes("pdf")) extension = "pdf";
+        }
+      }
+
+      const filePath = `${targetFolder}/${targetOwner}/${fileId}.${extension}`;
+      const bucket = admin.storage().bucket();
+      const file = bucket.file(filePath);
+
+      const base64Data = base64Image.split(";base64,").pop() || base64Image;
+      const buffer = Buffer.from(base64Data, "base64");
+
+      await file.save(buffer, {
+        metadata: {
+          contentType,
+          cacheControl: 'public, max-age=31536000, immutable'
+        },
+      });
+
+      const signedUrls = await file.getSignedUrl({
+        action: "read",
+        expires: "01-01-2499",
+      });
+
+      console.log(`[Storage] Saved ${filePath} (${buffer.length} bytes) to Google Cloud Storage bucket: ${bucket.name}`);
+      res.json({ success: true, imageUrl: signedUrls[0], filePath });
+    } catch (err: any) {
+      console.error("Failed to upload image to Google Cloud Storage", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Delete Image Endpoint (Purges image from GCS bucket when removed from settings or database)
+  app.post("/api/delete-image", async (req, res) => {
+    try {
+      const { imageUrl, filePath } = req.body;
+      if (!imageUrl && !filePath) {
+        return res.status(400).json({ error: "Missing imageUrl or filePath" });
+      }
+
+      const bucket = admin.storage().bucket();
+      let targetPath = filePath;
+
+      if (!targetPath && imageUrl) {
+        try {
+          const urlObj = new URL(imageUrl);
+          if (urlObj.hostname === "storage.googleapis.com") {
+            const parts = urlObj.pathname.split("/").filter(Boolean);
+            if (parts.length > 1) {
+              targetPath = decodeURIComponent(parts.slice(1).join("/"));
+            }
+          } else if (urlObj.pathname.includes("/o/")) {
+            const raw = urlObj.pathname.split("/o/")[1];
+            if (raw) {
+              targetPath = decodeURIComponent(raw.split("?")[0]);
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (targetPath) {
+        const file = bucket.file(targetPath);
+        const [exists] = await file.exists();
+        if (exists) {
+          await file.delete();
+          console.log(`[Storage] Purged asset from Google Cloud Storage: ${targetPath}`);
+        }
+      }
+
+      res.json({ success: true });
+    } catch (err: any) {
+      console.warn("Failed to delete image from storage", err?.message);
+      res.status(500).json({ error: err?.message });
     }
   });
 
@@ -2343,7 +2452,8 @@ async function startServer() {
           // If the base64Image is a URL, there's a good chance it's in our storage bucket
           if (
             receipt.base64Image &&
-            receipt.base64Image.includes("firebasestorage")
+            (receipt.base64Image.includes("firebasestorage") ||
+              receipt.base64Image.includes("storage.googleapis.com"))
           ) {
             try {
               // Extacting path from generated signed URLs or standard URLs is tricky securely

@@ -2,69 +2,73 @@
   "entities": {
     "Customer": {
       "title": "Customer",
-      "description": "A customer in the billing system",
+      "description": "A customer in the water billing system",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Customer ID" },
-        "name": { "type": "string", "description": "Customer Name" },
-        "mobileNumber": { "type": "string", "description": "Mobile Number" },
-        "status": { "type": "string", "enum": ["Active", "Suspended"], "description": "Account Status" },
+        "id": { "type": "string", "description": "Customer ID", "maxLength": 64 },
+        "name": { "type": "string", "description": "Customer Name", "maxLength": 100 },
+        "mobileNumber": { "type": "string", "description": "Mobile Number", "maxLength": 20 },
+        "status": { "type": "string", "enum": ["Active", "Suspended", "Faulty"], "description": "Account Status" },
         "balance": { "type": "number", "description": "Outstanding Balance" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 },
+        "invoiceSent": { "type": "boolean", "description": "Invoice dispatch status" },
+        "paymentNotified": { "type": "boolean", "description": "Payment notification status" },
+        "lastMeterReading": { "type": "number", "description": "Last meter reading value" }
       },
       "required": ["id", "name", "mobileNumber", "status", "balance", "ownerId"]
     },
     "Transaction": {
       "title": "Transaction",
-      "description": "A payment transaction",
+      "description": "A payment transaction ledger entry",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Transaction ID" },
-        "customerId": { "type": "string", "description": "Customer ID" },
+        "id": { "type": "string", "description": "Transaction ID", "maxLength": 64 },
+        "customerId": { "type": "string", "description": "Customer ID", "maxLength": 64 },
         "amount": { "type": "number", "description": "Payment Amount" },
-        "transactionId": { "type": "string", "description": "UPI Transaction ID / UTR" },
+        "transactionId": { "type": "string", "description": "UPI / Cash Transaction ID / UTR", "maxLength": 100 },
         "date": { "type": "string", "format": "date-time", "description": "Transaction Date" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 }
       },
       "required": ["id", "customerId", "amount", "transactionId", "date", "ownerId"]
     },
     "AppSettings": {
       "title": "AppSettings",
-      "description": "Application Settings",
+      "description": "Application and Gram Panchayat billing configuration",
       "type": "object",
       "properties": {
-        "upiQrCodeImage": { "type": "string", "description": "Base64 encoded QR Code Image" },
+        "upiQrCodeImage": { "type": "string", "description": "Base64 or URL encoded QR Code Image" },
+        "billTemplateImage": { "type": "string", "description": "Optional Base64 encoded Bill Template Image" },
         "billingAmount": { "type": "number", "description": "Billing Amount" },
         "billingCycleMonths": { "type": "number", "description": "Billing Cycle in Months" },
         "penaltyAmount": { "type": "number", "description": "Penalty Amount" },
         "penaltyDays": { "type": "number", "description": "Penalty Grace Period in Days" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 }
       },
       "required": ["billingAmount", "billingCycleMonths", "penaltyAmount", "penaltyDays", "ownerId"]
     },
     "UploadedData": {
       "title": "UploadedData",
-      "description": "Uploaded Excel/PDF data for future use",
+      "description": "Uploaded Excel/PDF customer dataset snapshots",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Document ID" },
-        "fileName": { "type": "string", "description": "Name of the uploaded file" },
+        "id": { "type": "string", "description": "Document ID", "maxLength": 64 },
+        "fileName": { "type": "string", "description": "Name of the uploaded file", "maxLength": 255 },
         "data": { "type": "string", "description": "Stringified JSON data extracted from the file" },
         "uploadedAt": { "type": "string", "format": "date-time", "description": "Upload timestamp" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" }
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 }
       },
       "required": ["id", "fileName", "data", "uploadedAt", "ownerId"]
     },
     "WhatsappMessage": {
       "title": "WhatsappMessage",
-      "description": "A WhatsApp message record",
+      "description": "A WhatsApp chat/notification message record",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Message ID" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" },
-        "from": { "type": "string", "description": "Sender number" },
-        "to": { "type": "string", "description": "Receiver number" },
+        "id": { "type": "string", "description": "Message ID", "maxLength": 64 },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 },
+        "from": { "type": "string", "description": "Sender number", "maxLength": 30 },
+        "to": { "type": "string", "description": "Receiver number", "maxLength": 30 },
         "body": { "type": "string", "description": "Message content" },
         "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp" },
         "direction": { "type": "string", "enum": ["inbound", "outbound"], "description": "Message direction" },
@@ -76,22 +80,101 @@
     },
     "Complaint": {
       "title": "Complaint",
-      "description": "A customer complaint",
+      "description": "A citizen grievance or water issue complaint",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Complaint ID" },
-        "customerId": { "type": "string", "description": "Customer ID" },
-        "customerName": { "type": "string", "description": "Customer Name" },
-        "message": { "type": "string", "description": "User's complaint message" },
+        "id": { "type": "string", "description": "Complaint ID", "maxLength": 64 },
+        "customerId": { "type": "string", "description": "Customer ID", "maxLength": 64 },
+        "customerName": { "type": "string", "description": "Customer Name", "maxLength": 100 },
+        "message": { "type": "string", "description": "User's complaint message", "maxLength": 2000 },
         "status": { "type": "string", "enum": ["Pending", "Resolved"], "description": "Status" },
         "category": { "type": "string", "description": "Category" },
         "priority": { "type": "string", "description": "Priority" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record" },
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 },
         "billStatus": { "type": "string", "description": "Bill status at time of complaint" },
-        "description": { "type": "string", "description": "Detailed description" }
+        "description": { "type": "string", "description": "Detailed description" },
+        "mobileNumber": { "type": "string", "description": "Mobile Number" }
       },
       "required": ["id", "customerId", "customerName", "message", "status", "createdAt", "ownerId"]
+    },
+    "PaymentReceipt": {
+      "title": "PaymentReceipt",
+      "description": "A citizen-submitted payment receipt screenshot/proof",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Receipt ID", "maxLength": 64 },
+        "portalId": { "type": "string", "description": "Portal ID", "maxLength": 64 },
+        "customerId": { "type": "string", "description": "Customer ID", "maxLength": 64 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "customerName": { "type": "string", "description": "Customer Name", "maxLength": 100 },
+        "base64Image": { "type": "string", "description": "Receipt Image URL or Storage reference" },
+        "submittedAt": { "type": "string", "format": "date-time", "description": "Submission timestamp" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"], "description": "Approval status" },
+        "amount": { "type": "number", "description": "Claimed payment amount" }
+      },
+      "required": ["id", "portalId", "customerId", "ownerId", "customerName", "submittedAt", "status", "amount"]
+    },
+    "BillingAuditLog": {
+      "title": "BillingAuditLog",
+      "description": "Audit record for billing automation operations",
+      "type": "object",
+      "properties": {
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "type": { "type": "string", "description": "Audit action type", "maxLength": 64 },
+        "description": { "type": "string", "description": "Action summary" },
+        "affectedCustomersCount": { "type": "number", "description": "Number of records processed" },
+        "totalAmount": { "type": "number", "description": "Financial delta" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Execution timestamp" },
+        "executedBy": { "type": "string", "description": "Trigger executor" }
+      },
+      "required": ["ownerId", "type", "description", "affectedCustomersCount", "totalAmount", "timestamp", "executedBy"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Official village water board reports and public records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Report ID", "maxLength": 64 },
+        "title": { "type": "string", "description": "Report Title", "maxLength": 200 },
+        "content": { "type": "string", "description": "Report content markdown/text" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "folderId": { "type": "string", "description": "Associated folder ID" },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "assetLink": { "type": "string", "description": "Public asset link" }
+      },
+      "required": ["id", "title", "content", "createdAt", "ownerId"]
+    },
+    "ReportFolder": {
+      "title": "ReportFolder",
+      "description": "Folders for categorizing official reports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Folder ID", "maxLength": 64 },
+        "name": { "type": "string", "description": "Folder Name", "maxLength": 100 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "name", "ownerId", "createdAt"]
+    },
+    "PublicPortal": {
+      "title": "PublicPortal",
+      "description": "Citizen self-service portal lookup snapshot",
+      "type": "object",
+      "properties": {
+        "portalId": { "type": "string", "description": "Portal ID (Customer ID)", "maxLength": 64 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "customerId": { "type": "string", "description": "Customer ID", "maxLength": 64 },
+        "customerName": { "type": "string", "description": "Customer Name", "maxLength": 100 },
+        "mobileNumber": { "type": "string", "description": "Mobile Number", "maxLength": 20 },
+        "balance": { "type": "number", "description": "Outstanding balance" },
+        "billingAmount": { "type": "number", "description": "Standard rate" },
+        "penaltyAmount": { "type": "number", "description": "Penalty rate" },
+        "penaltyDays": { "type": "number", "description": "Grace days" },
+        "upiQrCodeImage": { "type": "string", "description": "QR code reference" },
+        "createdAt": { "type": "number", "description": "Creation millisecond timestamp" }
+      },
+      "required": ["portalId", "ownerId", "customerId", "customerName", "balance", "createdAt"]
     }
   },
   "firestore": {
@@ -118,6 +201,30 @@
     "/complaints/{complaintId}": {
       "schema": { "$ref": "#/entities/Complaint" },
       "description": "Complaints collection"
+    },
+    "/payment_receipts/{receiptId}": {
+      "schema": { "$ref": "#/entities/PaymentReceipt" },
+      "description": "Payment receipts submitted by citizens"
+    },
+    "/complaints_archive/{complaintId}": {
+      "schema": { "$ref": "#/entities/Complaint" },
+      "description": "Archived resolved complaints"
+    },
+    "/billing_audit/{auditId}": {
+      "schema": { "$ref": "#/entities/BillingAuditLog" },
+      "description": "System billing and automation audit logs"
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Village water scheme reports"
+    },
+    "/reportFolders/{folderId}": {
+      "schema": { "$ref": "#/entities/ReportFolder" },
+      "description": "Folders for reports"
+    },
+    "/public_portals/{portalId}": {
+      "schema": { "$ref": "#/entities/PublicPortal" },
+      "description": "Citizen public portal records"
     }
   }
 }
