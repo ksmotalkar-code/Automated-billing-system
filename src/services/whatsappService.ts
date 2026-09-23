@@ -19,7 +19,7 @@ class WhatsAppService {
   private apiKey: string | null = null;
   private phoneNumberId: string | null = null;
   private watiAccessToken: string | null = null;
-  private baseUrl: string = 'https://graph.facebook.com/v17.0'; // Example for Meta WhatsApp Business API
+  private baseUrl: string = 'https://graph.facebook.com/v21.0'; // Meta WhatsApp Business API
   private watiApiEndpoint: string | null = null;
   private preferredMethod: string | null = null;
 

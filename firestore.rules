@@ -178,5 +178,9 @@ service cloud.firestore {
     match /test/{docId} {
       allow read, write: if true;
     }
+
+    match /webhook_dedup/{msgId} {
+      allow read, write: if true;
+    }
   }
 }

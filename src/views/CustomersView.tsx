@@ -1,8 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings } from "../lib/db";
+import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -52,7 +52,11 @@ const CustomerTableRow = React.memo(({
             />
           </div>
         </td>
-        <td className="px-4 py-4 font-mono text-[10px] uppercase tracking-tighter opacity-60 group-hover:opacity-100 transition-opacity whitespace-nowrap">{customer.id}</td>
+        <td className="px-4 py-4 whitespace-nowrap">
+          <span className="px-2.5 py-1 neu-pressed rounded-lg font-mono font-black text-xs text-blue-600">
+            #{customer.id}
+          </span>
+        </td>
       <td className="px-4 py-4 font-black uppercase tracking-tight text-sm whitespace-nowrap">{customer.name}</td>
       <td className="px-4 py-4 text-xs font-bold neu-text-muted whitespace-nowrap">{customer.mobileNumber}</td>
       <td className="px-4 py-4">
@@ -151,7 +155,7 @@ const CustomerMobileCard = React.memo(({
             </div>
             <div>
               <h4 className="font-black text-base uppercase tracking-tight leading-tight">{customer.name}</h4>
-              <p className="text-[10px] neu-text-muted font-bold mt-1 opacity-60 uppercase tracking-widest">{customer.id}</p>
+              <p className="text-xs font-mono font-bold text-blue-600 mt-1">#{customer.id}</p>
             </div>
          </div>
          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 flex-shrink-0 ${
@@ -218,7 +222,17 @@ export function CustomersView() {
   const [showFaultyOnly, setShowFaultyOnly] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Suspended'>('all');
   const [isImporting, setIsImporting] = useState(false);
+  const [isResequencing, setIsResequencing] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
+
+  // Detect any customers with non-digital or legacy random IDs
+  const legacyIdCount = useMemo(() => {
+    return customers.filter(c => !c.id || !/^\d+$/.test(c.id)).length;
+  }, [customers]);
+
+  const nextSequentialCustomerId = useMemo(() => {
+    return getNextSequentialCustomerId(customers);
+  }, [customers]);
   const [customAttachment, setCustomAttachment] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const broadcastFileInputRef = useRef<HTMLInputElement>(null);
@@ -246,12 +260,25 @@ export function CustomersView() {
       if (a.status !== 'Faulty' && b.status === 'Faulty') return 1;
 
       if (!sortConfig) {
+        // Natural digital sorting by ID (1, 2, 3... 10, 11...)
+        const numA = parseInt((a.id || "").replace(/\D/g, ""), 10);
+        const numB = parseInt((b.id || "").replace(/\D/g, ""), 10);
+        if (!isNaN(numA) && !isNaN(numB) && (numA > 0 || numB > 0)) {
+          return numA - numB;
+        }
         if (a.createdAt && b.createdAt) return b.createdAt.localeCompare(a.createdAt);
         if (a.createdAt) return -1;
         if (b.createdAt) return 1;
         return 0;
       }
       const { key, direction } = sortConfig;
+      if (key === 'id') {
+        const numA = parseInt((a.id || "").replace(/\D/g, ""), 10);
+        const numB = parseInt((b.id || "").replace(/\D/g, ""), 10);
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return direction === 'asc' ? numA - numB : numB - numA;
+        }
+      }
       if (a[key]! < b[key]!) return direction === 'asc' ? -1 : 1;
       if (a[key]! > b[key]!) return direction === 'asc' ? 1 : -1;
       return 0;
@@ -287,12 +314,50 @@ export function CustomersView() {
       const worksheet = workbook.Sheets[workbook.SheetNames[0]];
       const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { defval: "" });
 
+      // Scan existing customers for highest digital ID to ensure continuous sequence
+      let maxExistingId = 0;
+      const usedIdSet = new Set<string>();
+      customers.forEach(c => {
+        if (c.id) {
+          usedIdSet.add(c.id);
+          const digits = c.id.replace(/\D/g, "");
+          if (digits) {
+            const num = parseInt(digits, 10);
+            if (!isNaN(num) && num > maxExistingId) {
+              maxExistingId = num;
+            }
+          }
+        }
+      });
+
+      let nextSequentialCounter = maxExistingId;
+
       const parsedCustomers = jsonData.map(row => {
           const keys = Object.keys(row);
           const findVal = (regex: RegExp) => {
             const key = keys.find(k => regex.test(k.trim()));
             return key !== undefined ? row[key] : undefined;
           };
+
+          // Check if imported file has a valid digital ID or Sr No column
+          const rawId = findVal(/^(id|customer\s*id|cust\s*id|consumer\s*id|consumer\s*no|account\s*no|acct\s*no|sr\s*no|serial\s*no|s\.no)$/i);
+          let assignedId = "";
+          if (rawId !== undefined && String(rawId).trim() !== "") {
+            const cleanDigits = String(rawId).replace(/\D/g, "");
+            const num = parseInt(cleanDigits, 10);
+            if (!isNaN(num) && num > 0 && !usedIdSet.has(num.toString())) {
+              assignedId = num.toString();
+              usedIdSet.add(assignedId);
+            }
+          }
+          if (!assignedId) {
+            nextSequentialCounter += 1;
+            while (usedIdSet.has(nextSequentialCounter.toString())) {
+              nextSequentialCounter += 1;
+            }
+            assignedId = nextSequentialCounter.toString();
+            usedIdSet.add(assignedId);
+          }
 
           const rawName = findVal(/^(name|customer\s*name|customer|resident|consumer\s*name|consumer|client|account\s*name)$/i);
           const name = String(rawName !== undefined ? rawName : (row.Name || row.name || row.Customer || "Unnamed")).trim() || "Unnamed";
@@ -343,7 +408,7 @@ export function CustomersView() {
           }
 
           return {
-              id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+              id: assignedId,
               name,
               mobileNumber,
               balance,
@@ -498,7 +563,7 @@ export function CustomersView() {
     }
 
     setIsSavingUser(true);
-    addCustomer({ ...newCustomer, status: finalStatus }).then(() => {
+    addCustomer({ ...newCustomer, status: finalStatus }, customers).then(() => {
       // Send Welcome Message
       if (settings && settings.automation && finalStatus === 'Active') {
          let message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
@@ -611,6 +676,28 @@ export function CustomersView() {
           showAlert("Error", "Failed to delete all customers.");
         } finally {
           setIsDeletingAll(false);
+        }
+      }
+    });
+  };
+
+  const handleResequenceAll = () => {
+    setConfirmConfig({
+      isOpen: true,
+      title: "Re-sequence Customer IDs (1 to N)",
+      message: `Are you sure you want to re-sequence all ${customers.length} customers? Every customer will be assigned a clean digital ID starting from 1 to ${customers.length} in sequence without repetition. All records will be preserved.`,
+      isDestructive: false,
+      showCancel: true,
+      onConfirm: async () => {
+        setIsResequencing(true);
+        try {
+          const res = await resequenceAllCustomers();
+          showAlert("Re-sequence Complete", `Successfully re-sequenced ${res.total} customer IDs into a clean 1-to-${res.total} digital sequence (${res.updated} IDs updated).`);
+        } catch (error: any) {
+          console.error("Error resequencing customers:", error);
+          showAlert("Error", "Failed to re-sequence customer IDs. " + (error.message || ""));
+        } finally {
+          setIsResequencing(false);
         }
       }
     });
@@ -1102,6 +1189,18 @@ export function CustomersView() {
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
+              onClick={handleResequenceAll}
+              disabled={isResequencing || customers.length === 0}
+              className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-5 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-purple-500/20 disabled:opacity-50 transition-colors"
+              title="Re-assign continuous sequential IDs (1 to N) for all customers"
+            >
+              {isResequencing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Hash className="w-4 h-4" />}
+              {isResequencing ? "Sequencing..." : "Re-sequence IDs"}
+            </motion.button>
+
+            <motion.button 
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
               onClick={handleDeleteAll}
               disabled={isDeletingAll || customers.length === 0}
               className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-6 py-3 bg-red-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-red-500/20 disabled:opacity-50"
@@ -1120,6 +1219,34 @@ export function CustomersView() {
           </div>
         </div>
       </div>
+
+      {legacyIdCount > 0 && (
+        <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0">
+              <Hash className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-900 dark:text-amber-200">
+                Non-sequential Customer IDs Detected ({legacyIdCount} of {customers.length} records)
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Some customers have random or legacy IDs. Click Re-sequence to organize all customer IDs into a clean 1 to {customers.length} sequence without gaps.
+              </p>
+            </div>
+          </div>
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            onClick={handleResequenceAll}
+            disabled={isResequencing}
+            className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-amber-600/30 flex items-center gap-2 shrink-0 cursor-pointer"
+          >
+            {isResequencing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+            Fix & Re-sequence All Now
+          </motion.button>
+        </div>
+      )}
 
       <Card className="border-none border-t border-white/5">
         <CardHeader className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4">
@@ -1322,6 +1449,15 @@ export function CustomersView() {
               </div>
 
               <form onSubmit={handleAddCustomer} className="space-y-4">
+                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-between">
+                  <span className="text-xs font-bold text-blue-900 dark:text-blue-200">
+                    Sequential Customer ID (Auto):
+                  </span>
+                  <span className="font-mono font-black text-sm px-2.5 py-0.5 bg-blue-600 text-white rounded-lg shadow-sm">
+                    #{nextSequentialCustomerId}
+                  </span>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium mb-1">{t('Name')}</label>
                   <input 
@@ -1613,7 +1749,8 @@ export function CustomersView() {
                 <table className="w-full text-sm text-left">
                   <thead>
                      <tr className="text-xs text-slate-500 uppercase bg-black/5">
-                        <th className="p-3 rounded-tl-xl">Name</th>
+                        <th className="p-3 rounded-tl-xl w-24">ID</th>
+                        <th className="p-3">Name</th>
                         <th className="p-3">Mobile</th>
                         <th className="p-3">Balance</th>
                         <th className="p-3 rounded-tr-xl">Status</th>
@@ -1629,6 +1766,11 @@ export function CustomersView() {
                       };
                       return (
                         <tr key={i} className="border-b border-black/5">
+                          <td className="p-2 whitespace-nowrap">
+                            <span className="font-mono font-black text-xs text-blue-600 bg-blue-500/10 px-2.5 py-1 rounded-lg">
+                              #{c.id}
+                            </span>
+                          </td>
                           <td className="p-2">
                             <input 
                               value={c.name} 

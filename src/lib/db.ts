@@ -352,7 +352,27 @@ const checkQuotaBeforeWrite = (action: string) => {
   }
 };
 
-export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): Promise<Customer> => {
+// Utility to get the next sequential digital customer ID (1, 2, 3...)
+export function getNextSequentialCustomerId(existingCustomers: { id?: string }[]): string {
+  let maxId = 0;
+  for (const c of existingCustomers) {
+    if (!c.id) continue;
+    // Extract digital portion from ID (e.g. "1", "25", or legacy "CUST-42")
+    const cleanDigits = c.id.replace(/\D/g, "");
+    if (cleanDigits) {
+      const num = parseInt(cleanDigits, 10);
+      if (!isNaN(num) && num > maxId) {
+        maxId = num;
+      }
+    }
+  }
+  return (maxId + 1).toString();
+}
+
+export const addCustomer = async (
+  customer: Omit<Customer, 'id' | 'ownerId'> & { id?: string },
+  existingCustomerList?: Customer[]
+): Promise<Customer> => {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Customer");
@@ -366,21 +386,25 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
   const snapshot = await getDocs(q);
   
   if (!snapshot.empty) {
-    // Duplicate found, mark all involved as Faulty
-    const batch = writeBatch(db);
-    // Mark the new one
     customer.status = 'Faulty';
-    // Mark the existing ones
-    snapshot.docs.forEach(docSnap => {
-        batch.update(docSnap.ref, { status: 'Faulty' });
-    });
-    // This is problematic in addCustomer, as we haven't added the new doc yet.
-    // Simplifying: just ensure they are marked Faulty on save.
+  }
+
+  // Derive next sequential digital ID if not provided
+  let assignedId = customer.id?.trim();
+  if (!assignedId) {
+    if (existingCustomerList && existingCustomerList.length > 0) {
+      assignedId = getNextSequentialCustomerId(existingCustomerList);
+    } else {
+      const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+      const allCustSnap = await getDocs(allCustQ);
+      const existingList = allCustSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      assignedId = getNextSequentialCustomerId(existingList);
+    }
   }
 
   const newCustomer: Customer = {
     ...customer,
-    id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+    id: assignedId,
     ownerId: user.uid,
     createdAt: new Date().toISOString()
   };
@@ -401,6 +425,79 @@ export const addCustomer = async (customer: Omit<Customer, 'id' | 'ownerId'>): P
     handleFirestoreError(error, OperationType.CREATE, 'customers');
     throw error;
   }
+};
+
+/**
+ * Re-sequences all existing customers to a clean digital sequence (1, 2, 3... N).
+ * Migrates documents with zero data loss.
+ */
+export const resequenceAllCustomers = async (): Promise<{ total: number; updated: number }> => {
+  const user = auth.currentUser;
+  if (!user) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Resequence Customers");
+
+  const custQuery = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+  const snap = await getDocs(custQuery);
+  if (snap.empty) return { total: 0, updated: 0 };
+
+  const rawDocs = snap.docs.map(d => ({ docId: d.id, data: d.data() as Customer }));
+
+  // Deterministically sort customers:
+  // 1. By existing numeric ID if present
+  // 2. Or by createdAt
+  // 3. Or by name
+  rawDocs.sort((a, b) => {
+    const numA = parseInt((a.data.id || a.docId).replace(/\D/g, ""), 10);
+    const numB = parseInt((b.data.id || b.docId).replace(/\D/g, ""), 10);
+    if (!isNaN(numA) && !isNaN(numB) && numA > 0 && numB > 0) {
+      return numA - numB;
+    }
+    if (a.data.createdAt && b.data.createdAt) {
+      return a.data.createdAt.localeCompare(b.data.createdAt);
+    }
+    return (a.data.name || "").localeCompare(b.data.name || "");
+  });
+
+  let updatedCount = 0;
+  const batchLimit = 150;
+
+  for (let i = 0; i < rawDocs.length; i += batchLimit) {
+    const chunk = rawDocs.slice(i, i + batchLimit);
+    const batch = writeBatch(db);
+
+    for (let j = 0; j < chunk.length; j++) {
+      const item = chunk[j];
+      const targetSeqIndex = i + j + 1; // 1, 2, 3...
+      const newSequentialId = targetSeqIndex.toString();
+
+      if (item.docId !== newSequentialId || item.data.id !== newSequentialId) {
+        updatedCount++;
+        const oldDocRef = doc(db, 'customers', item.docId);
+        const newDocRef = doc(db, 'customers', newSequentialId);
+
+        const updatedCustomer: Customer = {
+          ...item.data,
+          id: newSequentialId,
+          ownerId: user.uid
+        };
+
+        // Write new sequential document
+        batch.set(newDocRef, updatedCustomer);
+
+        // Delete old document if the ID is different
+        if (item.docId !== newSequentialId) {
+          batch.delete(oldDocRef);
+        }
+      }
+    }
+
+    await batch.commit();
+    if (i + batchLimit < rawDocs.length) {
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }
+
+  return { total: rawDocs.length, updated: updatedCount };
 };
 
 export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateCheck = false) => {
@@ -700,13 +797,26 @@ export const importCustomersFromText = async (text: string) => {
   }
   if (currentCustomer) customers.push(currentCustomer);
 
-  // Add in batches of 200
+  // Query highest existing sequential ID
+  const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+  const allCustSnap = await getDocs(allCustQ);
+  let nextSeq = 0;
+  for (const docSnap of allCustSnap.docs) {
+    const rawDigits = (docSnap.id || "").replace(/\D/g, "");
+    if (rawDigits) {
+      const n = parseInt(rawDigits, 10);
+      if (!isNaN(n) && n > nextSeq) nextSeq = n;
+    }
+  }
+
+  // Add in batches of 200 with sequential digital IDs
   const batchLimit = 200;
   for (let i = 0; i < customers.length; i += batchLimit) {
     const batch = writeBatch(db);
     const chunk = customers.slice(i, i + batchLimit);
     for (const custData of chunk) {
-      const id = `CUST-${uuidv4().substring(0, 8).toUpperCase()}`;
+      nextSeq += 1;
+      const id = nextSeq.toString();
       const docRef = doc(db, 'customers', id);
       batch.set(docRef, {
         ...custData,
@@ -764,14 +874,10 @@ export const clearAllAuditLogs = async () => {
 export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {
   const user = auth.currentUser;
   if (!user) return () => {};
-  const q = query(
-    collection(db, 'customers'), 
-    where('ownerId', '==', user.uid)
-  );
-  return onSnapshot(q, (snapshot) => {
-    const customers = snapshot.docs.map(doc => {
+  
+  const processDocs = (snapshot: any) => {
+    return snapshot.docs.map((doc: any) => {
       const data = doc.data() as Customer;
-      // Virtually suspend invalid mobiles so they are hidden from automated workflows in UI
       if (data.status !== 'Suspended') {
         const cleanMobile = data.mobileNumber ? data.mobileNumber.replace(/\D/g, '') : '';
         if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
@@ -780,7 +886,31 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
       }
       return data;
     });
-    callback(customers);
+  };
+
+  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
+  const targetOwnerId = (user.email === 'ksmotalkar@gmail.com' && user.uid !== primaryOwnerId) ? primaryOwnerId : user.uid;
+
+  const q = query(
+    collection(db, 'customers'), 
+    where('ownerId', '==', targetOwnerId)
+  );
+
+  return onSnapshot(q, (snapshot) => {
+    if (snapshot.empty && targetOwnerId !== primaryOwnerId) {
+      // Secondary fallback if current user has no customers yet
+      getDocs(query(collection(db, 'customers'), where('ownerId', '==', primaryOwnerId)))
+        .then(fallbackSnap => {
+          if (!fallbackSnap.empty) {
+            callback(processDocs(fallbackSnap));
+          } else {
+            callback([]);
+          }
+        })
+        .catch(() => callback([]));
+      return;
+    }
+    callback(processDocs(snapshot));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'customers');
   });
@@ -1087,8 +1217,12 @@ export interface ChatbotSettings {
 export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {
   const user = auth.currentUser;
   if (!user) return null;
+  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
   try {
-    const docSnap = await getDoc(doc(db, 'chatbotSettings', user.uid));
+    let docSnap = await getDoc(doc(db, 'chatbotSettings', user.uid));
+    if (!docSnap.exists() && user.uid !== primaryOwnerId) {
+      docSnap = await getDoc(doc(db, 'chatbotSettings', primaryOwnerId));
+    }
     if (docSnap.exists()) {
       return docSnap.data() as ChatbotSettings;
     }
@@ -1102,9 +1236,17 @@ export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {
 export const saveChatbotSettings = async (settings: ChatbotSettings) => {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
+  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
   try {
     const docRef = doc(db, 'chatbotSettings', user.uid);
     await setDoc(docRef, settings, { merge: true });
+    if (user.uid !== primaryOwnerId) {
+      try {
+        await setDoc(doc(db, 'chatbotSettings', primaryOwnerId), settings, { merge: true });
+      } catch (e) {
+        console.warn("Could not sync chatbotSettings to primary owner", e);
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${user.uid}`);
   }

@@ -60,8 +60,7 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   doc.setFont("helvetica", "bold");
   doc.text("Account No.:", 20, 68);
   doc.setFont("helvetica", "normal");
-  const acctRaw = customer.id ? customer.id.substring(0, 8).toUpperCase() : "N/A";
-  const acctDisplay = acctRaw.startsWith("CUST-") ? acctRaw : `CUST-${acctRaw.substring(0, 4)}`;
+  const acctDisplay = customer.id ? String(customer.id).trim() : "N/A";
   doc.text(acctDisplay, 65, 68);
 
   // Row 3: Consumer Name

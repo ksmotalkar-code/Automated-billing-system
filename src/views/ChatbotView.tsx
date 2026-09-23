@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardContent, CardTitle } from "../components/ui/card";
-import { MessageSquare, Save, Settings, Activity, RefreshCw, Plus, Trash2, Bot, Info, Sparkles, MessageCircleCode } from "lucide-react";
+import { MessageSquare, Save, Settings, Activity, RefreshCw, Plus, Trash2, Bot, Info, Sparkles, MessageCircleCode, CheckCircle2, AlertCircle, Copy, Play, Check } from "lucide-react";
 import { ChatbotSettings, getChatbotSettings, saveChatbotSettings, ChatbotCommand } from "../lib/db";
 import { motion, AnimatePresence } from "motion/react";
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +15,49 @@ export function ChatbotView() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [testingDiagnostics, setTestingDiagnostics] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const [simMessage, setSimMessage] = useState("Hi");
+  const [simResult, setSimResult] = useState<any>(null);
+  const [simulating, setSimulating] = useState(false);
   const { t } = useTranslation();
+
+  const runDiagnostics = async () => {
+    setTestingDiagnostics(true);
+    try {
+      const res = await fetch("/api/chatbot/diagnostics");
+      const data = await res.json();
+      setDiagnostics(data);
+    } catch (e: any) {
+      setDiagnostics({ ok: false, error: e.message });
+    } finally {
+      setTestingDiagnostics(false);
+    }
+  };
+
+  const runSimulation = async (text?: string) => {
+    const msgToSend = text || simMessage;
+    setSimulating(true);
+    setSimResult(null);
+    try {
+      const res = await fetch("/api/chatbot/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msgToSend })
+      });
+      const data = await res.json();
+      setSimResult(data);
+    } catch (e: any) {
+      setSimResult({ ok: false, error: e.message });
+    } finally {
+      setSimulating(false);
+    }
+  };
+
+  useEffect(() => {
+    runDiagnostics();
+  }, []);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -224,6 +266,112 @@ export function ChatbotView() {
                   The bot uses strict-pattern matching for portal buttons and fuzzy-string analysis for inbound WhatsApp messages. Ensure trigger words are concise.
                 </p>
              </CardContent>
+          </Card>
+
+          {/* WhatsApp Webhook & Live Diagnostic Card */}
+          <Card className="border-none border-t border-white/5 overflow-hidden">
+            <CardHeader className="border-b border-[var(--shadow-dark)] pb-4 flex flex-row items-center justify-between">
+              <CardTitle className="text-[11px] font-black uppercase tracking-widest flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-blue-600" /> Webhook & Meta Status
+              </CardTitle>
+              <button
+                onClick={runDiagnostics}
+                disabled={testingDiagnostics}
+                className="p-1.5 neu-flat rounded-lg text-blue-600 hover:neu-pressed transition-all disabled:opacity-50"
+                title="Refresh diagnostics"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${testingDiagnostics ? 'animate-spin' : ''}`} />
+              </button>
+            </CardHeader>
+            <CardContent className="pt-5 space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400">Callback URL</span>
+                <div className="flex items-center gap-2 p-2 neu-pressed rounded-xl bg-black/5 font-mono text-[11px]">
+                  <span className="truncate flex-1">
+                    {diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook`}
+                  </span>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook`);
+                      setCopiedUrl(true);
+                      setTimeout(() => setCopiedUrl(false), 2000);
+                    }}
+                    className="p-1 text-blue-600 hover:text-blue-800"
+                    title="Copy URL"
+                  >
+                    {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[10px]">
+                <div className="p-2.5 neu-pressed rounded-xl">
+                  <span className="font-bold text-neutral-400 uppercase text-[8px] block">Verify Token</span>
+                  <span className="font-mono font-bold text-blue-600 truncate block mt-0.5">
+                    {diagnostics?.verifyToken || "random_123"}
+                  </span>
+                </div>
+                <div className="p-2.5 neu-pressed rounded-xl">
+                  <span className="font-bold text-neutral-400 uppercase text-[8px] block">Meta API (v21.0)</span>
+                  <span className={`font-bold truncate block mt-0.5 flex items-center gap-1 ${diagnostics?.metaApiReachable ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {diagnostics?.metaApiReachable ? <CheckCircle2 className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                    {diagnostics?.metaApiReachable ? "Connected" : "Check Creds"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Interactive Bot Simulation */}
+              <div className="p-3.5 neu-pressed rounded-2xl bg-blue-500/5 space-y-2.5">
+                <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 block">
+                  Simulate WhatsApp Incoming Message
+                </span>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={simMessage}
+                    onChange={(e) => setSimMessage(e.target.value)}
+                    placeholder="Type message (e.g., Hi, 1, Pay Bill)"
+                    className="flex-1 px-3 py-1.5 text-xs bg-white/70 dark:bg-black/30 rounded-xl outline-none border border-blue-500/20"
+                    onKeyDown={(e) => e.key === "Enter" && runSimulation()}
+                  />
+                  <button
+                    onClick={() => runSimulation()}
+                    disabled={simulating}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center gap-1 hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Play className="w-3 h-3" /> Test
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {["Hi", "1", "2", "Download My Bill", "Complaints"].map((btn) => (
+                    <button
+                      key={btn}
+                      onClick={() => {
+                        setSimMessage(btn);
+                        runSimulation(btn);
+                      }}
+                      className="px-2 py-0.5 bg-white/50 dark:bg-black/20 text-[9px] font-bold rounded-lg hover:bg-blue-100 dark:hover:bg-blue-950 transition-colors"
+                    >
+                      {btn}
+                    </button>
+                  ))}
+                </div>
+
+                {simResult && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-2.5 bg-white dark:bg-black/50 rounded-xl border border-blue-200 dark:border-blue-900 text-[10px] space-y-1"
+                  >
+                    <div className="font-bold text-neutral-400 uppercase text-[8px]">Simulated Bot Response:</div>
+                    <div className="whitespace-pre-wrap font-sans text-neutral-800 dark:text-neutral-200">
+                      {simResult.botResponse}
+                    </div>
+                  </motion.div>
+                )}
+              </div>
+            </CardContent>
           </Card>
         </div>
 

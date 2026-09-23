@@ -6,12 +6,14 @@ import { useTranslation } from "react-i18next";
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { saveUploadedData, importCustomersFromText } from "../lib/db";
+import { useData } from "../contexts/DataContext";
 import { db, auth } from '../firebase';
 import { disableNetwork, writeBatch, doc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
 export function DataUploadView() {
   const { t } = useTranslation();
+  const { customers } = useData();
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -84,12 +86,50 @@ export function DataUploadView() {
   };
 
   const openStagingFromParsedData = () => {
+    // Scan existing customers for highest digital ID
+    let maxExistingId = 0;
+    const usedIdSet = new Set<string>();
+    customers.forEach(c => {
+      if (c.id) {
+        usedIdSet.add(c.id);
+        const digits = c.id.replace(/\D/g, "");
+        if (digits) {
+          const num = parseInt(digits, 10);
+          if (!isNaN(num) && num > maxExistingId) {
+            maxExistingId = num;
+          }
+        }
+      }
+    });
+
+    let nextSeq = maxExistingId;
+
     const records = parsedData.map(row => {
       const keys = Object.keys(row);
       const findVal = (regex: RegExp) => {
         const key = keys.find(k => regex.test(k.trim()));
         return key !== undefined ? row[key] : undefined;
       };
+
+      // Detect digital ID or Sr No if present in imported file
+      const rawId = findVal(/^(id|customer\s*id|cust\s*id|consumer\s*id|consumer\s*no|account\s*no|acct\s*no|sr\s*no|serial\s*no|s\.no)$/i);
+      let assignedId = "";
+      if (rawId !== undefined && String(rawId).trim() !== "") {
+        const cleanDigits = String(rawId).replace(/\D/g, "");
+        const num = parseInt(cleanDigits, 10);
+        if (!isNaN(num) && num > 0 && !usedIdSet.has(num.toString())) {
+          assignedId = num.toString();
+          usedIdSet.add(assignedId);
+        }
+      }
+      if (!assignedId) {
+        nextSeq += 1;
+        while (usedIdSet.has(nextSeq.toString())) {
+          nextSeq += 1;
+        }
+        assignedId = nextSeq.toString();
+        usedIdSet.add(assignedId);
+      }
 
       // 1. Name detection
       let name = String(
@@ -154,7 +194,7 @@ export function DataUploadView() {
       }
 
       return {
-        id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+        id: assignedId,
         name: name,
         mobileNumber: mobile,
         balance: balance,
@@ -247,14 +287,39 @@ export function DataUploadView() {
       }));
     }
 
+    // Scan existing customers for highest digital ID
+    let maxExistingId = 0;
+    const usedIdSet = new Set<string>();
+    customers.forEach(c => {
+      if (c.id) {
+        usedIdSet.add(c.id);
+        const digits = c.id.replace(/\D/g, "");
+        if (digits) {
+          const num = parseInt(digits, 10);
+          if (!isNaN(num) && num > maxExistingId) {
+            maxExistingId = num;
+          }
+        }
+      }
+    });
+
+    let nextTextSeq = maxExistingId;
+
     const finalRecords = records.map(r => {
       const isMissingMobile = !r.mobileNumber || r.mobileNumber.replace(/\D/g, '').length < 10;
       let status: any = (isMissingMobile || r._rawClose) ? "Suspended" : "Active";
       let mobile = r.mobileNumber || "";
       if (status === "Suspended") mobile = "0000000000";
+
+      nextTextSeq += 1;
+      while (usedIdSet.has(nextTextSeq.toString())) {
+        nextTextSeq += 1;
+      }
+      const assignedId = nextTextSeq.toString();
+      usedIdSet.add(assignedId);
       
       return {
-        id: `CUST-${uuidv4().substring(0, 8).toUpperCase()}`,
+        id: assignedId,
         name: r.name,
         mobileNumber: mobile,
         balance: 0,
@@ -498,6 +563,7 @@ export function DataUploadView() {
               <table className="w-full text-sm text-left">
                 <thead>
                    <tr className="text-xs text-slate-500 uppercase bg-black/5">
+                      <th className="p-3 w-20">ID</th>
                       <th className="p-3">Name</th>
                       <th className="p-3 w-[150px]">Mobile</th>
                       <th className="p-3 w-[100px]">Balance</th>
@@ -514,6 +580,11 @@ export function DataUploadView() {
                     };
                     return (
                       <tr key={i} className="border-b border-black/5 hover:bg-black/5 transition-colors">
+                        <td className="p-2 whitespace-nowrap">
+                          <span className="font-mono font-black text-xs text-blue-600 bg-blue-500/10 px-2.5 py-1 rounded-lg">
+                            #{c.id}
+                          </span>
+                        </td>
                         <td className="p-2">
                           <input 
                             value={c.name} 
