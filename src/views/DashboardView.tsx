@@ -64,6 +64,20 @@ export function DashboardView() {
   };
 
   const chartData = useMemo(() => {
+    if (transactions.length === 0) {
+      // Clean 7-day default projection baseline so chart is pristine
+      const days = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        days.push({
+          month: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          revenue: 0,
+          expected: (settings?.billingAmount || 200) * 2
+        });
+      }
+      return days;
+    }
     return transactions.reduce((acc: any[], txn) => {
       const date = new Date(txn.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const existing = acc.find(d => d.month === date);
@@ -75,18 +89,21 @@ export function DashboardView() {
       }
       return acc;
     }, []).slice(-7);
-  }, [transactions]);
+  }, [transactions, settings?.billingAmount]);
 
   const displayData = chartData;
 
   const pieData = useMemo(() => {
-    return [
-      { name: 'Paid (Active)', value: activeCustomersCount - pendingInvoices - overdueAccounts },
-      { name: 'Pending (Active)', value: pendingInvoices },
-      { name: 'Overdue (Active)', value: overdueAccounts },
-      { name: 'Suspended', value: suspendedCustomersCount }
+    const paidCount = Math.max(0, activeCustomersCount - pendingInvoices - overdueAccounts);
+    const list = [
+      { name: 'Paid (Active)', value: paidCount },
+      { name: 'Pending (Active)', value: Math.max(0, pendingInvoices) },
+      { name: 'Overdue (Active)', value: Math.max(0, overdueAccounts) },
+      { name: 'Suspended', value: Math.max(0, suspendedCustomersCount) }
     ].filter(d => d.value > 0);
-  }, [activeCustomersCount, pendingInvoices, overdueAccounts, suspendedCustomersCount]);
+
+    return list.length > 0 ? list : [{ name: 'All Customers', value: Math.max(1, customers.length) }];
+  }, [activeCustomersCount, pendingInvoices, overdueAccounts, suspendedCustomersCount, customers.length]);
   const pieColors = ['#10b981', '#f59e0b', '#ef4444', '#94a3b8'];
 
   return (

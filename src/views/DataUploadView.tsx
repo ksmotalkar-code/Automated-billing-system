@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Upload, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2, X } from "lucide-react";
+import { Upload, FileSpreadsheet, FileText, CheckCircle2, AlertCircle, Loader2, X, Hash, RefreshCw } from "lucide-react";
 import { motion } from "motion/react";
 import { useTranslation } from "react-i18next";
 import * as XLSX from 'xlsx';
@@ -26,6 +26,62 @@ export function DataUploadView() {
   const [stagingCustomers, setStagingCustomers] = useState<any[]>([]);
   const [stagingPage, setStagingPage] = useState(1);
   const stagingLimit = 50;
+
+  const existingCustomerIds = useMemo(() => {
+    return new Set(customers.map(c => (c.id || "").trim()).filter(Boolean));
+  }, [customers]);
+
+  const duplicateStagingIds = useMemo(() => {
+    const seen = new Set<string>();
+    const dupes = new Set<string>();
+    stagingCustomers.forEach(c => {
+      const id = String(c.id || "").trim();
+      if (id) {
+        if (seen.has(id)) {
+          dupes.add(id);
+        } else {
+          seen.add(id);
+        }
+      }
+    });
+    return dupes;
+  }, [stagingCustomers]);
+
+  const emptyStagingIdCount = useMemo(() => {
+    return stagingCustomers.filter(c => !String(c.id || "").trim()).length;
+  }, [stagingCustomers]);
+
+  const existingCollisionCount = useMemo(() => {
+    return stagingCustomers.filter(c => {
+      const id = String(c.id || "").trim();
+      return id && existingCustomerIds.has(id);
+    }).length;
+  }, [stagingCustomers, existingCustomerIds]);
+
+  const hasIdConflicts = emptyStagingIdCount > 0 || duplicateStagingIds.size > 0 || existingCollisionCount > 0;
+
+  const handleAutoFixStagingSequence = () => {
+    let maxExistingId = 0;
+    customers.forEach(c => {
+      if (c.id) {
+        const digits = c.id.replace(/\D/g, "");
+        if (digits) {
+          const num = parseInt(digits, 10);
+          if (!isNaN(num) && num > maxExistingId) {
+            maxExistingId = num;
+          }
+        }
+      }
+    });
+
+    let nextSeq = maxExistingId;
+    const fixed = stagingCustomers.map(c => {
+      nextSeq += 1;
+      return { ...c, id: nextSeq.toString() };
+    });
+    setStagingCustomers(fixed);
+    setStatus({ type: 'info', message: `Customer IDs organized into sequential numbering starting from #${maxExistingId + 1}.` });
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -335,6 +391,22 @@ export function DataUploadView() {
   };
 
   const confirmBulkUpload = async () => {
+    // Validate customer IDs
+    for (const c of stagingCustomers) {
+      if (!c.id || String(c.id).trim() === "") {
+        setStatus({ type: 'error', message: 'All customers must have a valid non-empty Customer ID.' });
+        return;
+      }
+    }
+    if (duplicateStagingIds.size > 0) {
+      setStatus({ type: 'error', message: `Duplicate Customer IDs found in list (${Array.from(duplicateStagingIds).join(', ')}). Please provide unique IDs or click Auto-Fix Sequence.` });
+      return;
+    }
+    if (existingCollisionCount > 0) {
+      setStatus({ type: 'error', message: `${existingCollisionCount} customer ID(s) collide with existing customers in your database. Please update them or click Auto-Fix Sequence.` });
+      return;
+    }
+
     setIsUploading(true);
     try {
       const batchLimit = 200; // Lowered batch limit to prevent Firestore timeouts
@@ -550,20 +622,57 @@ export function DataUploadView() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="neu-bg p-6 rounded-2xl w-full max-w-4xl shadow-2xl border border-white/20 max-h-[90vh] flex flex-col"
           >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold flex items-center gap-2 m-0">
-                 Review Extracted Data ({stagingCustomers.length} records)
-              </h3>
-              <button onClick={() => { setIsStagingModalOpen(false); setIsUploading(false); }} className="p-2 hover:bg-black/5 rounded-full transition-colors text-slate-500 hover:text-rose-500">
-                 <X className="w-5 h-5" />
-              </button>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3 gap-2">
+              <div>
+                <h3 className="text-xl font-bold flex items-center gap-2 m-0">
+                  Review Extracted Data ({stagingCustomers.length} records)
+                </h3>
+                <p className="text-xs neu-text-muted mt-1">
+                  You can edit names, mobiles, statuses, and custom digital IDs directly in the table before confirming.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleAutoFixStagingSequence}
+                  className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                  title="Re-sequence all staging records into 1..N digital IDs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Auto-Fix Sequence (1..N)
+                </button>
+                <button onClick={() => { setIsStagingModalOpen(false); setIsUploading(false); }} className="p-2 hover:bg-black/5 rounded-full transition-colors text-slate-500 hover:text-rose-500">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
-            <p className="text-xs neu-text-muted mb-4">Edit the parsed details below directly if needed before confirming.</p>
+
+            {hasIdConflicts && (
+              <div className="mb-3 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                <div className="text-rose-700 dark:text-rose-300 font-bold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>
+                    {emptyStagingIdCount > 0 && `${emptyStagingIdCount} customer(s) missing ID. `}
+                    {duplicateStagingIds.size > 0 && `${duplicateStagingIds.size} duplicate ID(s) found. `}
+                    {existingCollisionCount > 0 && `${existingCollisionCount} ID(s) collide with existing customers. `}
+                    You can edit IDs in the table below or click Auto-Fix.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleAutoFixStagingSequence}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-black uppercase text-[10px] tracking-wider shrink-0 shadow-md shadow-rose-600/20 cursor-pointer"
+                >
+                  Auto-Fix Sequence
+                </button>
+              </div>
+            )}
+
             <div className="flex-1 overflow-auto rounded-xl border border-black/5">
               <table className="w-full text-sm text-left">
                 <thead>
                    <tr className="text-xs text-slate-500 uppercase bg-black/5">
-                      <th className="p-3 w-20">ID</th>
+                      <th className="p-3 w-28">Customer ID</th>
                       <th className="p-3">Name</th>
                       <th className="p-3 w-[150px]">Mobile</th>
                       <th className="p-3 w-[100px]">Balance</th>
@@ -578,12 +687,36 @@ export function DataUploadView() {
                       newArr[globalIndex] = { ...newArr[globalIndex], [field]: field === 'balance' ? parseFloat(value) || 0 : value };
                       setStagingCustomers(newArr);
                     };
+                    const idStr = String(c.id || "").trim();
+                    const isIdDuplicate = duplicateStagingIds.has(idStr);
+                    const isIdExisting = existingCustomerIds.has(idStr);
+                    const isIdInvalid = !idStr || isIdDuplicate || isIdExisting;
+
                     return (
                       <tr key={i} className="border-b border-black/5 hover:bg-black/5 transition-colors">
                         <td className="p-2 whitespace-nowrap">
-                          <span className="font-mono font-black text-xs text-blue-600 bg-blue-500/10 px-2.5 py-1 rounded-lg">
-                            #{c.id}
-                          </span>
+                          <div className="flex items-center gap-1">
+                            <span className="font-mono text-xs font-bold text-neutral-400">#</span>
+                            <input 
+                              value={c.id || ""} 
+                              onChange={e => updateField('id', e.target.value.trim())} 
+                              className={`w-20 outline-none px-2 py-1.5 rounded-lg border font-mono font-black text-xs transition ${
+                                isIdInvalid
+                                  ? 'bg-rose-500/15 text-rose-700 border-rose-500/50 focus:border-rose-600'
+                                  : 'bg-blue-500/10 text-blue-700 border-blue-500/20 focus:border-indigo-500'
+                              }`}
+                              placeholder="e.g. 1"
+                              title={
+                                !idStr
+                                  ? 'ID cannot be empty'
+                                  : isIdDuplicate
+                                  ? 'Duplicate ID in table'
+                                  : isIdExisting
+                                  ? 'ID already exists in database'
+                                  : 'Customer ID'
+                              }
+                            />
+                          </div>
                         </td>
                         <td className="p-2">
                           <input 

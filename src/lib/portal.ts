@@ -63,8 +63,19 @@ export const getPortalData = async (portalId: string): Promise<PublicPortalData 
       return await response.json() as PublicPortalData;
     }
   } catch (err) {
-    console.error("Error fetching portal data:", err);
+    console.warn("Server portal-data endpoint error, attempting client fallback:", err);
   }
+
+  // Dual-redundancy fallback: query Firestore directly
+  try {
+    const snap = await getDoc(doc(db, 'public_portals', portalId));
+    if (snap.exists()) {
+      return snap.data() as PublicPortalData;
+    }
+  } catch (clientErr) {
+    console.warn("Client fallback portal read failed:", clientErr);
+  }
+
   return null;
 };
 

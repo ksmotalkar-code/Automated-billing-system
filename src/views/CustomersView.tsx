@@ -512,11 +512,24 @@ export function CustomersView() {
   }, []);
 
   const [newCustomer, setNewCustomer] = useState({
+    id: "",
     name: "",
     mobileNumber: "",
     status: "Active" as "Active" | "Suspended" | "Faulty",
     balance: 0,
   });
+  const [originalEditingCustomerId, setOriginalEditingCustomerId] = useState<string>("");
+
+  const handleOpenAddModal = () => {
+    setNewCustomer({
+      id: nextSequentialCustomerId,
+      name: "",
+      mobileNumber: "",
+      status: "Active",
+      balance: 0,
+    });
+    setIsAddModalOpen(true);
+  };
 
   useEffect(() => {
     if (settings) {
@@ -547,6 +560,17 @@ export function CustomersView() {
   const handleAddCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    const assignedId = (newCustomer.id ? newCustomer.id.trim() : "") || nextSequentialCustomerId;
+    if (!assignedId) {
+      showAlert("Validation Error", "Please provide a valid Customer ID.");
+      return;
+    }
+
+    if (customers.some(c => c.id === assignedId)) {
+      showAlert("Duplicate ID", `Customer ID #${assignedId} is already in use by another customer. Please choose a unique ID.`);
+      return;
+    }
+
     let finalStatus = newCustomer.status;
     const cleanMobileNew = newCustomer.mobileNumber ? newCustomer.mobileNumber.replace(/\D/g, '') : '';
     if (!cleanMobileNew || cleanMobileNew.length < 10 || cleanMobileNew === '0000000000') {
@@ -563,21 +587,22 @@ export function CustomersView() {
     }
 
     setIsSavingUser(true);
-    addCustomer({ ...newCustomer, status: finalStatus }, customers).then(() => {
+    addCustomer({ ...newCustomer, id: assignedId, status: finalStatus }, customers).then(() => {
       // Send Welcome Message
       if (settings && settings.automation && finalStatus === 'Active') {
          let message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
-         sendWhatsAppNotification({...newCustomer, status: finalStatus} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
+         sendWhatsAppNotification({...newCustomer, id: assignedId, status: finalStatus} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
       }
     }).catch((err: any) => {
       if (err.message && err.message.includes('Quota')) {
         showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
       } else {
+        showAlert("Error", err.message || "Failed to add customer to remote server.");
         console.error("Failed to add customer to remote server:", err);
       }
     });
     setIsAddModalOpen(false);
-    setNewCustomer({ name: "", mobileNumber: "", status: "Active", balance: 0 });
+    setNewCustomer({ id: "", name: "", mobileNumber: "", status: "Active", balance: 0 });
     setCurrentPage(1);
     setIsSavingUser(false);
   };
@@ -585,6 +610,20 @@ export function CustomersView() {
   const handleUpdateCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingCustomer) {
+      const targetId = (editingCustomer.id || "").trim();
+      if (!targetId) {
+        showAlert("Validation Error", "Customer ID cannot be empty.");
+        return;
+      }
+
+      if (originalEditingCustomerId && targetId !== originalEditingCustomerId) {
+        const isTaken = customers.some(c => c.id === targetId && c.id !== originalEditingCustomerId);
+        if (isTaken) {
+          showAlert("Duplicate ID", `Customer ID #${targetId} is already in use by another customer. Please choose a unique ID.`);
+          return;
+        }
+      }
+
       const cleanMobileUpdate = editingCustomer.mobileNumber ? editingCustomer.mobileNumber.replace(/\D/g, '') : '';
       const isMobileInvalid = !cleanMobileUpdate || cleanMobileUpdate.length < 10 || cleanMobileUpdate === '0000000000';
       const isNameInvalid = !editingCustomer.name || typeof editingCustomer.name !== 'string' || editingCustomer.name.trim() === '';
@@ -596,7 +635,7 @@ export function CustomersView() {
         finalStatus = 'Active';
       }
 
-      const originalCustomer = customers.find(c => c.id === editingCustomer.id);
+      const originalCustomer = customers.find(c => c.id === originalEditingCustomerId || c.id === targetId);
       const statusChanged = originalCustomer && originalCustomer.status !== finalStatus;
 
       if (editingCustomer.balance < 0) {
@@ -604,21 +643,23 @@ export function CustomersView() {
         return;
       }
       setIsSavingUser(true);
-      updateCustomer({...editingCustomer, status: finalStatus}).catch((err: any) => {
+      updateCustomer({...editingCustomer, id: targetId, status: finalStatus}, false, originalEditingCustomerId).catch((err: any) => {
         if (err.message && err.message.includes('Quota')) {
           showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
         } else {
+          showAlert("Update Error", err.message || "Failed to update customer.");
           console.error("Failed to update customer to remote server:", err);
         }
       });
       
       if (statusChanged && settings && settings.automation && finalStatus !== 'Suspended') {
          let message = `Dear ${editingCustomer.name}, your account status has been updated to ${finalStatus}.`;
-         sendWhatsAppNotification({...editingCustomer, status: finalStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify status error:", err));
+         sendWhatsAppNotification({...editingCustomer, id: targetId, status: finalStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify status error:", err));
       }
 
       setIsEditModalOpen(false);
       setEditingCustomer(null);
+      setOriginalEditingCustomerId("");
       setIsSavingUser(false);
     }
   };
@@ -760,7 +801,8 @@ export function CustomersView() {
   };
 
   const handleRowClick = (customer: Customer) => {
-    setEditingCustomer(customer);
+    setEditingCustomer({ ...customer });
+    setOriginalEditingCustomerId(customer.id);
     setIsEditModalOpen(true);
   };
 
@@ -1211,7 +1253,7 @@ export function CustomersView() {
             <motion.button 
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={handleOpenAddModal}
               className="flex-1 sm:flex-none flex justify-center items-center gap-3 px-8 py-3 bg-[var(--accent)] text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.1em] shadow-xl shadow-[var(--accent)]/30"
             >
               <Plus className="w-5 h-5" /> {t('Add Customer')}
@@ -1449,13 +1491,39 @@ export function CustomersView() {
               </div>
 
               <form onSubmit={handleAddCustomer} className="space-y-4">
-                <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-between">
-                  <span className="text-xs font-bold text-blue-900 dark:text-blue-200">
-                    Sequential Customer ID (Auto):
-                  </span>
-                  <span className="font-mono font-black text-sm px-2.5 py-0.5 bg-blue-600 text-white rounded-lg shadow-sm">
-                    #{nextSequentialCustomerId}
-                  </span>
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium">Customer ID</label>
+                    <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-500/10 px-2 py-0.5 rounded">
+                      Auto-sequence: #{nextSequentialCustomerId}
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono font-bold text-neutral-400 text-sm">
+                      #
+                    </span>
+                    <input 
+                      type="text" 
+                      required
+                      value={newCustomer.id || ""}
+                      onChange={e => setNewCustomer({...newCustomer, id: e.target.value.trim()})}
+                      className={`w-full pl-8 pr-4 py-2 neu-pressed rounded-xl outline-none font-mono font-bold text-sm ${
+                        customers.some(c => c.id === (newCustomer.id || "").trim())
+                          ? 'ring-2 ring-rose-500 text-rose-600'
+                          : 'focus:ring-2 focus:ring-blue-500/50'
+                      }`}
+                      placeholder={nextSequentialCustomerId}
+                    />
+                  </div>
+                  {customers.some(c => c.id === (newCustomer.id || "").trim()) ? (
+                    <p className="text-[11px] text-rose-500 font-bold mt-1">
+                      ⚠️ Customer ID #{newCustomer.id} already exists. Please choose a unique ID.
+                    </p>
+                  ) : (
+                    <p className="text-[10px] neu-text-muted mt-1">
+                      Sequential digital ID is auto-assigned. You can customize this ID if needed.
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -1552,13 +1620,40 @@ export function CustomersView() {
 
               <form onSubmit={handleUpdateCustomer} className="space-y-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Customer ID</label>
-                  <input 
-                    type="text" 
-                    disabled
-                    value={editingCustomer.id}
-                    className="w-full px-4 py-2 neu-pressed rounded-xl outline-none opacity-70 cursor-not-allowed"
-                  />
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-sm font-medium">Customer ID</label>
+                    {editingCustomer.id !== originalEditingCustomerId && (
+                      <span className="text-[10px] font-bold text-amber-600 bg-amber-500/10 px-2 py-0.5 rounded">
+                        Modifying #{originalEditingCustomerId} → #{editingCustomer.id}
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono font-bold text-neutral-400 text-sm">
+                      #
+                    </span>
+                    <input 
+                      type="text" 
+                      required
+                      value={editingCustomer.id}
+                      onChange={e => setEditingCustomer({...editingCustomer, id: e.target.value.trim()})}
+                      className={`w-full pl-8 pr-4 py-2 neu-pressed rounded-xl outline-none font-mono font-bold text-sm ${
+                        customers.some(c => c.id === editingCustomer.id.trim() && c.id !== originalEditingCustomerId) 
+                          ? 'ring-2 ring-rose-500 text-rose-600' 
+                          : 'focus:ring-2 focus:ring-blue-500/50'
+                      }`}
+                      placeholder="e.g. 1"
+                    />
+                  </div>
+                  {customers.some(c => c.id === editingCustomer.id.trim() && c.id !== originalEditingCustomerId) ? (
+                    <p className="text-[11px] text-rose-500 font-bold mt-1">
+                      ⚠️ Customer ID #{editingCustomer.id} is already in use by another customer!
+                    </p>
+                  ) : (
+                    <p className="text-[10px] neu-text-muted mt-1">
+                      You can change this customer's ID. All portal links, complaints, and chat records migrate automatically.
+                    </p>
+                  )}
                 </div>
 
                 <div>

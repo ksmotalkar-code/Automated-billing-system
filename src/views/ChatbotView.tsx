@@ -21,6 +21,7 @@ export function ChatbotView() {
   const [simMessage, setSimMessage] = useState("Hi");
   const [simResult, setSimResult] = useState<any>(null);
   const [simulating, setSimulating] = useState(false);
+  const [pendingReportSelection, setPendingReportSelection] = useState(false);
   const { t } = useTranslation();
 
   const runDiagnostics = async () => {
@@ -44,10 +45,16 @@ export function ChatbotView() {
       const res = await fetch("/api/chatbot/simulate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msgToSend })
+        body: JSON.stringify({ 
+          message: msgToSend,
+          pendingReportSelection
+        })
       });
       const data = await res.json();
       setSimResult(data);
+      if (data?.pendingReportSelection !== undefined) {
+        setPendingReportSelection(data.pendingReportSelection);
+      }
     } catch (e: any) {
       setSimResult({ ok: false, error: e.message });
     } finally {
@@ -66,8 +73,8 @@ export function ChatbotView() {
         { id: "sysdlbill", buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
         { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
         { id: "sysdlinvoice", buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Dear {{name}}, your latest invoice has been generated. Please find it attached below.'), isActive: true },
-        { id: "sysmonthly", buttonLabel: `📅 ${t('Monthly Report')}`, triggerWord: t('Monthly Report'), response: t('Which month\'s report do you need? (e.g. January 2026)'), isActive: true },
-        { id: "sysdeepreport", buttonLabel: `📊 ${t('Deep Detail Report')}`, triggerWord: t('Deep Detail Report'), response: t('Hello {{name}}, let me fetch your deep detailed usage report from our systems.'), isActive: true },
+        { id: "sysmonthly", buttonLabel: `📊 ${t('Reports')}`, triggerWord: t('Reports'), response: t('Here are the present reports available from our Reports section.'), isActive: true },
+        { id: "sysdeepreport", buttonLabel: `📑 ${t('Deep Detail Report')}`, triggerWord: t('Deep Detail Report'), response: t('Hello {{name}}, let me fetch your deep detailed usage report from our systems.'), isActive: true },
         { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true }
       ];
 
@@ -344,7 +351,7 @@ export function ChatbotView() {
                 </div>
 
                 <div className="flex flex-wrap gap-1">
-                  {["Hi", "1", "2", "Download My Bill", "Complaints"].map((btn) => (
+                  {["Hi", "Reports", "1", "2", "Download My Bill", "Complaints"].map((btn) => (
                     <button
                       key={btn}
                       onClick={() => {

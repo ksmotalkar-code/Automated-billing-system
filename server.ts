@@ -18,6 +18,7 @@ import {
   where as whereClient,
   getDocs as getDocsClient,
   setDoc as setDocClient,
+  limit as limitClient,
 } from "firebase/firestore";
 import {
   getAuth as getClientAuth,
@@ -200,6 +201,58 @@ export async function getSettings(
     console.error("Client getSettings error:", error);
   }
   return null;
+}
+
+export async function getReportsForOwner(ownerId: string): Promise<any[]> {
+  const primaryOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
+  const adminDb = getAdminDb();
+  let reports: any[] = [];
+
+  if (adminDb) {
+    try {
+      let snap = await adminDb.collection("reports").where("ownerId", "==", ownerId).get();
+      if (snap.empty && ownerId !== primaryOwnerId) {
+        snap = await adminDb.collection("reports").where("ownerId", "==", primaryOwnerId).get();
+      }
+      if (snap.empty) {
+        const allSnap = await adminDb.collection("reports").limit(25).get();
+        if (!allSnap.empty) {
+          snap = allSnap;
+        }
+      }
+      reports = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    } catch (e: any) {
+      console.warn("Error fetching reports from adminDb:", e?.message);
+    }
+  }
+
+  if (reports.length === 0) {
+    try {
+      const q = queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId));
+      let snap = await getDocsClient(q);
+      if (snap.empty && ownerId !== primaryOwnerId) {
+        const q2 = queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", primaryOwnerId));
+        snap = await getDocsClient(q2);
+      }
+      if (snap.empty) {
+        const qAll = queryClient(collectionClient(clientDb, "reports"), limitClient(25));
+        snap = await getDocsClient(qAll);
+      }
+      reports = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    } catch (e: any) {
+      console.warn("Error fetching reports from clientDb:", e?.message);
+    }
+  }
+
+  // Sort by createdAt descending if present
+  reports.sort((a: any, b: any) => {
+    if (a.createdAt && b.createdAt) {
+      return b.createdAt.localeCompare(a.createdAt);
+    }
+    return 0;
+  });
+
+  return reports;
 }
 
 // We'll import node-cron when the user sets up their Firebase Admin
@@ -936,62 +989,109 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
     matched = true;
     action = "complaint";
   } else if (
+    custData?.pendingReportSelection ||
+    custData?.pendingMonthlyReport ||
+    msgLower === "report" ||
+    msgLower === "reports" ||
+    msgLower === "get report" ||
+    msgLower === "get reports" ||
+    msgLower === "view report" ||
+    msgLower === "view reports" ||
+    msgLower === "show report" ||
+    msgLower === "show reports" ||
+    msgLower === "all reports" ||
+    msgLower === "panchayat report" ||
+    msgLower === "panchayat reports" ||
     msgLower === "monthly report" ||
+    msgLower === "sysreports" ||
     msgLower === "sysmonthly" ||
+    msgLower.startsWith("report ") ||
+    msgLower.startsWith("get report ") ||
+    msgLower.startsWith("view report ") ||
+    msgLower.startsWith("download report ") ||
     msgLower.includes("monthly report")
   ) {
-    let extractMonth = msgLower.replace("monthly report", "").replace("for", "").trim();
-    if (extractMonth.length > 2) {
-       const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
-       let foundReport = null;
-       let reportFileUrl = "";
-       let reportFileName = "";
-       
-       if (dbInstance) {
-           const reportSnap = await dbInstance
-             .collection("reports")
-             .where("ownerId", "==", ownerId)
-             .get();
-           
-           for (const doc of reportSnap.docs) {
-             const r = doc.data();
-             if (r.title && r.title.toLowerCase().includes(extractMonth)) {
-               foundReport = r;
-               if (r.files && r.files.length > 0) {
-                 reportFileUrl = r.files[0].data;
-                 reportFileName = r.files[0].name || "Report.pdf";
-               } else if (r.assetLink) {
-                 reportFileUrl = r.assetLink;
-                 reportFileName = "DriveLink";
-               }
-               break;
-             }
-           }
-       }
-       if (foundReport && reportFileUrl) {
-           replyText = `Here is the requested report for ${extractMonth}.`;
-           if (reportFileName === "DriveLink" || reportFileUrl.includes("drive.google.com") || (!reportFileUrl.startsWith("data:") && reportFileUrl.startsWith("http"))) {
-               replyText = `Here is the requested report for ${extractMonth}:\n${reportFileUrl}`;
-           } else if (reportFileUrl.startsWith("data:")) {
-               const base64Data = reportFileUrl.split(',')[1] || reportFileUrl;
-               attachments.push({ type: "file", name: reportFileName, data: base64Data });
-           }
-           matched = true;
-           action = "monthly_report_resolved";
-       } else {
-           replyText = `The report for ${extractMonth} could not be found.`;
-           matched = true;
-       }
-    } else {
-      replyText = replyText || "Which month's report do you need? (e.g. January 2026)";
-      matched = true;
-      action = "monthly_report";
+    const availableReports = await getReportsForOwner(ownerId);
+    const protocol = reqHost.includes("localhost") ? "http" : "https";
+
+    // Check if user is specifying/selecting a report
+    let selectedReport: any = null;
+    const cleanDigits = msgLower.replace(/[^\d]/g, "");
+    const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
+    const isDirectNumber = numericChoice !== null && numericChoice >= 1 && numericChoice <= availableReports.length;
+
+    const isSelecting =
+      custData?.pendingReportSelection ||
+      custData?.pendingMonthlyReport ||
+      isDirectNumber ||
+      msgLower.startsWith("report ") ||
+      msgLower.startsWith("get report ") ||
+      msgLower.startsWith("view report ") ||
+      msgLower.startsWith("download report ") ||
+      (msgLower.includes("monthly report") && msgLower.replace("monthly report", "").replace("for", "").trim().length > 2);
+
+    if (isSelecting && availableReports.length > 0) {
+      if (isDirectNumber) {
+        selectedReport = availableReports[numericChoice - 1];
+      } else {
+        const cleanTerm = msgLower
+          .replace(/^(report|get report|view report|download report|monthly report|for|give me|send me)\s+/gi, "")
+          .trim();
+        if (cleanTerm.length > 0) {
+          selectedReport = availableReports.find((r: any) =>
+            r.title && (r.title.toLowerCase().includes(cleanTerm) || cleanTerm.includes(r.title.toLowerCase()))
+          );
+        }
+      }
+
+      if (selectedReport) {
+        const reportDownloadUrl = `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
+        const hasSeparateAsset = selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://"));
+        const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
+        const fileName = firstFile?.name || (hasSeparateAsset ? "Google Drive Document" : "");
+
+        replyText = `📄 *Gram Panchayat Report Delivery*\n\n*${selectedReport.title}*${selectedReport.content ? `\n\n📝 *Details:* ${selectedReport.content}` : ""}\n\n🔗 *Direct Report Download Link:*\n${reportDownloadUrl}${hasSeparateAsset ? `\n\n🌐 *Cloud / Google Drive Link:*\n${selectedReport.assetLink}` : ""}${fileName ? `\n\n📎 *Document File:* ${fileName}` : ""}\n\nTap the link above to view or download the report immediately. If you need any other report, reply *Reports* anytime! 🙏`;
+
+        if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+          const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+          attachments.push({
+            type: "file",
+            name: fileName || `${selectedReport.title}.pdf`,
+            data: base64Data,
+          });
+        }
+        action = "report_selected";
+        matched = true;
+      } else if (custData?.pendingReportSelection || custData?.pendingMonthlyReport) {
+        replyText = `⚠️ Sorry, I could not find a report matching "${rawMsgLower}".\n\nPlease reply with the report option number (1 to ${availableReports.length}) or type *Reports* to view the available list again.`;
+        action = "pending_report_selection";
+        matched = true;
+      }
+    }
+
+    if (!matched) {
+      if (availableReports.length === 0) {
+        replyText = `📋 *Gram Panchayat Reports Directory*\n\nCurrently, there are no public reports uploaded in the system records. Please check back later or visit the Panchayat office for assistance.`;
+        action = "reports_none";
+        matched = true;
+      } else {
+        const reportListText = availableReports
+          .map((r: any, i: number) => {
+            const emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][i] || `🔹 [${i + 1}]`;
+            const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "";
+            return `${emoji} *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}`;
+          })
+          .join("\n\n");
+
+        replyText = `📊 *Gram Panchayat - Available Reports (${availableReports.length})*\n\nHere are the present reports available from our Reports section:\n\n${reportListText}\n\n👉 *Reply with the Option Number (e.g. 1 or 2) or Report Name* to receive the direct download link.`;
+        action = "pending_report_selection";
+        matched = true;
+      }
     }
   } else if (
     msgLower === "deep report" ||
     msgLower === "system_report" ||
-    msgLower.includes("deep detail report") ||
-    msgLower === "report"
+    msgLower.includes("deep detail report")
   ) {
     replyText =
       replyText ||
@@ -1233,6 +1333,10 @@ async function startServer() {
 
   // API Routes (Before Vite Middleware)
   app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", message: "SmartBilling Server is running" });
+  });
+
+  app.get("/health", (req, res) => {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
   });
 
@@ -3797,6 +3901,11 @@ async function startServer() {
                       }
                     }
                   } else if (msgBody) {
+                    const msgLower = msgBody.toLowerCase().trim();
+                    const chatbotSettings = (await getChatbotSettings(
+                      ownerId,
+                    )) as any;
+
                     const dbInstance = admin.apps.length
                       ? getRequiredAdminDb()
                       : null;
@@ -3814,78 +3923,76 @@ async function startServer() {
                           });
                       } catch (e) {}
                       
-                      if (matchedCustomer.pendingMonthlyReport) {
-                        try {
-                          await dbInstance.collection("customers").doc(matchedCustomer.id).update({
-                            pendingMonthlyReport: false
-                          });
-                          
-                          // Convert user input to lower case for case-insensitive matching
-                          const requestedMonthYear = msgBody.trim().toLowerCase();
-                          
-                          // Search for the report
-                          const reportSnap = await dbInstance
-                            .collection("reports")
-                            .where("ownerId", "==", ownerId)
-                            .get();
-                            
-                          let foundReport = null;
-                          let reportFileUrl = "";
-                          let reportFileName = "";
-                          
-                          for (const doc of reportSnap.docs) {
-                            const r = doc.data();
-                            if (r.title && r.title.toLowerCase().includes(requestedMonthYear)) {
-                              foundReport = r;
-                              if (r.files && r.files.length > 0) {
-                                reportFileUrl = r.files[0].data;
-                                reportFileName = r.files[0].name || "Report.pdf";
-                              } else if (r.assetLink) {
-                                reportFileUrl = r.assetLink;
-                                reportFileName = "DriveLink";
+                      if (
+                        matchedCustomer.pendingReportSelection ||
+                        matchedCustomer.pendingMonthlyReport
+                      ) {
+                        const isExit =
+                          msgLower.startsWith("hi") ||
+                          msgLower.startsWith("hello") ||
+                          msgLower.startsWith("menu") ||
+                          msgLower.startsWith("help") ||
+                          msgLower === "cancel" ||
+                          msgLower === "stop";
+
+                        if (isExit) {
+                          try {
+                            await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                              pendingReportSelection: false,
+                              pendingMonthlyReport: false,
+                            });
+                            matchedCustomer.pendingReportSelection = false;
+                            matchedCustomer.pendingMonthlyReport = false;
+                          } catch (e) {}
+                        } else {
+                          try {
+                            const intentRes = await routeSystemIntent(
+                              msgBody,
+                              matchedCustomer,
+                              ownerId,
+                              settings,
+                              "",
+                              chatbotSettings,
+                              req.get("host")
+                            );
+
+                            if (intentRes.matched) {
+                              if (intentRes.action === "report_selected") {
+                                await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                                  pendingReportSelection: false,
+                                  pendingMonthlyReport: false,
+                                });
                               }
-                              break;
+
+                              await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
+                                role: "assistant",
+                                content: intentRes.replyText,
+                                source: "whatsapp",
+                                timestamp: FieldValue.serverTimestamp(),
+                              });
+
+                              if (settings && ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken)) {
+                                if (intentRes.attachments && intentRes.attachments.length > 0) {
+                                  await sendWhatsAppMessage(
+                                    settings as unknown as AppSettings,
+                                    fromMobile,
+                                    intentRes.replyText,
+                                    intentRes.attachments[0].data,
+                                    intentRes.attachments[0].name
+                                  );
+                                } else {
+                                  await sendWhatsAppMessage(
+                                    settings as unknown as AppSettings,
+                                    fromMobile,
+                                    intentRes.replyText
+                                  );
+                                }
+                              }
+                              continue;
                             }
+                          } catch (e) {
+                            console.error("Error processing pending report selection:", e);
                           }
-                          
-                          let compResText = "";
-                          
-                          if (foundReport && reportFileUrl) {
-                            compResText = `Here is the requested report for ${requestedMonthYear}.`;
-                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
-                              role: "assistant",
-                              content: compResText,
-                              source: "whatsapp",
-                              timestamp: FieldValue.serverTimestamp(),
-                            });
-                            
-                            if (settings && settings.metaWhatsAppPhoneNumberId) {
-                               // Send the report file via WhatsApp
-                               if (reportFileName === "DriveLink" || reportFileUrl.includes("drive.google.com") || (!reportFileUrl.startsWith("data:") && reportFileUrl.startsWith("http"))) {
-                                  // Send as a link in text
-                                  compResText = `Here is the requested report for ${requestedMonthYear}:\n${reportFileUrl}`;
-                                  await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
-                               } else if (reportFileUrl.startsWith("data:")) {
-                                  const base64Data = reportFileUrl.split(',')[1];
-                                  await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText, base64Data, reportFileName);
-                               }
-                            }
-                          } else {
-                            compResText = `The report does not exist.`;
-                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
-                              role: "assistant",
-                              content: compResText,
-                              source: "whatsapp",
-                              timestamp: FieldValue.serverTimestamp(),
-                            });
-                            if (settings && settings.metaWhatsAppPhoneNumberId) {
-                              await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
-                            }
-                          }
-                          
-                          continue;
-                        } catch (e) {
-                          console.error("Error processing monthly report fetch:", e);
                         }
                       }
                       
@@ -3969,11 +4076,7 @@ async function startServer() {
                       }
                     }
 
-                    const chatbotSettings = (await getChatbotSettings(
-                      ownerId,
-                    )) as any;
                     let handled = false;
-                    const msgLower = msgBody.toLowerCase().trim();
                     let responseText =
                       "I'm sorry, I don't understand that command.";
                     let sysTrigger = "";
@@ -4028,25 +4131,15 @@ async function startServer() {
                       }
                     }
 
-                    // 2. Contextual conversation: Check if customer had a pending monthly report prompt
+                    // 2. Contextual conversation: Check if customer had a pending report prompt
                     if (
                       !handled &&
-                      matchedCustomer.pendingMonthlyReport &&
+                      (matchedCustomer.pendingReportSelection || matchedCustomer.pendingMonthlyReport) &&
                       !msgLower.startsWith("hi") &&
                       !msgLower.startsWith("hello") &&
                       !msgLower.startsWith("menu")
                     ) {
-                      if (dbInstance) {
-                        try {
-                          await dbInstance
-                            .collection("customers")
-                            .doc(matchedCustomer.id)
-                            .update({
-                              pendingMonthlyReport: false,
-                            });
-                        } catch (e) {}
-                      }
-                      sysTrigger = `monthly report ${msgLower}`;
+                      sysTrigger = msgLower;
                     }
 
                     // 3. Command matching & numerical option matching
@@ -4138,6 +4231,20 @@ async function startServer() {
                         try {
                            await dbInstance.collection("customers").doc(matchedCustomer.id).update({
                              pendingComplaint: true
+                           });
+                        } catch (e) {}
+                      } else if (intentRes.action === "pending_report_selection" && dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingReportSelection: true,
+                             pendingMonthlyReport: false,
+                           });
+                        } catch (e) {}
+                      } else if (intentRes.action === "report_selected" && dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingReportSelection: false,
+                             pendingMonthlyReport: false,
                            });
                         } catch (e) {}
                       } else if (intentRes.action === "monthly_report" && dbInstance) {
@@ -4506,6 +4613,10 @@ To link your connection or update your mobile number, please contact the Gram Pa
         };
       }
 
+      if (req.body.pendingReportSelection !== undefined) {
+        matchedCustomer.pendingReportSelection = Boolean(req.body.pendingReportSelection);
+      }
+
       let responseText = "";
       let matched = false;
       const msgLower = msgBody.toLowerCase().trim();
@@ -4559,7 +4670,9 @@ To link your connection or update your mobile number, please contact the Gram Pa
         inboundMessage: msgBody,
         customer: matchedCustomer.name,
         botResponse: responseText,
-        attachments: intentRes.attachments || []
+        attachments: intentRes.attachments || [],
+        action: intentRes.action || (matched ? "command_matched" : "fallback"),
+        pendingReportSelection: intentRes.action === "pending_report_selection",
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
@@ -4585,6 +4698,109 @@ To link your connection or update your mobile number, please contact the Gram Pa
         error:
           "WhatsApp Web is disabled on this server. Please use Meta Official API or WATI API.",
       });
+  });
+
+  // Public report view & download endpoint for WhatsApp and direct links
+  app.get("/api/reports/download/:reportId", async (req, res) => {
+    try {
+      const reportId = req.params.reportId;
+      let reportData: any = null;
+
+      const adminDb = getAdminDb();
+      if (adminDb) {
+        try {
+          const docSnap = await adminDb.collection("reports").doc(reportId).get();
+          if (docSnap.exists) {
+            reportData = { id: docSnap.id, ...docSnap.data() };
+          }
+        } catch (e) {}
+      }
+
+      if (!reportData) {
+        try {
+          const docRef = docClient(clientDb, "reports", reportId);
+          const docSnap = await getDocClient(docRef);
+          if (docSnap.exists()) {
+            reportData = { id: docSnap.id, ...docSnap.data() };
+          }
+        } catch (e) {}
+      }
+
+      if (!reportData) {
+        return res.status(404).send(`
+          <!DOCTYPE html>
+          <html>
+            <head><title>Report Not Found</title><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body style="font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f8fafc; color: #334155;">
+              <div style="background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); max-width: 400px; text-align: center;">
+                <h2 style="color: #ef4444; margin-top: 0;">Report Not Found</h2>
+                <p>The requested report is unavailable or has been archived.</p>
+                <a href="/" style="display: inline-block; margin-top: 1rem; padding: 0.5rem 1rem; background: #2563eb; color: white; border-radius: 6px; text-decoration: none;">Return to Home</a>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+
+      // If report has a base64 file attached
+      if (reportData.files && reportData.files.length > 0 && reportData.files[0]?.data) {
+        const file = reportData.files[0];
+        const fileName = file.name || `${reportData.title || "Report"}.pdf`;
+        const rawData = file.data;
+
+        if (rawData.startsWith("data:")) {
+          const parts = rawData.split(",");
+          const mimeMatch = parts[0].match(/:(.*?);/);
+          const mimeType = mimeMatch ? mimeMatch[1] : "application/pdf";
+          const buffer = Buffer.from(parts[1], "base64");
+
+          res.setHeader("Content-Type", mimeType);
+          res.setHeader("Content-Disposition", `inline; filename="${fileName.replace(/"/g, "")}"`);
+          res.setHeader("Content-Length", buffer.length);
+          return res.send(buffer);
+        } else if (rawData.startsWith("http://") || rawData.startsWith("https://")) {
+          return res.redirect(rawData);
+        }
+      }
+
+      // If report has assetLink (e.g. Google Drive link)
+      if (reportData.assetLink && (reportData.assetLink.startsWith("http://") || reportData.assetLink.startsWith("https://"))) {
+        return res.redirect(reportData.assetLink);
+      }
+
+      // If text/html report content
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <title>${reportData.title || "Panchayat Report"}</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              body { font-family: system-ui, -apple-system, sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 2rem 1rem; }
+              .container { max-width: 680px; margin: 0 auto; background: white; border-radius: 12px; padding: 2rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+              .header { border-bottom: 2px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.5rem; }
+              .badge { display: inline-block; padding: 4px 10px; border-radius: 9999px; background: #e0f2fe; color: #0369a1; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
+              h1 { margin: 0 0 0.5rem 0; font-size: 1.5rem; color: #0f172a; }
+              .meta { font-size: 0.875rem; color: #64748b; }
+              .content { font-size: 1rem; line-height: 1.7; color: #334155; white-space: pre-wrap; margin-top: 1.5rem; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <span class="badge">Official Report</span>
+                <h1>${reportData.title || "Gram Panchayat Report"}</h1>
+                <div class="meta">Published: ${reportData.createdAt ? new Date(reportData.createdAt).toLocaleDateString() : "Official Record"}</div>
+              </div>
+              <div class="content">${reportData.content || "No extended description provided for this report."}</div>
+            </div>
+          </body>
+        </html>
+      `);
+    } catch (e: any) {
+      console.error("Report download route error:", e);
+      res.status(500).send("Unable to load report.");
+    }
   });
 
   // Portal Short Links format redirect

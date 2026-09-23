@@ -66,7 +66,7 @@ service cloud.firestore {
       allow update: if (isOwner(existing()) || isAdmin()) && 
                     isValidCustomer(incoming()) && 
                     incoming().ownerId == existing().ownerId &&
-                    incoming().id == existing().id;
+                    incoming().id == customerId;
       allow delete: if isOwner(existing()) || isAdmin();
     }
 

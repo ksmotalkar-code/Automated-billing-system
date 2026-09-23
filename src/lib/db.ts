@@ -400,6 +400,11 @@ export const addCustomer = async (
       const existingList = allCustSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
       assignedId = getNextSequentialCustomerId(existingList);
     }
+  } else {
+    const existingSnap = await getDoc(doc(db, 'customers', assignedId));
+    if (existingSnap.exists()) {
+      throw new Error(`Customer ID "${assignedId}" is already assigned to another customer.`);
+    }
   }
 
   const newCustomer: Customer = {
@@ -500,11 +505,30 @@ export const resequenceAllCustomers = async (): Promise<{ total: number; updated
   return { total: rawDocs.length, updated: updatedCount };
 };
 
-export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateCheck = false) => {
+export const updateCustomer = async (
+  updatedCustomer: Customer, 
+  skipDuplicateCheck = false,
+  oldId?: string
+) => {
   const user = auth.currentUser;
   if (!user) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Cannot update customer.");
   
+  const currentDocId = (oldId && oldId.trim() !== "") ? oldId.trim() : updatedCustomer.id;
+  const targetId = (updatedCustomer.id || "").trim();
+
+  if (!targetId) {
+    throw new Error("Customer ID cannot be empty.");
+  }
+
+  // If ID has changed, verify the target ID is not already used
+  if (currentDocId !== targetId) {
+    const targetDocSnap = await getDoc(doc(db, 'customers', targetId));
+    if (targetDocSnap.exists()) {
+      throw new Error(`Customer ID "${targetId}" is already assigned to another customer.`);
+    }
+  }
+
   let isDuplicate = false;
   let snapshotDocs: any[] = [];
 
@@ -519,7 +543,7 @@ export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateChe
     snapshotDocs = snapshot.docs;
     
     snapshot.forEach(docSnap => {
-        if (docSnap.id !== updatedCustomer.id) {
+        if (docSnap.id !== currentDocId && docSnap.id !== targetId) {
             isDuplicate = true;
         }
     });
@@ -530,20 +554,92 @@ export const updateCustomer = async (updatedCustomer: Customer, skipDuplicateChe
   }
 
   try {
-    await updateDoc(doc(db, 'customers', updatedCustomer.id), { ...updatedCustomer });
-    
-    // If duplicate, update other docs to Faulty
-    if (isDuplicate && snapshotDocs.length > 0) {
-        const batch = writeBatch(db);
-        snapshotDocs.forEach(docSnap => {
-            if (docSnap.id !== updatedCustomer.id) {
-                batch.update(docSnap.ref, { status: 'Faulty' });
-            }
+    if (currentDocId !== targetId) {
+      // Migrate document from currentDocId to targetId atomically
+      const batch = writeBatch(db);
+      const newRef = doc(db, 'customers', targetId);
+      const oldRef = doc(db, 'customers', currentDocId);
+
+      const newCustomerData: Customer = {
+        ...updatedCustomer,
+        id: targetId,
+        ownerId: user.uid,
+      };
+
+      batch.set(newRef, newCustomerData);
+      batch.delete(oldRef);
+
+      // Migrate public_portals record if it exists
+      try {
+        const portalOldRef = doc(db, 'public_portals', currentDocId);
+        const portalOldSnap = await getDoc(portalOldRef);
+        if (portalOldSnap.exists()) {
+          const pData = portalOldSnap.data();
+          batch.set(doc(db, 'public_portals', targetId), {
+            ...pData,
+            portalId: targetId,
+            customerId: targetId,
+          });
+          batch.delete(portalOldRef);
+        }
+      } catch (portalErr) {
+        console.warn("Could not migrate public portal for customer ID change:", portalErr);
+      }
+
+      // Update complaints linked to this customer
+      try {
+        const compQ = query(collection(db, 'complaints'), where('ownerId', '==', user.uid), where('customerId', '==', currentDocId));
+        const compSnap = await getDocs(compQ);
+        compSnap.forEach(d => {
+          batch.update(d.ref, { customerId: targetId });
         });
-        await batch.commit();
+      } catch (compErr) {
+        console.warn("Could not migrate complaints for customer ID change:", compErr);
+      }
+
+      // If duplicate, update other docs to Faulty
+      if (isDuplicate && snapshotDocs.length > 0) {
+        snapshotDocs.forEach(docSnap => {
+          if (docSnap.id !== currentDocId && docSnap.id !== targetId) {
+            batch.update(docSnap.ref, { status: 'Faulty' });
+          }
+        });
+      }
+
+      await batch.commit();
+
+      // Migrate chat_history subcollection if present
+      try {
+        const chatSnap = await getDocs(collection(db, 'customers', currentDocId, 'chat_history'));
+        if (!chatSnap.empty) {
+          const chatBatch = writeBatch(db);
+          chatSnap.forEach(cDoc => {
+            const newChatDoc = doc(collection(db, 'customers', targetId, 'chat_history'), cDoc.id);
+            chatBatch.set(newChatDoc, cDoc.data());
+            chatBatch.delete(cDoc.ref);
+          });
+          await chatBatch.commit();
+        }
+      } catch (chatErr) {
+        console.warn("Could not migrate chat history for customer ID change:", chatErr);
+      }
+    } else {
+      await updateDoc(doc(db, 'customers', updatedCustomer.id), { ...updatedCustomer });
+      
+      // If duplicate, update other docs to Faulty
+      if (isDuplicate && snapshotDocs.length > 0) {
+          const batch = writeBatch(db);
+          snapshotDocs.forEach(docSnap => {
+              if (docSnap.id !== updatedCustomer.id) {
+                  batch.update(docSnap.ref, { status: 'Faulty' });
+              }
+          });
+          await batch.commit();
+      }
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `customers/${updatedCustomer.id}`);
+    throw error;
   }
 };
 
@@ -844,6 +940,9 @@ export const subscribeToBillingAuditLogs = (callback: (logs: BillingAuditLog[]) 
     const logsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillingAuditLog));
     logsData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     callback(logsData);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'billing_audit');
+    callback([]);
   });
 };
 
@@ -913,6 +1012,7 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
     callback(processDocs(snapshot));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'customers');
+    callback([]);
   });
 };
 
@@ -930,6 +1030,7 @@ export const subscribeToTransactions = (callback: (transactions: Transaction[]) 
     callback(transactions);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'transactions');
+    callback([]);
   });
 };
 
@@ -984,6 +1085,31 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
     }
   }, (error) => {
     handleFirestoreError(error, OperationType.GET, `settings/${user.uid}`);
+    // VIP Launch Shield: Provide robust default settings on any connection delay or error
+    callback({
+      upiQrCodeImage: null,
+      billTemplateImage: null,
+      billingAmount: 200,
+      billingCycleMonths: 2,
+      penaltyAmount: 40,
+      penaltyDays: 10,
+      escalationDays: 60,
+      autoSuspend: false,
+      defaultBillingDate: '1',
+      metaWhatsAppApiKey: '',
+      metaWhatsAppPhoneNumberId: '',
+      watiAccessToken: '',
+      watiApiEndpoint: '',
+      automation: {
+        billingLifecycle: true,
+        ruleBased: true,
+        lateFee: true,
+        scheduledBilling: true,
+        bulkProcessing: true,
+        smartNotifications: true
+      },
+      ownerId: user.uid
+    });
   });
 };
 
@@ -1012,6 +1138,7 @@ export const subscribeToPendingReceipts = (callback: (receipts: any[]) => void) 
     callback(items);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'payment_receipts');
+    callback([]);
   });
 };
 
@@ -1029,6 +1156,7 @@ export const subscribeToComplaints = (callback: (complaints: Complaint[]) => voi
     callback(complaints);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'complaints');
+    callback([]);
   });
 };
 
@@ -1089,6 +1217,7 @@ export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => 
     callback(folders);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'reportFolders');
+    callback([]);
   });
 };
 
@@ -1104,6 +1233,7 @@ export const subscribeToReports = (callback: (reports: Report[]) => void) => {
     callback(reports);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'reports');
+    callback([]);
   });
 };
 
@@ -1267,6 +1397,7 @@ export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) 
     callback(messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'whatsapp_messages');
+    callback([]);
   });
 };
 
@@ -1320,6 +1451,7 @@ export const subscribeToAutomationErrors = (callback: (errors: AutomationError[]
     callback(errorsList);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'automation_errors');
+    callback([]);
   });
 };
 

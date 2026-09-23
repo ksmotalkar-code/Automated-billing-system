@@ -54,9 +54,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const unsubAuth = auth.onAuthStateChanged((user) => {
       if (user) {
         clearSubscriptions(); // Just in case
+        
+        // Provide immediate safe defaults so components never hang or crash
+        setSettings(prev => prev || {
+          upiQrCodeImage: null,
+          billTemplateImage: null,
+          billingAmount: 200,
+          billingCycleMonths: 2,
+          penaltyAmount: 40,
+          penaltyDays: 10,
+          escalationDays: 60,
+          autoSuspend: false,
+          defaultBillingDate: '1',
+          metaWhatsAppApiKey: '',
+          metaWhatsAppPhoneNumberId: '',
+          watiAccessToken: '',
+          watiApiEndpoint: '',
+          automation: {
+            billingLifecycle: true,
+            ruleBased: true,
+            lateFee: true,
+            scheduledBilling: true,
+            bulkProcessing: true,
+            smartNotifications: true
+          },
+          ownerId: user.uid
+        });
+
         // Initializing consolidated subscriptions
         unsubs.push(subscribeToCustomers(setCustomers));
-        unsubs.push(subscribeToSettings(setSettings));
+        unsubs.push(subscribeToSettings((freshSettings) => {
+          if (freshSettings) setSettings(freshSettings);
+        }));
         unsubs.push(subscribeToTransactions(setTransactions));
         unsubs.push(subscribeToComplaints(setComplaints));
         unsubs.push(subscribeToReports(setReports));
