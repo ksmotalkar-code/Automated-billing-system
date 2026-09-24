@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Report, addReport, deleteReport, Customer, AppSettings } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { shareReportToCustomers } from "../lib/automation";
 import { updateDoc, doc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -12,6 +13,7 @@ import { uploadImageToStorage } from "../lib/storage";
 
 export function ReportsView() {
   const { reports, customers, settings } = useData();
+  const { currentOwnerId } = useTenant();
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSharing, setIsSharing] = useState<string | null>(null);
@@ -72,8 +74,9 @@ export function ReportsView() {
         title: newTitle.trim(),
         content: newContent.trim(),
         assetLink: newAssetLink.trim(),
-        files: []
-      });
+        files: [],
+        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+      }, currentOwnerId || undefined);
       setIsAddModalOpen(false);
       setNewTitle("");
       setNewContent("");
@@ -96,7 +99,8 @@ export function ReportsView() {
      setIsSharing(reportId);
 
      try {
-       const fileUrl = await uploadImageToStorage(file, 'reports', auth.currentUser?.uid, `${Date.now()}_${file.name}`);
+       const effectiveUid = currentOwnerId || auth.currentUser?.uid;
+       const fileUrl = await uploadImageToStorage(file, 'reports', effectiveUid, `${Date.now()}_${file.name}`);
        const reportRef = doc(db, 'reports', reportId);
        const report = reports.find(r => r.id === reportId);
        const existingFiles = report?.files || [];
@@ -169,7 +173,7 @@ export function ReportsView() {
         message: "This will incinerate the directory and all associated binary links. Proceed?",
         isDestructive: true,
         onConfirm: async () => {
-          await deleteReport(id);
+          await deleteReport(id, currentOwnerId || undefined);
         }
       });
   };

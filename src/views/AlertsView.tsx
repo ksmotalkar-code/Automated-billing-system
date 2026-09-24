@@ -4,6 +4,7 @@ import { BellRing, CheckCircle, AlertCircle, MessageCircle, Send, Loader2, Paper
 import { motion, AnimatePresence } from "motion/react";
 import { Customer, AppSettings, updateCustomer } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { writeBatch, doc } from "firebase/firestore";
 import { db } from "../firebase";
 import { sendWhatsAppNotification } from "../lib/automation";
@@ -13,6 +14,7 @@ import { useRef } from "react";
 
 export function AlertsView() {
   const { customers, settings } = useData();
+  const { currentOwnerId } = useTenant();
   const [isSendingBulk, setIsSendingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [notifyingId, setNotifyingId] = useState<string | null>(null);
@@ -110,7 +112,7 @@ export function AlertsView() {
     }
 
     if (isPaid) {
-      await updateCustomer({ ...customer, paymentNotified: true });
+      await updateCustomer({ ...customer, paymentNotified: true }, false, undefined, currentOwnerId || undefined);
     }
   };
 
@@ -164,7 +166,11 @@ export function AlertsView() {
 
           const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode, true, 'broadcast');
           if (result.success) {
-             batch.update(doc(db, 'customers', customer.id), { paymentNotified: true });
+             const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+             batch.update(doc(db, 'customers', targetDocId), { 
+               paymentNotified: true,
+               ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+             });
              updatesSkipped++;
 
              if (updatesSkipped % 100 === 0) {
@@ -183,7 +189,7 @@ export function AlertsView() {
           }
           
           setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
-          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500));
         }
 
         if (updatesSkipped % 100 !== 0) {
@@ -282,8 +288,8 @@ export function AlertsView() {
           
           setBulkProgress(Math.floor(((i + 1) / targets.length) * 100));
           
-          // Small delay to prevent rate limits
-          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
+          // Delay to prevent rate limits
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500));
         }
         
         setIsSendingBulk(false);

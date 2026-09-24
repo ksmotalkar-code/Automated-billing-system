@@ -30,15 +30,15 @@ export interface PaymentReceipt {
   amount: number;
 }
 
-export const createPortalLink = async (customer: Customer, settings: AppSettings): Promise<string> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Must be logged in to create portal link");
+export const createPortalLink = async (customer: Customer, settings: AppSettings, explicitOwnerId?: string): Promise<string> => {
+  const uid = explicitOwnerId || customer.ownerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Must be logged in to create portal link");
   
-  const portalId = customer.id;
+  const portalId = customer.docId || `${uid}_${customer.id}`;
 
   const portalData: PublicPortalData = {
     portalId,
-    ownerId: user.uid,
+    ownerId: uid,
     customerId: customer.id,
     customerName: customer.name || "Customer",
     mobileNumber: customer.mobileNumber || "",

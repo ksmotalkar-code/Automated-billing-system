@@ -6,8 +6,10 @@ import { motion, AnimatePresence } from "motion/react";
 import { v4 as uuidv4 } from 'uuid';
 import { CommandManagerWrapper } from "../components/CommandManager";
 import { useTranslation } from "react-i18next";
+import { useTenant } from "../contexts/TenantContext";
 
 export function ChatbotView() {
+  const { currentOwnerId } = useTenant();
   const [settings, setSettings] = useState<ChatbotSettings>({
     isActive: false,
     commands: []
@@ -27,7 +29,8 @@ export function ChatbotView() {
   const runDiagnostics = async () => {
     setTestingDiagnostics(true);
     try {
-      const res = await fetch("/api/chatbot/diagnostics");
+      const url = currentOwnerId ? `/api/chatbot/diagnostics?ownerId=${encodeURIComponent(currentOwnerId)}` : "/api/chatbot/diagnostics";
+      const res = await fetch(url);
       const data = await res.json();
       setDiagnostics(data);
     } catch (e: any) {
@@ -47,7 +50,8 @@ export function ChatbotView() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           message: msgToSend,
-          pendingReportSelection
+          pendingReportSelection,
+          ownerId: currentOwnerId || undefined
         })
       });
       const data = await res.json();
@@ -64,11 +68,11 @@ export function ChatbotView() {
 
   useEffect(() => {
     runDiagnostics();
-  }, []);
+  }, [currentOwnerId]);
 
   useEffect(() => {
     const fetchSettings = async () => {
-      const data = await getChatbotSettings();
+      const data = await getChatbotSettings(currentOwnerId || undefined);
       const defaultSystemCommands: ChatbotCommand[] = [
         { id: "sysdlbill", buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
         { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
@@ -106,7 +110,7 @@ export function ChatbotView() {
       setLoading(false);
     };
     fetchSettings();
-  }, []);
+  }, [currentOwnerId]);
 
   useEffect(() => {
     if (loading) return;
@@ -115,12 +119,12 @@ export function ChatbotView() {
       handleSave();
     }, 1500);
     return () => clearTimeout(timer);
-  }, [settings, loading]);
+  }, [settings, loading, currentOwnerId]);
 
   const handleSave = () => {
     setSaving(true);
     setSaveMessage("");
-    saveChatbotSettings(settings).catch(e => console.error("Error saving chatbot to remote:", e));
+    saveChatbotSettings(settings, currentOwnerId || undefined).catch(e => console.error("Error saving chatbot to remote:", e));
     setSaving(false);
     setSaveMessage("Deployment Successfull");
     setTimeout(() => setSaveMessage(""), 3000);
@@ -295,11 +299,11 @@ export function ChatbotView() {
                 <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400">Callback URL</span>
                 <div className="flex items-center gap-2 p-2 neu-pressed rounded-xl bg-black/5 font-mono text-[11px]">
                   <span className="truncate flex-1">
-                    {diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook`}
+                    {diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook${currentOwnerId ? `/${currentOwnerId}` : ''}`}
                   </span>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook`);
+                      navigator.clipboard.writeText(diagnostics?.webhookUrl || `${window.location.origin}/api/whatsapp-webhook${currentOwnerId ? `/${currentOwnerId}` : ''}`);
                       setCopiedUrl(true);
                       setTimeout(() => setCopiedUrl(false), 2000);
                     }}

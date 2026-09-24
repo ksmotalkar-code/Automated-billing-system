@@ -4,6 +4,7 @@ import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, Dol
 import { motion } from "motion/react";
 import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings, deleteBillTemplateImage } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
 import { Trash2, LogOut, MessageCircle, Loader2, X, Info } from "lucide-react";
 import { auth, logout } from "../firebase";
@@ -50,6 +51,7 @@ const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<strin
 export function SettingsView() {
   const { t } = useTranslation();
   const { settings: contextSettings } = useData();
+  const { currentOwnerId } = useTenant();
   const [activeTab, setActiveTab] = useState<'billing' | 'whatsapp' | 'security' | 'gateway' | 'broadcast' | 'automation'>('billing');
   const [settings, setSettings] = useState<AppSettings>(contextSettings || {
     upiQrCodeImage: null,
@@ -85,7 +87,7 @@ export function SettingsView() {
   const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
   const [botSettings, setBotSettings] = useState<ChatbotSettings | null>(null);
   const [legacyMode, setLegacyMode] = useState(false);
-  const isAdmin = auth.currentUser?.email === 'ksmotalkar@gmail.com';
+  const isAdmin = !!auth.currentUser;
   const [newProvider, setNewProvider] = useState<Partial<WhatsAppProvider>>({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
 
   const [isTriggerLoading, setIsTriggerLoading] = useState(false);
@@ -141,25 +143,28 @@ export function SettingsView() {
     if (!isDifferent) return;
     
     const timer = setTimeout(() => {
-      saveSettings(settings).catch(e => console.error("Auto-save failed", e));
+      saveSettings(
+        { ...settings, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+        currentOwnerId || undefined
+      ).catch(e => console.error("Auto-save failed", e));
     }, 1500);
     return () => clearTimeout(timer);
-  }, [settings, contextSettings]);
+  }, [settings, contextSettings, currentOwnerId]);
 
   useEffect(() => {
     const loadProviders = async () => {
       try {
-        const provs = await getProviders();
+        const provs = await getProviders(currentOwnerId || undefined);
         setProviders(provs);
         
-        const botData = await getChatbotSettings();
+        const botData = await getChatbotSettings(currentOwnerId || undefined);
         setBotSettings(botData);
       } catch(e) {
         console.error("Failed to load providers or bot settings", e);
       }
     };
     loadProviders();
-  }, []);
+  }, [currentOwnerId]);
 
   const [templateToTest, setTemplateToTest] = useState<string>('hello_world');
 
@@ -174,7 +179,7 @@ export function SettingsView() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          ownerId: auth.currentUser?.uid, 
+          ownerId: currentOwnerId || auth.currentUser?.uid, 
           testMobile, 
           apiKey: settings.metaWhatsAppApiKey, 
           phoneId: settings.metaWhatsAppPhoneNumberId,
@@ -210,7 +215,7 @@ export function SettingsView() {
           const resp = await fetch('/api/cron/daily', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ownerId: auth.currentUser?.uid })
+            body: JSON.stringify({ ownerId: currentOwnerId || auth.currentUser?.uid })
           });
           if (resp.ok) {
             showAlert("Automation Triggered", "The daily automation cycle has been manually started for your customers. Balances will be updated and notifications sent based on your rules.");
@@ -238,7 +243,10 @@ export function SettingsView() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await saveSettings(settings);
+      await saveSettings(
+        { ...settings, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+        currentOwnerId || undefined
+      );
       showAlert("Saved", "Settings successfully saved.");
     } catch (e) {
       console.error("Save failed", e);
@@ -251,7 +259,7 @@ export function SettingsView() {
   const performReset = async () => {
     setIsResetting(true);
     try {
-      await resetDatabase();
+      await resetDatabase(currentOwnerId || undefined);
       // Logout after successful reset to fulfill "reload app with no any user in it"
       await logout();
       
@@ -309,7 +317,8 @@ export function SettingsView() {
     try {
       const { db } = await import('../firebase');
       const { collection, query, where, getDocs } = await import('firebase/firestore');
-      const q = query(collection(db, 'customers'), where('ownerId', '==', auth.currentUser?.uid), where('status', '==', 'Active'));
+      const effectiveUid = currentOwnerId || auth.currentUser?.uid;
+      const q = query(collection(db, 'customers'), where('ownerId', '==', effectiveUid), where('status', '==', 'Active'));
       const snap = await getDocs(q);
       const custs = snap.docs.map(d => d.data());
       if (custs.length === 0) {
@@ -379,7 +388,7 @@ export function SettingsView() {
           if (broadcastAttachment) {
             mediaName = broadcastAttachment.name;
             try {
-              mediaBase64 = await uploadImageToStorage(broadcastAttachment, 'broadcasts', auth.currentUser?.uid);
+              mediaBase64 = await uploadImageToStorage(broadcastAttachment, 'broadcasts', currentOwnerId || auth.currentUser?.uid);
             } catch (uploadErr) {
               console.warn("Storage upload for broadcast attachment failed, using fallback reader", uploadErr);
               mediaBase64 = await new Promise((resolve, reject) => {
@@ -395,7 +404,7 @@ export function SettingsView() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-               ownerId: auth.currentUser?.uid, 
+               ownerId: currentOwnerId || auth.currentUser?.uid, 
                message: broadcastMessage, 
                apiKey: settings.metaWhatsAppApiKey, 
                phoneId: settings.metaWhatsAppPhoneNumberId,
@@ -865,7 +874,7 @@ export function SettingsView() {
                         <label className="text-[9px] font-black uppercase tracking-wider neu-text-muted ml-1">Callback URL</label>
                         <div className="group relative">
                           <code className="block w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent text-[11px] font-bold text-emerald-700/80 break-all select-all shadow-inner">
-                            {window.location.origin}/api/whatsapp-webhook/{auth.currentUser?.uid}
+                            {window.location.origin}/api/whatsapp-webhook/{currentOwnerId || auth.currentUser?.uid || 'user_id'}
                           </code>
                           <button className="absolute right-4 top-1/2 -translate-y-1/2 text-emerald-600 opacity-0 group-hover:opacity-100 transition-opacity">
                              <Copy className="w-4 h-4" />
@@ -1150,6 +1159,18 @@ export function SettingsView() {
             </CardHeader>
             <CardContent className="pt-8 space-y-10">
               <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
+                <div className="space-y-3 md:col-span-2 lg:col-span-3">
+                  <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Workspace / Organization Name</label>
+                  <input
+                    type="text"
+                    value={settings.organizationName || ''}
+                    placeholder="Enter your Organization / Gram Panchayat / Business Name"
+                    onChange={(e) => setSettings({ ...settings, organizationName: e.target.value })}
+                    className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-base font-black focus:ring-2 focus:ring-blue-500/30 transition-all shadow-inner"
+                  />
+                  <p className="text-[11px] neu-text-muted ml-1">This name will be displayed in headers, navigation, customer invoices, and reports.</p>
+                </div>
+
                 <div className="space-y-3">
                   <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Base Invoice Amount (INR)</label>
                   <input
@@ -1336,10 +1357,14 @@ export function SettingsView() {
                               const file = e.target.files?.[0];
                               if (file) {
                                 try {
-                                  const storageUrl = await uploadImageToStorage(file, 'templates', auth.currentUser?.uid);
+                                  const effectiveUid = currentOwnerId || auth.currentUser?.uid;
+                                  const storageUrl = await uploadImageToStorage(file, 'templates', effectiveUid);
                                   const updated = { ...settings, billTemplateImage: storageUrl };
                                   setSettings(updated);
-                                  await saveSettings(updated);
+                                  await saveSettings(
+                                    { ...updated, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+                                    currentOwnerId || undefined
+                                  );
                                 } catch (err) {
                                   console.error("Storage upload failed", err);
                                   showAlert("Upload Error", "Failed to upload image to Cloud Storage. Please verify storage configuration.");
@@ -1355,7 +1380,7 @@ export function SettingsView() {
                               try {
                                 const oldUrl = settings.billTemplateImage;
                                 setSettings({...settings, billTemplateImage: null});
-                                await deleteBillTemplateImage();
+                                await deleteBillTemplateImage(currentOwnerId || undefined);
                                 if (oldUrl) await deleteImageFromStorage(oldUrl);
                               } catch (err) {
                                 console.error("Failed to delete bill template image:", err);
@@ -1391,7 +1416,10 @@ export function SettingsView() {
                                 const oldUrl = settings.upiQrCodeImage;
                                 const updated = { ...settings, upiQrCodeImage: null };
                                 setSettings(updated);
-                                await saveSettings(updated);
+                                await saveSettings(
+                                  { ...updated, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+                                  currentOwnerId || undefined
+                                );
                                 if (oldUrl) await deleteImageFromStorage(oldUrl);
                               } catch (err) {
                                 console.error("Failed to remove QR code:", err);
@@ -1426,10 +1454,14 @@ export function SettingsView() {
                               const file = e.target.files?.[0];
                               if (file) {
                                 try {
-                                  const storageUrl = await uploadImageToStorage(file, 'qr-codes', auth.currentUser?.uid);
+                                  const effectiveUid = currentOwnerId || auth.currentUser?.uid;
+                                  const storageUrl = await uploadImageToStorage(file, 'qr-codes', effectiveUid);
                                   const updated = { ...settings, upiQrCodeImage: storageUrl };
                                   setSettings(updated);
-                                  await saveSettings(updated);
+                                  await saveSettings(
+                                    { ...updated, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+                                    currentOwnerId || undefined
+                                  );
                                 } catch (err) {
                                   console.error("Storage upload failed", err);
                                   showAlert("Upload Error", "Failed to upload QR code to Cloud Storage. Please verify storage configuration.");
@@ -1446,7 +1478,10 @@ export function SettingsView() {
                                 const oldUrl = settings.upiQrCodeImage;
                                 const updated = { ...settings, upiQrCodeImage: null };
                                 setSettings(updated);
-                                await saveSettings(updated);
+                                await saveSettings(
+                                  { ...updated, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
+                                  currentOwnerId || undefined
+                                );
                                 if (oldUrl) await deleteImageFromStorage(oldUrl);
                               } catch (err) {
                                 console.error("Failed to remove QR code:", err);
@@ -1548,7 +1583,7 @@ export function SettingsView() {
                       <label className="text-[9px] font-black uppercase tracking-wider neu-text-muted ml-1">Universal Webhook Endpoint</label>
                       <div className="group relative">
                         <code className="block w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent text-[11px] font-bold text-indigo-700/80 break-all select-all shadow-inner">
-                          {window.location.origin}/api/payment-webhook/{auth.currentUser?.uid || 'user_id'}
+                          {window.location.origin}/api/payment-webhook/{currentOwnerId || auth.currentUser?.uid || 'user_id'}
                         </code>
                         <button className="absolute right-4 top-1/2 -translate-y-1/2 text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
                            <Copy className="w-4 h-4" />
@@ -1652,7 +1687,7 @@ export function SettingsView() {
                   <div className="w-full mt-2 p-5 rounded-2xl bg-black/5 text-[10px] font-black font-mono flex flex-col gap-2 border border-black/5 uppercase tracking-widest text-slate-500">
                     <div className="flex justify-between items-center bg-black/5 p-2 rounded-lg">
                       <span>Authority Mapping ID</span>
-                      <span className="text-rose-600 select-all">{auth.currentUser?.uid?.substring(0, 12)}...</span>
+                      <span className="text-rose-600 select-all">{(currentOwnerId || auth.currentUser?.uid)?.substring(0, 12)}...</span>
                     </div>
                     <div className="flex justify-between items-center bg-black/5 p-2 rounded-lg">
                       <span>Infrastructure Node</span>
@@ -1755,7 +1790,7 @@ export function SettingsView() {
                              onClick={async () => {
                                if(window.confirm("Nuclear Command: Delete provider?")) {
                                  try {
-                                    await deleteProvider(provider.id);
+                                    await deleteProvider(provider.id, currentOwnerId || undefined);
                                     setProviders(providers.filter(p => p.id !== provider.id));
                                  } catch(e) { console.error(e); }
                                }
@@ -1815,7 +1850,7 @@ export function SettingsView() {
                            return;
                          }
                          try {
-                           await addProvider(newProvider as WhatsAppProvider);
+                           await addProvider(newProvider as WhatsAppProvider, currentOwnerId || undefined);
                            setProviders([...providers, newProvider as WhatsAppProvider]);
                            setNewProvider({ id: '', name: '', baseUrl: '', requiresApiKey: true, requiresPhoneId: false, isActive: true });
                            showAlert("Registry Updated", "New provider bridge successfully integrated.");

@@ -5,12 +5,14 @@ import { motion, AnimatePresence } from "motion/react";
 import { useRef } from "react";
 import { sendWhatsAppNotification } from "../lib/automation";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { subscribeToBillingAuditLogs, BillingAuditLog, deleteAuditLog, clearAllAuditLogs } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function BillingAuditView() {
   const { t } = useTranslation();
+  const { currentOwnerId } = useTenant();
   const [logs, setLogs] = useState<BillingAuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -27,16 +29,21 @@ export function BillingAuditView() {
   const showAlert = (title: string, message: string) => setAlertConfig({ isOpen: true, title, message });
 
   useEffect(() => {
-    const unsubscribe = subscribeToBillingAuditLogs((fetchedLogs) => {
+    if (!currentOwnerId) {
+      setLogs([]);
+      setIsLoading(false);
+      return;
+    }
+    const unsubscribe = subscribeToBillingAuditLogs(currentOwnerId, (fetchedLogs) => {
       setLogs(fetchedLogs);
       setIsLoading(false);
     });
     return () => unsubscribe();
-  }, []);
+  }, [currentOwnerId]);
 
   const handleClearAll = async () => {
     setIsDeleting(true);
-    await clearAllAuditLogs();
+    await clearAllAuditLogs(currentOwnerId || undefined);
     setIsDeleting(false);
     setShowClearConfirm(false);
   };

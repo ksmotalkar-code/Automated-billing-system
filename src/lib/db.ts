@@ -49,10 +49,8 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   };
 
   if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
-    console.warn('Firestore Quota Exceeded.', errInfo);
-    // Lock background tasks for 12 hours locally when quota hits
-    localStorage.setItem('firestore_quota_expiry', (Date.now() + 12 * 60 * 60 * 1000).toString());
-    throw new Error('resource-exhausted: Your database quota has been exceeded. Please review usage or billing.');
+    console.warn('Firestore Quota Notice.', errInfo);
+    throw new Error('resource-exhausted: Your database quota or rate limit has been reached. Please wait a moment or check project limits.');
   }
 
   if (errorMessage.includes('client is offline')) {
@@ -65,19 +63,15 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 }
 
 export const isQuotaExceeded = () => {
-  const expiry = localStorage.getItem('firestore_quota_expiry');
-  const enableLock = localStorage.getItem('enableFreeTierLock') !== 'false';
-  if (enableLock && expiry && Date.now() < parseInt(expiry)) {
-    return true; // Limit exceeded and lock is enabled
-  }
   return false;
 };
 
 export interface Customer {
-  id: string;
+  id: string; // The sequential digital ID (e.g. "1", "2")
+  docId?: string; // Firestore document ID (tenant-isolated)
   name: string;
   mobileNumber: string;
-  status: 'Active' | 'Suspended' | 'Faulty';
+  status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid';
   balance: number;
   ownerId?: string;
   invoiceSent?: boolean;
@@ -115,9 +109,11 @@ export interface BillingAuditLog {
   customerName?: string;
 }
 
-export const saveBillingAuditLog = async (log: Omit<BillingAuditLog, 'id'>) => {
+export const saveBillingAuditLog = async (log: Omit<BillingAuditLog, 'id'>, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || log.ownerId || auth.currentUser?.uid;
+  if (!uid) return;
   const q = collection(db, 'billing_audit');
-  await addDoc(q, log);
+  await addDoc(q, { ...log, ownerId: uid });
 };
 
 export interface ReportFile {
@@ -172,13 +168,15 @@ export interface WhatsAppProvider {
   requiresApiKey: boolean; // Does the provider require an API key?
   requiresPhoneId: boolean; // Does the provider require a Phone ID?
   isActive: boolean; // Is the provider active?
+  ownerId?: string;
 }
 
-export const getProviders = async (): Promise<WhatsAppProvider[]> => {
-  if (!auth.currentUser) return [];
+export const getProviders = async (explicitOwnerId?: string): Promise<WhatsAppProvider[]> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return [];
   try {
-    const providersCol = collection(db, 'providers');
-    const snapshot = await getDocs(providersCol);
+    const q = query(collection(db, 'providers'), where('ownerId', '==', uid));
+    const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppProvider));
   } catch (error: any) {
     handleFirestoreError(error, OperationType.GET, 'providers');
@@ -186,22 +184,29 @@ export const getProviders = async (): Promise<WhatsAppProvider[]> => {
   }
 };
 
-export const addProvider = async (provider: WhatsAppProvider) => {
-  if (!auth.currentUser || auth.currentUser.email !== 'ksmotalkar@gmail.com') throw new Error("Not authorized");
+export const addProvider = async (provider: WhatsAppProvider, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Provider");
   const { id, ...providerData } = provider;
+  const docId = id.startsWith(`${uid}_`) ? id : `${uid}_${id}`;
   try {
-    await setDoc(doc(db, 'providers', id), providerData);
+    await setDoc(doc(db, 'providers', docId), { ...providerData, id, ownerId: uid });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'providers');
   }
 };
 
-export const deleteProvider = async (id: string) => {
-  if (!auth.currentUser || auth.currentUser.email !== 'ksmotalkar@gmail.com') throw new Error("Not authorized");
+export const deleteProvider = async (id: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Delete Provider");
+  const docId = id.startsWith(`${uid}_`) ? id : `${uid}_${id}`;
   try {
-    await deleteDoc(doc(db, 'providers', id));
+    await deleteDoc(doc(db, 'providers', docId));
+    if (docId !== id) {
+      try { await deleteDoc(doc(db, 'providers', id)); } catch(e) {}
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'providers');
   }
@@ -230,6 +235,7 @@ export interface MetaTemplateDef {
 }
 
 export interface AppSettings {
+  organizationName?: string;
   appLogoImage?: string | null;
   upiQrCodeImage: string | null;
   billingAmount: number;
@@ -295,15 +301,15 @@ export interface WhatsappMessage {
   read?: boolean;
 }
 
-export const cleanupOldData = async () => {
-  const user = auth.currentUser;
-  if (!user) return;
+export const cleanupOldData = async (explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   
-  const lastCleanup = localStorage.getItem(`last_cleanup_${user.uid}`);
+  const lastCleanup = localStorage.getItem(`last_cleanup_${uid}`);
   const today = new Date().toDateString();
   if (lastCleanup === today) return; // Already cleaned up today
   
-  localStorage.setItem(`last_cleanup_${user.uid}`, today);
+  localStorage.setItem(`last_cleanup_${uid}`, today);
 
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
@@ -312,13 +318,13 @@ export const cleanupOldData = async () => {
   
   const qData = query(
     collection(db, 'uploadedData'), 
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', uid),
     where('uploadedAt', '<', sixMonthsAgo.toISOString())
   );
 
   const qComplaints = query(
     collection(db, 'complaints'),
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', uid),
     where('expiresAt', '<', now)
   );
   
@@ -371,60 +377,78 @@ export function getNextSequentialCustomerId(existingCustomers: { id?: string }[]
 
 export const addCustomer = async (
   customer: Omit<Customer, 'id' | 'ownerId'> & { id?: string },
-  existingCustomerList?: Customer[]
+  existingCustomerList?: Customer[],
+  explicitOwnerId?: string
 ): Promise<Customer> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Customer");
   
-  // Check for duplicates
-  const q = query(
-      collection(db, 'customers'), 
-      where('ownerId', '==', user.uid),
-      where('mobileNumber', '==', customer.mobileNumber)
-  );
-  const snapshot = await getDocs(q);
-  
-  if (!snapshot.empty) {
-    customer.status = 'Faulty';
+  // Clean & normalize mobile number (handle numbers, strings, or formatting)
+  const rawMobile = customer.mobileNumber ? String(customer.mobileNumber).replace(/\D/g, '') : '';
+  const cleanMobile = rawMobile.length >= 10 ? rawMobile.slice(-10) : rawMobile;
+
+  // Check for duplicates within tenant ONLY IF valid 10-digit mobile is provided (not empty / not all zeroes)
+  let isDuplicateMobile = false;
+  if (cleanMobile && cleanMobile.length === 10 && cleanMobile !== '0000000000') {
+    try {
+      const q = query(
+          collection(db, 'customers'), 
+          where('ownerId', '==', uid),
+          where('mobileNumber', '==', cleanMobile)
+      );
+      const snapshot = await getDocs(q);
+      if (!snapshot.empty) {
+        isDuplicateMobile = true;
+      }
+    } catch (e) {
+      console.warn("Non-fatal duplicate mobile check warning:", e);
+    }
   }
 
   // Derive next sequential digital ID if not provided
-  let assignedId = customer.id?.trim();
+  let assignedId = (customer.id ? String(customer.id).trim() : "");
   if (!assignedId) {
     if (existingCustomerList && existingCustomerList.length > 0) {
       assignedId = getNextSequentialCustomerId(existingCustomerList);
     } else {
-      const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+      const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', uid));
       const allCustSnap = await getDocs(allCustQ);
       const existingList = allCustSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
       assignedId = getNextSequentialCustomerId(existingList);
     }
   } else {
-    const existingSnap = await getDoc(doc(db, 'customers', assignedId));
-    if (existingSnap.exists()) {
-      throw new Error(`Customer ID "${assignedId}" is already assigned to another customer.`);
+    // Check uniqueness ONLY within this tenant's workspace
+    const existingQ = query(
+      collection(db, 'customers'),
+      where('ownerId', '==', uid),
+      where('id', '==', assignedId)
+    );
+    const existingSnap = await getDocs(existingQ);
+    if (!existingSnap.empty) {
+      throw new Error(`Customer ID "${assignedId}" is already assigned to another customer in your workspace.`);
     }
   }
+
+  const docId = `${uid}_${assignedId}`;
+  const finalStatus: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = isDuplicateMobile 
+    ? 'Faulty' 
+    : (['Active', 'Suspended', 'Faulty', 'Advance Paid'].includes(customer.status as any) ? customer.status as any : 'Active');
 
   const newCustomer: Customer = {
     ...customer,
     id: assignedId,
-    ownerId: user.uid,
+    name: String(customer.name || "Customer").trim().slice(0, 100),
+    mobileNumber: cleanMobile,
+    status: finalStatus,
+    balance: Number(customer.balance) || 0,
+    docId,
+    ownerId: uid,
     createdAt: new Date().toISOString()
   };
+
   try {
-    await setDoc(doc(db, 'customers', newCustomer.id), newCustomer);
-    
-    // If it was a duplicate, update existing docs to Faulty
-    if (!snapshot.empty) {
-        const batch = writeBatch(db);
-        snapshot.docs.forEach(docSnap => {
-            batch.update(docSnap.ref, { status: 'Faulty' });
-        });
-        await batch.commit();
-    }
-    
+    await setDoc(doc(db, 'customers', docId), newCustomer);
     return newCustomer;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'customers');
@@ -436,12 +460,12 @@ export const addCustomer = async (
  * Re-sequences all existing customers to a clean digital sequence (1, 2, 3... N).
  * Migrates documents with zero data loss.
  */
-export const resequenceAllCustomers = async (): Promise<{ total: number; updated: number }> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const resequenceAllCustomers = async (explicitOwnerId?: string): Promise<{ total: number; updated: number }> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Resequence Customers");
 
-  const custQuery = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+  const custQuery = query(collection(db, 'customers'), where('ownerId', '==', uid));
   const snap = await getDocs(custQuery);
   if (snap.empty) return { total: 0, updated: 0 };
 
@@ -475,22 +499,25 @@ export const resequenceAllCustomers = async (): Promise<{ total: number; updated
       const targetSeqIndex = i + j + 1; // 1, 2, 3...
       const newSequentialId = targetSeqIndex.toString();
 
-      if (item.docId !== newSequentialId || item.data.id !== newSequentialId) {
+      const targetDocId = `${uid}_${newSequentialId}`;
+
+      if (item.docId !== targetDocId || item.data.id !== newSequentialId) {
         updatedCount++;
         const oldDocRef = doc(db, 'customers', item.docId);
-        const newDocRef = doc(db, 'customers', newSequentialId);
+        const newDocRef = doc(db, 'customers', targetDocId);
 
         const updatedCustomer: Customer = {
           ...item.data,
           id: newSequentialId,
-          ownerId: user.uid
+          docId: targetDocId,
+          ownerId: uid
         };
 
         // Write new sequential document
         batch.set(newDocRef, updatedCustomer);
 
         // Delete old document if the ID is different
-        if (item.docId !== newSequentialId) {
+        if (item.docId !== targetDocId) {
           batch.delete(oldDocRef);
         }
       }
@@ -508,66 +535,91 @@ export const resequenceAllCustomers = async (): Promise<{ total: number; updated
 export const updateCustomer = async (
   updatedCustomer: Customer, 
   skipDuplicateCheck = false,
-  oldId?: string
+  oldId?: string,
+  explicitOwnerId?: string
 ) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+  const uid = explicitOwnerId || updatedCustomer.ownerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Cannot update customer.");
   
-  const currentDocId = (oldId && oldId.trim() !== "") ? oldId.trim() : updatedCustomer.id;
+  const oldCustomerSeq = (oldId && oldId.trim() !== "") ? oldId.trim() : updatedCustomer.id;
   const targetId = (updatedCustomer.id || "").trim();
 
   if (!targetId) {
     throw new Error("Customer ID cannot be empty.");
   }
 
-  // If ID has changed, verify the target ID is not already used
-  if (currentDocId !== targetId) {
-    const targetDocSnap = await getDoc(doc(db, 'customers', targetId));
-    if (targetDocSnap.exists()) {
-      throw new Error(`Customer ID "${targetId}" is already assigned to another customer.`);
+  // If ID has changed, verify the target ID is not already used in this workspace
+  if (oldCustomerSeq !== targetId) {
+    const targetQ = query(
+      collection(db, 'customers'),
+      where('ownerId', '==', uid),
+      where('id', '==', targetId)
+    );
+    const targetSnap = await getDocs(targetQ);
+    if (!targetSnap.empty) {
+      throw new Error(`Customer ID "${targetId}" is already assigned to another customer in your workspace.`);
     }
   }
+
+  const currentDocId = updatedCustomer.docId || `${uid}_${oldCustomerSeq}`;
+  const targetDocId = `${uid}_${targetId}`;
 
   let isDuplicate = false;
   let snapshotDocs: any[] = [];
 
-  if (!skipDuplicateCheck) {
-    // Check for duplicates (if mobile number changed)
-    const q = query(
-        collection(db, 'customers'), 
-        where('ownerId', '==', user.uid),
-        where('mobileNumber', '==', updatedCustomer.mobileNumber)
-    );
-    const snapshot = await getDocs(q);
-    snapshotDocs = snapshot.docs;
-    
-    snapshot.forEach(docSnap => {
-        if (docSnap.id !== currentDocId && docSnap.id !== targetId) {
-            isDuplicate = true;
-        }
-    });
-    
-    if (isDuplicate) {
-        updatedCustomer.status = 'Faulty';
+  const rawMobile = updatedCustomer.mobileNumber ? String(updatedCustomer.mobileNumber).replace(/\D/g, '') : '';
+  const cleanMobile = rawMobile.length >= 10 ? rawMobile.slice(-10) : rawMobile;
+  updatedCustomer.mobileNumber = cleanMobile;
+
+  if (!skipDuplicateCheck && cleanMobile && cleanMobile.length === 10 && cleanMobile !== '0000000000') {
+    try {
+      const q = query(
+          collection(db, 'customers'), 
+          where('ownerId', '==', uid),
+          where('mobileNumber', '==', cleanMobile)
+      );
+      const snapshot = await getDocs(q);
+      snapshotDocs = snapshot.docs;
+      
+      snapshot.forEach(docSnap => {
+          const dData = docSnap.data();
+          if (docSnap.id !== currentDocId && docSnap.id !== targetDocId && dData.id !== targetId) {
+              isDuplicate = true;
+          }
+      });
+      
+      if (isDuplicate) {
+          updatedCustomer.status = 'Faulty';
+      }
+    } catch (e) {
+      console.warn("Non-fatal duplicate mobile check warning in updateCustomer:", e);
     }
   }
 
   try {
-    if (currentDocId !== targetId) {
-      // Migrate document from currentDocId to targetId atomically
+    if (oldCustomerSeq !== targetId) {
+      // Migrate document from currentDocId to targetDocId atomically
       const batch = writeBatch(db);
-      const newRef = doc(db, 'customers', targetId);
+      const newRef = doc(db, 'customers', targetDocId);
       const oldRef = doc(db, 'customers', currentDocId);
 
       const newCustomerData: Customer = {
         ...updatedCustomer,
         id: targetId,
-        ownerId: user.uid,
+        docId: targetDocId,
+        ownerId: uid,
       };
 
       batch.set(newRef, newCustomerData);
       batch.delete(oldRef);
+
+      // Also clean up legacy un-prefixed doc if it existed
+      if (currentDocId !== oldCustomerSeq) {
+        try {
+          batch.delete(doc(db, 'customers', oldCustomerSeq));
+        } catch (e) { /* ignore */ }
+      }
 
       // Migrate public_portals record if it exists
       try {
@@ -579,6 +631,7 @@ export const updateCustomer = async (
             ...pData,
             portalId: targetId,
             customerId: targetId,
+            ownerId: uid
           });
           batch.delete(portalOldRef);
         }
@@ -588,7 +641,7 @@ export const updateCustomer = async (
 
       // Update complaints linked to this customer
       try {
-        const compQ = query(collection(db, 'complaints'), where('ownerId', '==', user.uid), where('customerId', '==', currentDocId));
+        const compQ = query(collection(db, 'complaints'), where('ownerId', '==', uid), where('customerId', '==', oldCustomerSeq));
         const compSnap = await getDocs(compQ);
         compSnap.forEach(d => {
           batch.update(d.ref, { customerId: targetId });
@@ -600,7 +653,7 @@ export const updateCustomer = async (
       // If duplicate, update other docs to Faulty
       if (isDuplicate && snapshotDocs.length > 0) {
         snapshotDocs.forEach(docSnap => {
-          if (docSnap.id !== currentDocId && docSnap.id !== targetId) {
+          if (docSnap.id !== currentDocId && docSnap.id !== targetDocId) {
             batch.update(docSnap.ref, { status: 'Faulty' });
           }
         });
@@ -614,7 +667,7 @@ export const updateCustomer = async (
         if (!chatSnap.empty) {
           const chatBatch = writeBatch(db);
           chatSnap.forEach(cDoc => {
-            const newChatDoc = doc(collection(db, 'customers', targetId, 'chat_history'), cDoc.id);
+            const newChatDoc = doc(collection(db, 'customers', targetDocId, 'chat_history'), cDoc.id);
             chatBatch.set(newChatDoc, cDoc.data());
             chatBatch.delete(cDoc.ref);
           });
@@ -624,13 +677,20 @@ export const updateCustomer = async (
         console.warn("Could not migrate chat history for customer ID change:", chatErr);
       }
     } else {
-      await updateDoc(doc(db, 'customers', updatedCustomer.id), { ...updatedCustomer });
+      await setDoc(doc(db, 'customers', currentDocId), { 
+        ...updatedCustomer,
+        id: targetId,
+        docId: currentDocId,
+        ownerId: uid,
+        balance: typeof updatedCustomer.balance === 'number' ? updatedCustomer.balance : (Number(updatedCustomer.balance) || 0),
+        status: updatedCustomer.status || 'Active',
+      }, { merge: true });
       
       // If duplicate, update other docs to Faulty
       if (isDuplicate && snapshotDocs.length > 0) {
           const batch = writeBatch(db);
           snapshotDocs.forEach(docSnap => {
-              if (docSnap.id !== updatedCustomer.id) {
+              if (docSnap.id !== currentDocId) {
                   batch.update(docSnap.ref, { status: 'Faulty' });
               }
           });
@@ -655,20 +715,25 @@ const deleteInBatches = async (querySnapshot: any) => {
   }
 };
 
-export const deleteCustomer = async (id: string) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const deleteCustomer = async (id: string, docId?: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Delete Customer");
   try {
     const batch = writeBatch(db);
-    // Delete customer doc
-    batch.delete(doc(db, 'customers', id));
+    const targetDocId = docId || `${uid}_${id}`;
+    batch.delete(doc(db, 'customers', targetDocId));
     
-    // Find and delete associated transactions
+    // Also clean up legacy doc if it had the raw id
+    if (!docId) {
+      try { batch.delete(doc(db, 'customers', id)); } catch (e) { /* ignore */ }
+    }
+    
+    // Find and delete associated transactions strictly within tenant
     const q = query(
       collection(db, 'transactions'), 
       where('customerId', '==', id),
-      where('ownerId', '==', user.uid)
+      where('ownerId', '==', uid)
     );
     const snapshot = await getDocs(q);
     snapshot.docs.forEach(doc => batch.delete(doc.ref));
@@ -679,25 +744,31 @@ export const deleteCustomer = async (id: string) => {
   }
 };
 
-export const deleteCustomersBatch = async (ids: string[]) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const deleteCustomersBatch = async (
+  items: (string | { id: string; docId?: string })[],
+  explicitOwnerId?: string
+) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
-    // Delete customers in chunks of 200
-    for (let i = 0; i < ids.length; i += 200) {
+    const normalized = items.map(item => typeof item === 'string' ? { id: item, docId: `${uid}_${item}` } : { id: item.id, docId: item.docId || `${uid}_${item.id}` });
+    for (let i = 0; i < normalized.length; i += 200) {
       const batch = writeBatch(db);
-      const chunk = ids.slice(i, i + 200);
-      chunk.forEach(id => batch.delete(doc(db, 'customers', id)));
+      const chunk = normalized.slice(i, i + 200);
+      chunk.forEach(item => {
+        batch.delete(doc(db, 'customers', item.docId));
+        try { batch.delete(doc(db, 'customers', item.id)); } catch (e) { /* ignore */ }
+      });
       await batch.commit();
-      if (i + 200 < ids.length) await new Promise(r => setTimeout(r, 500));
+      if (i + 200 < normalized.length) await new Promise(r => setTimeout(r, 500));
     }
 
-    // Delete associated transactions for these customers
-    for (const id of ids) {
+    // Delete associated transactions for these customers strictly within tenant
+    for (const item of normalized) {
       const q = query(
         collection(db, 'transactions'), 
-        where('customerId', '==', id),
-        where('ownerId', '==', user.uid)
+        where('customerId', '==', item.id),
+        where('ownerId', '==', uid)
       );
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
@@ -709,35 +780,41 @@ export const deleteCustomersBatch = async (ids: string[]) => {
   }
 };
 
-export const updateCustomersBatchStatus = async (ids: string[], status: 'Active' | 'Suspended') => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+export const updateCustomersBatchStatus = async (
+  items: (string | { id: string; docId?: string })[], 
+  status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid',
+  explicitOwnerId?: string
+) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
-    for (let i = 0; i < ids.length; i += 200) {
+    const normalized = items.map(item => typeof item === 'string' ? { id: item, docId: `${uid}_${item}` } : { id: item.id, docId: item.docId || `${uid}_${item.id}` });
+    for (let i = 0; i < normalized.length; i += 200) {
       const batch = writeBatch(db);
-      const chunk = ids.slice(i, i + 200);
-      chunk.forEach(id => {
-        const ref = doc(db, 'customers', id);
+      const chunk = normalized.slice(i, i + 200);
+      chunk.forEach(item => {
+        const ref = doc(db, 'customers', item.docId);
         batch.update(ref, { status, updatedAt: new Date().toISOString() });
       });
       await batch.commit();
-      if (i + 200 < ids.length) await new Promise(r => setTimeout(r, 500));
+      if (i + 200 < normalized.length) await new Promise(r => setTimeout(r, 500));
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, 'customers_batch_status');
   }
 };
 
-export const deleteAllCustomers = async () => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const deleteAllCustomers = async (explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
     // Delete all customers for this user
-    const qCust = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+    const qCust = query(collection(db, 'customers'), where('ownerId', '==', uid));
     const snapCust = await getDocs(qCust);
     await deleteInBatches(snapCust);
 
     // Delete all transactions for this user
-    const qTxn = query(collection(db, 'transactions'), where('ownerId', '==', user.uid));
+    const qTxn = query(collection(db, 'transactions'), where('ownerId', '==', uid));
     const snapTxn = await getDocs(qTxn);
     await deleteInBatches(snapTxn);
   } catch (error) {
@@ -745,15 +822,18 @@ export const deleteAllCustomers = async () => {
   }
 };
 
-export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'>): Promise<Transaction> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const addTransaction = async (
+  transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'>,
+  explicitOwnerId?: string
+): Promise<Transaction> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Transaction");
   const newTransaction: Transaction = {
     ...transaction,
     id: `TXN-${uuidv4().substring(0, 8).toUpperCase()}`,
     date: new Date().toISOString(),
-    ownerId: user.uid,
+    ownerId: uid,
   };
   try {
     await setDoc(doc(db, 'transactions', newTransaction.id), newTransaction);
@@ -764,44 +844,44 @@ export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'date
   }
 };
 
-export const saveSettings = async (settings: AppSettings) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const saveSettings = async (settings: AppSettings, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   if (isQuotaExceeded()) throw new Error("Quota Exceeded: Writes temporarily disabled.");
   try {
-    const payload: any = { ...settings, ownerId: user.uid };
+    const payload: any = { ...settings, ownerId: uid };
     // If billTemplateImage is empty or null, guarantee it is stored as null rather than leftover data
     if (!payload.billTemplateImage) {
       payload.billTemplateImage = null;
     }
-    await setDoc(doc(db, 'settings', user.uid), payload);
+    await setDoc(doc(db, 'settings', uid), payload);
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `settings/${user.uid}`);
+    handleFirestoreError(error, OperationType.WRITE, `settings/${uid}`);
   }
 };
 
-export const deleteBillTemplateImage = async () => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const deleteBillTemplateImage = async (explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
-    await updateDoc(doc(db, 'settings', user.uid), {
+    await updateDoc(doc(db, 'settings', uid), {
       billTemplateImage: deleteField()
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `settings/${user.uid}`);
+    handleFirestoreError(error, OperationType.UPDATE, `settings/${uid}`);
   }
 };
 
-export const saveUploadedData = async (fileName: string, data: any[]) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const saveUploadedData = async (fileName: string, data: any[], explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   const id = `UPLOAD-${uuidv4().substring(0, 8).toUpperCase()}`;
   const upload: UploadedData = {
     id,
     fileName,
     data: JSON.stringify(data),
     uploadedAt: new Date().toISOString(),
-    ownerId: user.uid,
+    ownerId: uid,
   };
   try {
     await setDoc(doc(db, 'uploadedData', id), upload);
@@ -810,15 +890,17 @@ export const saveUploadedData = async (fileName: string, data: any[]) => {
   }
 };
 
-export const resetAllBalances = async (customers: Customer[]) => {
-  if (!auth.currentUser) return;
+export const resetAllBalances = async (customers: Customer[], explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   checkQuotaBeforeWrite("Reset Balances");
   const batchLimit = 200;
   for (let i = 0; i < customers.length; i += batchLimit) {
     const chunk = customers.slice(i, i + batchLimit);
     const batch = writeBatch(db);
     for (const c of chunk) {
-      batch.update(doc(db, 'customers', c.id), { balance: 0 });
+      const targetDocId = c.docId || `${uid}_${c.id}`;
+      batch.update(doc(db, 'customers', targetDocId), { balance: 0 });
     }
     await batch.commit();
     if (i + batchLimit < customers.length) {
@@ -827,18 +909,18 @@ export const resetAllBalances = async (customers: Customer[]) => {
   }
 };
 
-export const resetDatabase = async () => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
-  console.log("Starting master database reset for user:", user.uid);
+export const resetDatabase = async (explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  console.log("Starting master database reset for user:", uid);
   try {
     // 1. Delete all customers and transactions
     console.log("Deleting customers and transactions...");
-    await deleteAllCustomers();
+    await deleteAllCustomers(uid);
 
     // 2. Delete uploaded data
     console.log("Deleting uploaded data history...");
-    const qUpload = query(collection(db, 'uploadedData'), where('ownerId', '==', user.uid));
+    const qUpload = query(collection(db, 'uploadedData'), where('ownerId', '==', uid));
     const snapUpload = await getDocs(qUpload);
     if (!snapUpload.empty) {
       await deleteInBatches(snapUpload);
@@ -846,7 +928,7 @@ export const resetDatabase = async () => {
 
     // 3. Delete settings
     console.log("Deleting user settings...");
-    await deleteDoc(doc(db, 'settings', user.uid));
+    await deleteDoc(doc(db, 'settings', uid));
     
     console.log("Master reset completed successfully.");
   } catch (error) {
@@ -855,9 +937,9 @@ export const resetDatabase = async () => {
   }
 };
 
-export const importCustomersFromText = async (text: string) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const importCustomersFromText = async (text: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   const lines = text.split('\n');
   const customers: Omit<Customer, 'id' | 'ownerId'>[] = [];
   let currentCustomer: any = null;
@@ -894,7 +976,7 @@ export const importCustomersFromText = async (text: string) => {
   if (currentCustomer) customers.push(currentCustomer);
 
   // Query highest existing sequential ID
-  const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', user.uid));
+  const allCustQ = query(collection(db, 'customers'), where('ownerId', '==', uid));
   const allCustSnap = await getDocs(allCustQ);
   let nextSeq = 0;
   for (const docSnap of allCustSnap.docs) {
@@ -913,11 +995,13 @@ export const importCustomersFromText = async (text: string) => {
     for (const custData of chunk) {
       nextSeq += 1;
       const id = nextSeq.toString();
-      const docRef = doc(db, 'customers', id);
+      const docId = `${uid}_${id}`;
+      const docRef = doc(db, 'customers', docId);
       batch.set(docRef, {
         ...custData,
         id,
-        ownerId: user.uid,
+        docId,
+        ownerId: uid,
         createdAt: new Date().toISOString()
       });
     }
@@ -929,12 +1013,26 @@ export const importCustomersFromText = async (text: string) => {
   return customers.length;
 };
 
-export const subscribeToBillingAuditLogs = (callback: (logs: BillingAuditLog[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+// Zero-Trust Tenant Helper for Subscriptions
+function parseSubArgs<T>(
+  arg1: string | ((data: T) => void),
+  arg2?: ((data: T) => void) | string
+): { ownerId: string | null; callback: (data: T) => void } {
+  const explicitOwnerId = typeof arg1 === 'string' ? arg1 : (typeof arg2 === 'string' ? arg2 : null);
+  const callback = typeof arg1 === 'function' ? arg1 : (typeof arg2 === 'function' ? arg2 : (() => {}));
+  const ownerId = explicitOwnerId || auth.currentUser?.uid || null;
+  return { ownerId, callback };
+}
+
+export function subscribeToBillingAuditLogs(
+  arg1: string | ((logs: BillingAuditLog[]) => void),
+  arg2?: ((logs: BillingAuditLog[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<BillingAuditLog[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'billing_audit'),
-    where('ownerId', '==', user.uid)
+    where('ownerId', '==', ownerId)
   );
   return onSnapshot(q, (snapshot) => {
     const logsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillingAuditLog));
@@ -944,7 +1042,7 @@ export const subscribeToBillingAuditLogs = (callback: (logs: BillingAuditLog[]) 
     handleFirestoreError(error, OperationType.LIST, 'billing_audit');
     callback([]);
   });
-};
+}
 
 export const deleteAuditLog = async (logId: string) => {
   try {
@@ -954,11 +1052,11 @@ export const deleteAuditLog = async (logId: string) => {
   }
 };
 
-export const clearAllAuditLogs = async () => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const clearAllAuditLogs = async (explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
-    const q = query(collection(db, 'billing_audit'), where('ownerId', '==', user.uid));
+    const q = query(collection(db, 'billing_audit'), where('ownerId', '==', uid));
     const querySnapshot = await getDocs(q);
     const batchList = writeBatch(db);
     querySnapshot.docs.forEach((docSnap) => {
@@ -970,9 +1068,12 @@ export const clearAllAuditLogs = async () => {
   }
 };
 
-export const subscribeToCustomers = (callback: (customers: Customer[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToCustomers(
+  arg1: string | ((customers: Customer[]) => void),
+  arg2?: ((customers: Customer[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<Customer[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   
   const processDocs = (snapshot: any) => {
     return snapshot.docs.map((doc: any) => {
@@ -987,41 +1088,28 @@ export const subscribeToCustomers = (callback: (customers: Customer[]) => void) 
     });
   };
 
-  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
-  const targetOwnerId = (user.email === 'ksmotalkar@gmail.com' && user.uid !== primaryOwnerId) ? primaryOwnerId : user.uid;
-
   const q = query(
     collection(db, 'customers'), 
-    where('ownerId', '==', targetOwnerId)
+    where('ownerId', '==', ownerId)
   );
 
   return onSnapshot(q, (snapshot) => {
-    if (snapshot.empty && targetOwnerId !== primaryOwnerId) {
-      // Secondary fallback if current user has no customers yet
-      getDocs(query(collection(db, 'customers'), where('ownerId', '==', primaryOwnerId)))
-        .then(fallbackSnap => {
-          if (!fallbackSnap.empty) {
-            callback(processDocs(fallbackSnap));
-          } else {
-            callback([]);
-          }
-        })
-        .catch(() => callback([]));
-      return;
-    }
     callback(processDocs(snapshot));
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'customers');
     callback([]);
   });
-};
+}
 
-export const subscribeToTransactions = (callback: (transactions: Transaction[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToTransactions(
+  arg1: string | ((transactions: Transaction[]) => void),
+  arg2?: ((transactions: Transaction[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<Transaction[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'transactions'), 
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', ownerId),
     orderBy('date', 'desc'),
     limit(500)
   );
@@ -1032,12 +1120,15 @@ export const subscribeToTransactions = (callback: (transactions: Transaction[]) 
     handleFirestoreError(error, OperationType.LIST, 'transactions');
     callback([]);
   });
-};
+}
 
-export const subscribeToSettings = (callback: (settings: AppSettings | null) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
-  return onSnapshot(doc(db, 'settings', user.uid), (docSnap) => {
+export function subscribeToSettings(
+  arg1: string | ((settings: AppSettings | null) => void),
+  arg2?: ((settings: AppSettings | null) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<AppSettings | null>(arg1, arg2);
+  if (!ownerId) return () => {};
+  return onSnapshot(doc(db, 'settings', ownerId), (docSnap) => {
     if (docSnap.exists()) {
       const data = docSnap.data() as AppSettings;
       
@@ -1072,6 +1163,7 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
         metaWhatsAppPhoneNumberId: '',
         watiAccessToken: '',
         watiApiEndpoint: '',
+        organizationName: auth.currentUser?.email === 'ksmotalkar@gmail.com' ? 'Gram Panchayat GP. Jhanda Khurd' : 'Billing Workspace',
         automation: {
           billingLifecycle: true,
           ruleBased: true,
@@ -1080,11 +1172,11 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
           bulkProcessing: true,
           smartNotifications: true
         },
-        ownerId: user.uid
+        ownerId: ownerId
       });
     }
   }, (error) => {
-    handleFirestoreError(error, OperationType.GET, `settings/${user.uid}`);
+    handleFirestoreError(error, OperationType.GET, `settings/${ownerId}`);
     // VIP Launch Shield: Provide robust default settings on any connection delay or error
     callback({
       upiQrCodeImage: null,
@@ -1100,6 +1192,7 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
       metaWhatsAppPhoneNumberId: '',
       watiAccessToken: '',
       watiApiEndpoint: '',
+      organizationName: auth.currentUser?.email === 'ksmotalkar@gmail.com' ? 'Gram Panchayat GP. Jhanda Khurd' : 'Billing Workspace',
       automation: {
         billingLifecycle: true,
         ruleBased: true,
@@ -1108,29 +1201,35 @@ export const subscribeToSettings = (callback: (settings: AppSettings | null) => 
         bulkProcessing: true,
         smartNotifications: true
       },
-      ownerId: user.uid
+      ownerId: ownerId
     });
   });
-};
+}
 
-export const subscribeToUploadedData = (callback: (data: UploadedData[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
-  const q = query(collection(db, 'uploadedData'), where('ownerId', '==', user.uid));
+export function subscribeToUploadedData(
+  arg1: string | ((data: UploadedData[]) => void),
+  arg2?: ((data: UploadedData[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<UploadedData[]>(arg1, arg2);
+  if (!ownerId) return () => {};
+  const q = query(collection(db, 'uploadedData'), where('ownerId', '==', ownerId));
   return onSnapshot(q, (snapshot) => {
     const data = snapshot.docs.map(doc => doc.data() as UploadedData);
     callback(data);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'uploadedData');
   });
-};
+}
 
-export const subscribeToPendingReceipts = (callback: (receipts: any[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToPendingReceipts(
+  arg1: string | ((receipts: any[]) => void),
+  arg2?: ((receipts: any[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<any[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'payment_receipts'), 
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', ownerId),
     where('status', '==', 'Pending')
   );
   return onSnapshot(q, (snapshot) => {
@@ -1140,14 +1239,17 @@ export const subscribeToPendingReceipts = (callback: (receipts: any[]) => void) 
     handleFirestoreError(error, OperationType.LIST, 'payment_receipts');
     callback([]);
   });
-};
+}
 
-export const subscribeToComplaints = (callback: (complaints: Complaint[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToComplaints(
+  arg1: string | ((complaints: Complaint[]) => void),
+  arg2?: ((complaints: Complaint[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<Complaint[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'complaints'), 
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', ownerId),
     orderBy('createdAt', 'desc'),
     limit(200)
   );
@@ -1158,16 +1260,19 @@ export const subscribeToComplaints = (callback: (complaints: Complaint[]) => voi
     handleFirestoreError(error, OperationType.LIST, 'complaints');
     callback([]);
   });
-};
+}
 
-export const addReport = async (report: Omit<Report, 'id' | 'ownerId' | 'createdAt'>): Promise<Report> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const addReport = async (
+  report: Omit<Report, 'id' | 'ownerId' | 'createdAt'>,
+  explicitOwnerId?: string
+): Promise<Report> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   const newReport: Report = {
     ...report,
     id: `REP-${uuidv4().substring(0, 8).toUpperCase()}`,
     createdAt: new Date().toISOString(),
-    ownerId: user.uid,
+    ownerId: uid,
   };
   try {
     await setDoc(doc(db, 'reports', newReport.id), newReport);
@@ -1178,13 +1283,13 @@ export const addReport = async (report: Omit<Report, 'id' | 'ownerId' | 'created
   }
 };
 
-export const addReportFolder = async (name: string): Promise<ReportFolder> => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
+export const addReportFolder = async (name: string, explicitOwnerId?: string): Promise<ReportFolder> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   const newFolder: ReportFolder = {
     id: `FLD-${uuidv4().substring(0, 8).toUpperCase()}`,
     name,
-    ownerId: user.uid,
+    ownerId: uid,
     createdAt: new Date().toISOString()
   };
   try {
@@ -1196,7 +1301,9 @@ export const addReportFolder = async (name: string): Promise<ReportFolder> => {
   }
 };
 
-export const deleteReportFolder = async (id: string): Promise<void> => {
+export const deleteReportFolder = async (id: string, explicitOwnerId?: string): Promise<void> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
     await deleteDoc(doc(db, 'reportFolders', id));
   } catch (error) {
@@ -1205,12 +1312,15 @@ export const deleteReportFolder = async (id: string): Promise<void> => {
   }
 };
 
-export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToReportFolders(
+  arg1: string | ((folders: ReportFolder[]) => void),
+  arg2?: ((folders: ReportFolder[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<ReportFolder[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'reportFolders'), 
-    where('ownerId', '==', user.uid)
+    where('ownerId', '==', ownerId)
   );
   return onSnapshot(q, (snapshot) => {
     const folders = snapshot.docs.map(doc => doc.data() as ReportFolder);
@@ -1219,14 +1329,17 @@ export const subscribeToReportFolders = (callback: (folders: ReportFolder[]) => 
     handleFirestoreError(error, OperationType.LIST, 'reportFolders');
     callback([]);
   });
-};
+}
 
-export const subscribeToReports = (callback: (reports: Report[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToReports(
+  arg1: string | ((reports: Report[]) => void),
+  arg2?: ((reports: Report[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<Report[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'reports'), 
-    where('ownerId', '==', user.uid)
+    where('ownerId', '==', ownerId)
   );
   return onSnapshot(q, (snapshot) => {
     const reports = snapshot.docs.map(doc => doc.data() as Report);
@@ -1235,10 +1348,11 @@ export const subscribeToReports = (callback: (reports: Report[]) => void) => {
     handleFirestoreError(error, OperationType.LIST, 'reports');
     callback([]);
   });
-};
+}
 
-export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Rejected') => {
-  if (!auth.currentUser) return;
+export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Rejected', explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   try {
     await updateDoc(doc(db, 'payment_receipts', id), { status });
   } catch (error) {
@@ -1246,9 +1360,9 @@ export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Reje
   }
 };
 
-export const resolveComplaint = async (id: string, notify: boolean = false) => {
-  const user = auth.currentUser;
-  if (!user) return;
+export const resolveComplaint = async (id: string, notify: boolean = false, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + 6);
   try {
@@ -1267,7 +1381,7 @@ export const resolveComplaint = async (id: string, notify: boolean = false) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             complaintId: id,
-            ownerId: user.uid,
+            ownerId: uid,
             customerId: data.customerId
           })
         });
@@ -1278,8 +1392,9 @@ export const resolveComplaint = async (id: string, notify: boolean = false) => {
   }
 };
 
-export const updateComplaint = async (id: string, updates: Partial<Complaint>) => {
-  if (!auth.currentUser) return;
+export const updateComplaint = async (id: string, updates: Partial<Complaint>, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   try {
     await updateDoc(doc(db, 'complaints', id), updates);
   } catch (error) {
@@ -1287,8 +1402,9 @@ export const updateComplaint = async (id: string, updates: Partial<Complaint>) =
   }
 };
 
-export const deleteReport = async (id: string) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+export const deleteReport = async (id: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
     await deleteDoc(doc(db, 'reports', id));
   } catch (error) {
@@ -1296,8 +1412,9 @@ export const deleteReport = async (id: string) => {
   }
 };
 
-export const deleteComplaint = async (complaintId: string) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+export const deleteComplaint = async (complaintId: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
     const complaintRef = doc(db, 'complaints', complaintId);
     await deleteDoc(complaintRef);
@@ -1306,8 +1423,9 @@ export const deleteComplaint = async (complaintId: string) => {
   }
 };
 
-export const archiveComplaint = async (complaintId: string) => {
-  if (!auth.currentUser) throw new Error("Not authenticated");
+export const archiveComplaint = async (complaintId: string, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
     const complaintRef = doc(db, 'complaints', complaintId);
     const complaintSnap = await getDoc(complaintRef);
@@ -1323,7 +1441,6 @@ export const archiveComplaint = async (complaintId: string) => {
     });
     
     await deleteDoc(complaintRef);
-    
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `complaints/${complaintId}`);
   }
@@ -1344,50 +1461,41 @@ export interface ChatbotSettings {
   commands: ChatbotCommand[];
 }
 
-export const getChatbotSettings = async (): Promise<ChatbotSettings | null> => {
-  const user = auth.currentUser;
-  if (!user) return null;
-  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
+export const getChatbotSettings = async (explicitOwnerId?: string): Promise<ChatbotSettings | null> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return null;
   try {
-    let docSnap = await getDoc(doc(db, 'chatbotSettings', user.uid));
-    if (!docSnap.exists() && user.uid !== primaryOwnerId) {
-      docSnap = await getDoc(doc(db, 'chatbotSettings', primaryOwnerId));
-    }
+    const docSnap = await getDoc(doc(db, 'chatbotSettings', uid));
     if (docSnap.exists()) {
       return docSnap.data() as ChatbotSettings;
     }
     return null;
   } catch (error) {
-    handleFirestoreError(error, OperationType.GET, `chatbotSettings/${user.uid}`);
+    handleFirestoreError(error, OperationType.GET, `chatbotSettings/${uid}`);
     return null;
   }
 };
 
-export const saveChatbotSettings = async (settings: ChatbotSettings) => {
-  const user = auth.currentUser;
-  if (!user) throw new Error("Not authenticated");
-  const primaryOwnerId = '8n38K7tvJ3OHchV76zhbx6cjRa13';
+export const saveChatbotSettings = async (settings: ChatbotSettings, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
   try {
-    const docRef = doc(db, 'chatbotSettings', user.uid);
-    await setDoc(docRef, settings, { merge: true });
-    if (user.uid !== primaryOwnerId) {
-      try {
-        await setDoc(doc(db, 'chatbotSettings', primaryOwnerId), settings, { merge: true });
-      } catch (e) {
-        console.warn("Could not sync chatbotSettings to primary owner", e);
-      }
-    }
+    const docRef = doc(db, 'chatbotSettings', uid);
+    await setDoc(docRef, { ...settings, ownerId: uid }, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${user.uid}`);
+    handleFirestoreError(error, OperationType.WRITE, `chatbotSettings/${uid}`);
   }
 };
 
-export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToWhatsappMessages(
+  arg1: string | ((msgs: WhatsappMessage[]) => void),
+  arg2?: ((msgs: WhatsappMessage[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<WhatsappMessage[]>(arg1, arg2);
+  if (!ownerId) return () => {};
   const q = query(
     collection(db, 'whatsapp_messages'), 
-    where('ownerId', '==', user.uid),
+    where('ownerId', '==', ownerId),
     orderBy('timestamp', 'desc'),
     limit(100)
   );
@@ -1399,17 +1507,20 @@ export const subscribeToWhatsappMessages = (callback: (msgs: WhatsappMessage[]) 
     handleFirestoreError(error, OperationType.LIST, 'whatsapp_messages');
     callback([]);
   });
-};
+}
 
-export const addWhatsappMessageRecord = async (msg: Omit<WhatsappMessage, 'id' | 'ownerId'>) => {
-  const user = auth.currentUser;
-  if (!user) return;
+export const addWhatsappMessageRecord = async (
+  msg: Omit<WhatsappMessage, 'id' | 'ownerId'>,
+  explicitOwnerId?: string
+) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   try {
     const docRef = doc(collection(db, 'whatsapp_messages'));
     const fullMsg: WhatsappMessage = {
       ...msg,
       id: docRef.id,
-      ownerId: user.uid,
+      ownerId: uid,
     };
     await setDoc(docRef, fullMsg);
     return fullMsg;
@@ -1430,19 +1541,25 @@ export interface AutomationError {
   ownerId: string;
 }
 
-export const logAutomationError = async (errorInfo: Omit<AutomationError, 'id' | 'timestamp' | 'resolved' | 'ownerId'>) => {
+export const logAutomationError = async (
+  errorInfo: Omit<AutomationError, 'id' | 'timestamp' | 'resolved' | 'ownerId'>,
+  explicitOwnerId?: string
+) => {
   // Use simple logs method to prevent DB writes
   const msg = `[AutomationError] Type: ${errorInfo.type}, Customer: ${errorInfo.customerName} (${errorInfo.customerId}) - ${errorInfo.errorMessage}`;
   console.error(msg);
 };
 
-export const subscribeToAutomationErrors = (callback: (errors: AutomationError[]) => void) => {
-  const user = auth.currentUser;
-  if (!user) return () => {};
+export function subscribeToAutomationErrors(
+  arg1: string | ((errors: AutomationError[]) => void),
+  arg2?: ((errors: AutomationError[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<AutomationError[]>(arg1, arg2);
+  if (!ownerId) return () => {};
 
   const q = query(
     collection(db, 'automation_errors'),
-    where('ownerId', '==', user.uid)
+    where('ownerId', '==', ownerId)
   );
 
   return onSnapshot(q, (snapshot) => {
@@ -1453,9 +1570,11 @@ export const subscribeToAutomationErrors = (callback: (errors: AutomationError[]
     handleFirestoreError(error, OperationType.LIST, 'automation_errors');
     callback([]);
   });
-};
+}
 
-export const resolveAutomationError = async (id: string, notify: boolean = false) => {
+export const resolveAutomationError = async (id: string, notify: boolean = false, explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return;
   try {
     await updateDoc(doc(db, 'automation_errors', id), { resolved: true });
   } catch (error) {

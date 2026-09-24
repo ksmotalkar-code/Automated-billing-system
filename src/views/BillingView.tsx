@@ -4,6 +4,7 @@ import { FileText, Search, Play, Download, MessageCircle, Settings, X, Upload, C
 import { motion, AnimatePresence } from "motion/react";
 import { Customer, saveSettings, AppSettings, updateCustomer, saveBillingAuditLog } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
 import { generateInvoicePDF, sendWhatsAppNotification, generateEscalationPDF, runAutomationCycle } from "../lib/automation";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -16,6 +17,7 @@ import { uploadImageToStorage } from "../lib/storage";
 export function BillingView() {
   const { t } = useTranslation();
   const { customers, settings } = useData();
+  const { currentOwnerId } = useTenant();
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 100;
@@ -160,9 +162,10 @@ export function BillingView() {
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const storageUrl = await uploadImageToStorage(file, 'qr-codes', auth.currentUser?.uid);
-        const newSettings = { ...settings, upiQrCodeImage: storageUrl } as AppSettings;
-        await saveSettings(newSettings);
+        const uid = currentOwnerId || auth.currentUser?.uid;
+        const storageUrl = await uploadImageToStorage(file, 'qr-codes', uid);
+        const newSettings = { ...settings, upiQrCodeImage: storageUrl, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) } as AppSettings;
+        await saveSettings(newSettings, currentOwnerId);
       } catch (err) {
         console.error("Storage upload failed for UPI QR:", err);
         showAlert("Upload Error", "Failed to upload QR code to Google Cloud Storage. Please verify storage configuration.");
@@ -193,7 +196,12 @@ export function BillingView() {
        showAlert("Sending Failed", `Could not send notification: ${result.error}`);
     } else {
        // Mark as sent
-       await updateCustomer({ ...customer, invoiceSent: true, paymentNotified: true });
+       await updateCustomer({ 
+         ...customer, 
+         invoiceSent: true, 
+         paymentNotified: true,
+         ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+       }, false, undefined, currentOwnerId);
        showAlert("Success", "Notification sent successfully!");
     }
   };
@@ -404,7 +412,12 @@ export function BillingView() {
           
           const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode, true, 'receipt');
           if (result.success) {
-             batch.update(doc(db, 'customers', customer.id), { invoiceSent: true, paymentNotified: true });
+             const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+             batch.update(doc(db, 'customers', targetDocId), { 
+               invoiceSent: true, 
+               paymentNotified: true,
+               ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+             });
              updatesSkipped++;
 
              if (updatesSkipped % 100 === 0) {
@@ -483,9 +496,11 @@ export function BillingView() {
           const batch = writeBatch(db);
           const chunk = activeCustomers.slice(i, i + 400);
           for (const customer of chunk) {
-            batch.update(doc(db, 'customers', customer.id), { 
+            const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+            batch.update(doc(db, 'customers', targetDocId), { 
               balance: customer.balance + settings.billingAmount,
-              invoiceSent: false
+              invoiceSent: false,
+              ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
             });
             processedCount++;
             totalBilled += settings.billingAmount;
@@ -499,16 +514,17 @@ export function BillingView() {
           await new Promise(resolve => setTimeout(resolve, 800));
         }
         
-        if (processedCount > 0 && auth.currentUser) {
+        const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid;
+        if (processedCount > 0 && effectiveOwnerId) {
           await saveBillingAuditLog({
-            ownerId: auth.currentUser.uid,
+            ownerId: effectiveOwnerId,
             type: 'bill_generation',
             description: 'Manual Bulk Bill Generation',
             affectedCustomersCount: processedCount,
             totalAmount: totalBilled,
             timestamp: new Date().toISOString(),
             executedBy: 'admin'
-          });
+          }, effectiveOwnerId);
         }
         
         showAlert("Success", "Billing cycle completed successfully!");
@@ -531,8 +547,10 @@ export function BillingView() {
           const batch = writeBatch(db);
           const chunk = activeCustomers.slice(i, i + 400);
           for (const customer of chunk) {
-            batch.update(doc(db, 'customers', customer.id), { 
-              balance: customer.balance + settings.penaltyAmount 
+            const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+            batch.update(doc(db, 'customers', targetDocId), { 
+              balance: customer.balance + settings.penaltyAmount,
+              ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
             });
             processedCount++;
             totalPenalties += settings.penaltyAmount;
@@ -546,16 +564,17 @@ export function BillingView() {
           await new Promise(resolve => setTimeout(resolve, 800));
         }
         
-        if (processedCount > 0 && auth.currentUser) {
+        const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid;
+        if (processedCount > 0 && effectiveOwnerId) {
           await saveBillingAuditLog({
-            ownerId: auth.currentUser.uid,
+            ownerId: effectiveOwnerId,
             type: 'penalty_application',
             description: 'Manual Bulk Penalty Application',
             affectedCustomersCount: processedCount,
             totalAmount: totalPenalties,
             timestamp: new Date().toISOString(),
             executedBy: 'admin'
-          });
+          }, effectiveOwnerId);
         }
         
         showAlert("Success", "Penalties applied successfully!");
@@ -603,8 +622,9 @@ export function BillingView() {
         await updateCustomer({
           ...scanningForCustomer,
           balance: newBalance,
-          lastMeterReading: currentReading
-        });
+          lastMeterReading: currentReading,
+          ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+        }, false, undefined, currentOwnerId);
         
         showAlert("Success", "Meter reading recorded and balance updated!");
         setScanningForCustomer(null);
@@ -741,12 +761,13 @@ export function BillingView() {
                       <td className="px-4 py-4">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                           customer.status === 'Suspended' ? 'bg-red-200 text-red-900 border border-red-500 font-bold tracking-wider' :
+                          customer.status === 'Advance Paid' ? 'bg-blue-100 text-blue-800 border border-blue-400 font-bold tracking-wider' :
                           status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 
                           status === 'Paid & Sent' ? 'bg-blue-100 text-blue-700' :
                           status === 'Overdue' ? 'bg-red-100 text-red-700' :
                           'bg-amber-100 text-amber-700'
                         }`}>
-                          {customer.status === 'Suspended' ? 'SUSPENDED' : status}
+                          {customer.status === 'Suspended' ? 'SUSPENDED' : customer.status === 'Advance Paid' ? 'ADVANCE PAID' : status}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs neu-text-muted">{formattedDueDate}</td>

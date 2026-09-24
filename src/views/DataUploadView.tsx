@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
 import { saveUploadedData, importCustomersFromText } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { db, auth } from '../firebase';
 import { disableNetwork, writeBatch, doc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
@@ -14,6 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 export function DataUploadView() {
   const { t } = useTranslation();
   const { customers } = useData();
+  const { currentOwnerId } = useTenant();
   const [file, setFile] = useState<File | null>(null);
   const [parsedData, setParsedData] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
@@ -242,20 +244,28 @@ export function DataUploadView() {
         statusStr.includes('tamper') || 
         statusStr.includes('error');
 
-      let finalStatus: 'Active' | 'Suspended' | 'Faulty' = 'Active';
+      const isAdvancePaid = 
+        statusStr.includes('advance') || 
+        statusStr.includes('prepaid') || 
+        statusStr.includes('advance paid');
+
+      let finalStatus: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = 'Active';
       if (isFaulty) {
         finalStatus = 'Faulty';
       } else if (isSuspended) {
         finalStatus = 'Suspended';
+      } else if (isAdvancePaid) {
+        finalStatus = 'Advance Paid';
       }
 
+      const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid || '';
       return {
         id: assignedId,
         name: name,
         mobileNumber: mobile,
         balance: balance,
         status: finalStatus,
-        ownerId: auth.currentUser?.uid,
+        ownerId: effectiveOwnerId,
         createdAt: new Date().toISOString()
       };
     }).filter(c => c.name && c.name !== "undefined");
@@ -374,13 +384,14 @@ export function DataUploadView() {
       const assignedId = nextTextSeq.toString();
       usedIdSet.add(assignedId);
       
+      const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid || '';
       return {
         id: assignedId,
         name: r.name,
         mobileNumber: mobile,
         balance: 0,
         status: status,
-        ownerId: auth.currentUser?.uid,
+        ownerId: effectiveOwnerId,
         createdAt: new Date().toISOString()
       };
     });
@@ -410,12 +421,18 @@ export function DataUploadView() {
     setIsUploading(true);
     try {
       const batchLimit = 200; // Lowered batch limit to prevent Firestore timeouts
+      const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid || '';
       for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const chunk = stagingCustomers.slice(i, i + batchLimit);
         const batch = writeBatch(db);
         for (const customer of chunk) {
-          const docRef = doc(db, 'customers', customer.id);
-          batch.set(docRef, customer);
+          const docId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
+          const docRef = doc(db, 'customers', docId);
+          batch.set(docRef, {
+            ...customer,
+            docId,
+            ownerId: effectiveOwnerId
+          });
         }
         await batch.commit();
         // Add a small delay between batches to allow network to flush

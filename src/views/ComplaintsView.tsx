@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Complaint, resolveComplaint, deleteComplaint, updateComplaint } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { motion } from "motion/react";
 import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
   const { complaints } = useData();
+  const { currentOwnerId } = useTenant();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Resolved'>('All');
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmConfig, setConfirmConfig] = useState({
@@ -40,7 +42,7 @@ export function ComplaintsView() {
       isDestructive: true,
       onConfirm: async () => {
         try {
-          await deleteComplaint(c.id);
+          await deleteComplaint(c.id, currentOwnerId || undefined);
         } catch(e) {
           // ignore or handle
         }
@@ -59,7 +61,7 @@ export function ComplaintsView() {
       onConfirm: async () => {
         try {
           for (const c of resolved) {
-            await deleteComplaint(c.id);
+            await deleteComplaint(c.id, currentOwnerId || undefined);
           }
         } catch(e) {
           // ignore or handle
@@ -159,7 +161,7 @@ export function ComplaintsView() {
                     <div className="flex flex-col items-end gap-1.5 mr-2">
                       <select 
                         value={c.category || ''} 
-                        onChange={(e) => updateComplaint(c.id, { category: e.target.value })}
+                        onChange={(e) => updateComplaint(c.id, { category: e.target.value }, currentOwnerId || undefined)}
                         className="text-[10px] bg-slate-100 border-none rounded-md px-2 py-1 font-bold text-slate-600 focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer"
                       >
                         <option value="">No Category</option>
@@ -174,7 +176,7 @@ export function ComplaintsView() {
                       </select>
                       <select 
                         value={c.priority || ''} 
-                        onChange={(e) => updateComplaint(c.id, { priority: e.target.value as any })}
+                        onChange={(e) => updateComplaint(c.id, { priority: e.target.value as any }, currentOwnerId || undefined)}
                         className={`text-[10px] border-none rounded-md px-2 py-1 font-bold focus:ring-1 focus:ring-blue-400 outline-none cursor-pointer ${
                           c.priority === 'High' ? 'bg-rose-100 text-rose-700' :
                           c.priority === 'Medium' ? 'bg-amber-100 text-amber-700' :
@@ -209,7 +211,7 @@ export function ComplaintsView() {
                       <button 
                         onClick={async () => {
                           try {
-                            await resolveComplaint(c.id, false);
+                            await resolveComplaint(c.id, false, currentOwnerId || undefined);
                           } catch (e: any) {
                             showAlert("Resolution Error", "Failed to resolve complaint. " + (e.message?.includes('Quota') ? "Quota exceeded." : ""));
                           }
@@ -221,7 +223,7 @@ export function ComplaintsView() {
                       <button 
                         onClick={async () => {
                           try {
-                            await resolveComplaint(c.id, true);
+                            await resolveComplaint(c.id, true, currentOwnerId || undefined);
                           } catch (e: any) {
                             showAlert("Resolution Error", "Failed to resolve complaint. " + (e.message?.includes('Quota') ? "Quota exceeded." : ""));
                           }

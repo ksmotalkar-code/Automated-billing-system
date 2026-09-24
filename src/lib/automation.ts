@@ -194,8 +194,8 @@ export const sendWhatsAppNotification = async (
   templateParams?: any[],
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
-  if (customer.status === 'Suspended') {
-    return { success: false, error: "Customer is suspended. Notifications are disabled for suspended accounts." };
+  if (customer.status === 'Suspended' || customer.status === 'Advance Paid') {
+    return { success: false, error: `Customer status is "${customer.status}". Automated billing notifications are disabled for this account.` };
   }
   if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
     console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
@@ -352,6 +352,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   try {
     const { automation } = settings;
     const now = new Date();
+    const effectiveOwnerId = settings.ownerId || auth.currentUser?.uid;
     
     const localLastBillingSafe = localStorage.getItem(`automation_billing_${settings.ownerId || 'sys'}`);
     const localLastPenaltySafe = localStorage.getItem(`automation_penalty_${settings.ownerId || 'sys'}`);
@@ -387,7 +388,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         
         for (const customer of chunk) {
           const newBalance = customer.balance + settings.billingAmount;
-          batch.update(doc(db, 'customers', customer.id), {
+          const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
+          batch.update(doc(db, 'customers', targetDocId), {
             balance: newBalance,
             invoiceSent: false,
             paymentNotified: false
@@ -425,10 +427,10 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
       }
 
-      if (processedCount > 0 && auth.currentUser) {
+      if (processedCount > 0 && effectiveOwnerId) {
         try {
           await saveBillingAuditLog({
-            ownerId: auth.currentUser.uid,
+            ownerId: effectiveOwnerId,
             type: 'bill_generation',
             description: 'Automated Billing Cycle',
             affectedCustomersCount: processedCount,
@@ -458,7 +460,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       const chunk = activeCustomers.slice(i, i + 200);
 
       for (const customer of chunk) {
-        batch.update(doc(db, 'customers', customer.id), {
+        const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
+        batch.update(doc(db, 'customers', targetDocId), {
           balance: customer.balance + settings.penaltyAmount
         });
         processedCount++;
@@ -492,10 +495,10 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
     
-    if (processedCount > 0 && auth.currentUser) {
+    if (processedCount > 0 && effectiveOwnerId) {
       try {
         await saveBillingAuditLog({
-          ownerId: auth.currentUser.uid,
+          ownerId: effectiveOwnerId,
           type: 'penalty_application',
           description: 'Automated Late Fee Penalty',
           affectedCustomersCount: processedCount,
@@ -520,7 +523,8 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       const chunk = suspendedCustomers.slice(i, i + 200);
       
       for (const customer of chunk) {
-         batch.update(doc(db, 'customers', customer.id), { status: 'Suspended' });
+         const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
+         batch.update(doc(db, 'customers', targetDocId), { status: 'Suspended' });
          suspendProcessedCount++;
          
          if (automation.bulkProcessing) {
@@ -552,10 +556,10 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
       await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
     }
     
-    if (suspendProcessedCount > 0 && auth.currentUser) {
+    if (suspendProcessedCount > 0 && effectiveOwnerId) {
       try {
         await saveBillingAuditLog({
-          ownerId: auth.currentUser.uid,
+          ownerId: effectiveOwnerId,
           type: 'auto_suspend',
           description: 'Automated Account Suspension',
           affectedCustomersCount: suspendProcessedCount,
@@ -691,9 +695,9 @@ export const generateEscalationPDF = (customer: Customer, settings: AppSettings)
   
   // Company Info
   doc.setFontSize(12);
-  doc.text('Gram Panchayat GP. Jhanda Khurd', 20, 45);
+  doc.text(settings.organizationName || 'Billing Authority Office', 20, 45);
   doc.setFontSize(10);
-  doc.text('Office of the Sarpanch', 20, 50);
+  doc.text('Administrative Billing Department', 20, 50);
   doc.text('Email: info@gpjhandakhurd.in', 20, 55);
   
   // Customer Info

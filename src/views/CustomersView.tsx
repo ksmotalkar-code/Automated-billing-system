@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { sendWhatsAppNotification } from "../lib/automation";
@@ -62,9 +63,19 @@ const CustomerTableRow = React.memo(({
       <td className="px-4 py-4">
         <div className="flex flex-col gap-1">
           <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 w-fit ${
-            customer.status === 'Active' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-red-500/10 text-red-600 border border-red-500/20'
+            customer.status === 'Active' 
+              ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+              : customer.status === 'Advance Paid'
+              ? 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
+              : 'bg-red-500/10 text-red-600 border border-red-500/20'
           }`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${customer.status === 'Active' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              customer.status === 'Active' 
+                ? 'bg-emerald-500' 
+                : customer.status === 'Advance Paid'
+                ? 'bg-blue-500'
+                : 'bg-red-500'
+            }`} />
             {customer.status}
           </span>
           {customer.status === 'Faulty' && (
@@ -159,9 +170,19 @@ const CustomerMobileCard = React.memo(({
             </div>
          </div>
          <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-widest uppercase flex items-center gap-1.5 flex-shrink-0 ${
-           customer.status === 'Active' ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' : 'bg-red-500/10 text-red-600 border border-red-500/20'
+           customer.status === 'Active' 
+             ? 'bg-emerald-500/10 text-emerald-600 border border-emerald-500/20' 
+             : customer.status === 'Advance Paid'
+             ? 'bg-blue-500/10 text-blue-600 border border-blue-500/20'
+             : 'bg-red-500/10 text-red-600 border border-red-500/20'
          }`}>
-           <span className={`w-1.5 h-1.5 rounded-full ${customer.status === 'Active' ? 'bg-emerald-500' : 'bg-red-50'}`} />
+           <span className={`w-1.5 h-1.5 rounded-full ${
+             customer.status === 'Active' 
+               ? 'bg-emerald-500' 
+               : customer.status === 'Advance Paid'
+               ? 'bg-blue-500'
+               : 'bg-red-500'
+           }`} />
            {customer.status}
          </span>
       </div>
@@ -205,6 +226,7 @@ const CustomerMobileCard = React.memo(({
 export function CustomersView() {
   const { t } = useTranslation();
   const { customers, settings } = useData();
+  const { currentOwnerId } = useTenant();
   const [searchQuery, setSearchQuery] = useState("");
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -220,7 +242,7 @@ export function CustomersView() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [showFaultyOnly, setShowFaultyOnly] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Suspended'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Suspended' | 'Advance Paid'>('all');
   const [isImporting, setIsImporting] = useState(false);
   const [isResequencing, setIsResequencing] = useState(false);
   const [isSavingUser, setIsSavingUser] = useState(false);
@@ -407,13 +429,14 @@ export function CustomersView() {
             finalStatus = 'Suspended';
           }
 
+          const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid || '';
           return {
               id: assignedId,
               name,
               mobileNumber,
               balance,
               status: finalStatus,
-              ownerId: auth.currentUser?.uid,
+              ownerId: effectiveOwnerId,
               createdAt: new Date().toISOString()
           };
       });
@@ -431,12 +454,18 @@ export function CustomersView() {
     setIsImporting(true);
     try {
       const batchLimit = 200;
+      const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid || '';
       for (let i = 0; i < stagingCustomers.length; i += batchLimit) {
         const batch = writeBatch(db);
         const chunk = stagingCustomers.slice(i, i + batchLimit);
         for (const customer of chunk) {
-          const docRef = doc(db, 'customers', customer.id);
-          batch.set(docRef, customer);
+          const docId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
+          const docRef = doc(db, 'customers', docId);
+          batch.set(docRef, {
+            ...customer,
+            docId,
+            ownerId: effectiveOwnerId
+          });
         }
         try {
           await batch.commit();
@@ -571,40 +600,46 @@ export function CustomersView() {
       return;
     }
 
-    let finalStatus = newCustomer.status;
-    const cleanMobileNew = newCustomer.mobileNumber ? newCustomer.mobileNumber.replace(/\D/g, '') : '';
-    if (!cleanMobileNew || cleanMobileNew.length < 10 || cleanMobileNew === '0000000000') {
-      if (newCustomer.mobileNumber && newCustomer.mobileNumber.length > 0 && !/^\d{10}$/.test(newCustomer.mobileNumber)) {
-        showAlert("Validation Error", "Mobile number must be exactly 10 digits if provided.");
-        return;
-      }
-      finalStatus = 'Suspended';
-    }
-    
-    if (newCustomer.balance < 0) {
-      showAlert("Validation Error", "Balance cannot be negative.");
+    const rawMobile = newCustomer.mobileNumber ? String(newCustomer.mobileNumber).replace(/\D/g, '') : '';
+    const cleanMobileNew = rawMobile.length >= 10 ? rawMobile.slice(-10) : rawMobile;
+
+    if (newCustomer.mobileNumber && newCustomer.mobileNumber.trim().length > 0 && cleanMobileNew.length !== 10) {
+      showAlert("Validation Error", "Mobile number must be a valid 10-digit number (e.g. 9876543210).");
       return;
     }
 
+    let finalStatus = newCustomer.status || 'Active';
+
     setIsSavingUser(true);
-    addCustomer({ ...newCustomer, id: assignedId, status: finalStatus }, customers).then(() => {
+    try {
+      const added = await addCustomer({ 
+        ...newCustomer, 
+        id: assignedId, 
+        mobileNumber: cleanMobileNew,
+        status: finalStatus, 
+        balance: Number(newCustomer.balance) || 0,
+        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+      }, customers, currentOwnerId || undefined);
+
       // Send Welcome Message
       if (settings && settings.automation && finalStatus === 'Active') {
-         let message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
-         sendWhatsAppNotification({...newCustomer, id: assignedId, status: finalStatus} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
+        const message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
+        sendWhatsAppNotification({...added} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
       }
-    }).catch((err: any) => {
+
+      setIsAddModalOpen(false);
+      setNewCustomer({ id: "", name: "", mobileNumber: "", status: "Active", balance: 0 });
+      showAlert("Success", `Customer #${assignedId} (${added.name}) added successfully.`);
+    } catch (err: any) {
       if (err.message && err.message.includes('Quota')) {
         showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
       } else {
         showAlert("Error", err.message || "Failed to add customer to remote server.");
         console.error("Failed to add customer to remote server:", err);
       }
-    });
-    setIsAddModalOpen(false);
-    setNewCustomer({ id: "", name: "", mobileNumber: "", status: "Active", balance: 0 });
-    setCurrentPage(1);
-    setIsSavingUser(false);
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   const handleUpdateCustomer = async (e: React.FormEvent) => {
@@ -625,25 +660,23 @@ export function CustomersView() {
       }
 
       const cleanMobileUpdate = editingCustomer.mobileNumber ? editingCustomer.mobileNumber.replace(/\D/g, '') : '';
-      const isMobileInvalid = !cleanMobileUpdate || cleanMobileUpdate.length < 10 || cleanMobileUpdate === '0000000000';
-      const isNameInvalid = !editingCustomer.name || typeof editingCustomer.name !== 'string' || editingCustomer.name.trim() === '';
-
-      let finalStatus = editingCustomer.status;
-      if (isMobileInvalid || isNameInvalid) {
-        finalStatus = 'Suspended';
-      } else if (editingCustomer.status === 'Suspended' && !isMobileInvalid && !isNameInvalid) {
-        finalStatus = 'Active';
+      if (editingCustomer.mobileNumber && editingCustomer.mobileNumber.length > 0 && !/^\d{10}$/.test(cleanMobileUpdate)) {
+        showAlert("Validation Error", "Mobile number must be a valid 10-digit number if provided.");
+        return;
       }
 
+      const finalStatus = editingCustomer.status || 'Active';
       const originalCustomer = customers.find(c => c.id === originalEditingCustomerId || c.id === targetId);
       const statusChanged = originalCustomer && originalCustomer.status !== finalStatus;
 
-      if (editingCustomer.balance < 0) {
-        showAlert("Validation Error", "Balance cannot be negative.");
-        return;
-      }
       setIsSavingUser(true);
-      updateCustomer({...editingCustomer, id: targetId, status: finalStatus}, false, originalEditingCustomerId).catch((err: any) => {
+      updateCustomer({
+        ...editingCustomer, 
+        id: targetId, 
+        status: finalStatus, 
+        balance: Number(editingCustomer.balance) || 0,
+        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+      }, false, originalEditingCustomerId, currentOwnerId).catch((err: any) => {
         if (err.message && err.message.includes('Quota')) {
           showAlert("Database Quota Exceeded", "Your Firebase database quota limit has been reached. Please check your billing or usage: https://console.firebase.google.com");
         } else {
@@ -674,7 +707,11 @@ export function CustomersView() {
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        updateCustomer({...customer, status: newStatus}).catch(err => {
+        updateCustomer({
+          ...customer, 
+          status: newStatus,
+          ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+        }, false, undefined, currentOwnerId).catch(err => {
           showAlert("Error", "Failed to change status on remote server. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
         });
         if (settings && settings.automation) {
@@ -710,7 +747,7 @@ export function CustomersView() {
       onConfirm: async () => {
         setIsDeletingAll(true);
         try {
-          await deleteAllCustomers();
+          await deleteAllCustomers(currentOwnerId || undefined);
           showAlert("Success", "All customers have been deleted.");
         } catch (error) {
           console.error("Error deleting all customers:", error);
@@ -732,7 +769,7 @@ export function CustomersView() {
       onConfirm: async () => {
         setIsResequencing(true);
         try {
-          const res = await resequenceAllCustomers();
+          const res = await resequenceAllCustomers(currentOwnerId || undefined);
           showAlert("Re-sequence Complete", `Successfully re-sequenced ${res.total} customer IDs into a clean 1-to-${res.total} digital sequence (${res.updated} IDs updated).`);
         } catch (error: any) {
           console.error("Error resequencing customers:", error);
@@ -753,7 +790,11 @@ export function CustomersView() {
       showCancel: true,
       onConfirm: async () => {
         try {
-          await deleteCustomersBatch(selectedIds);
+          const batchItems = selectedIds.map(id => {
+            const c = customers.find(x => x.id === id);
+            return { id, docId: c?.docId };
+          });
+          await deleteCustomersBatch(batchItems, currentOwnerId || undefined);
           setSelectedIds([]);
         } catch (err: any) {
           showAlert("Error", "Failed to delete customers. " + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
@@ -762,25 +803,30 @@ export function CustomersView() {
     });
   };
 
-  const handleUpdateStatusBatch = (status: 'Active' | 'Suspended') => {
+  const handleUpdateStatusBatch = (status: 'Active' | 'Suspended' | 'Advance Paid') => {
     setConfirmConfig({
       isOpen: true,
-      title: `${status === 'Active' ? 'Activate' : 'Suspend'} Selected Customers`,
+      title: `Set ${status} for Selected Customers`,
       message: `Are you sure you want to mark ${selectedIds.length} customers as ${status}?`,
       isDestructive: status === 'Suspended',
       showCancel: true,
       onConfirm: async () => {
         try {
-          await updateCustomersBatchStatus(selectedIds, status);
+          const batchItems = selectedIds.map(id => {
+            const c = customers.find(x => x.id === id);
+            return { id, docId: c?.docId };
+          });
+          await updateCustomersBatchStatus(batchItems, status, currentOwnerId || undefined);
           setSelectedIds([]);
         } catch (err: any) {
-          showAlert("Error", `Failed to ${status === 'Active' ? 'activate' : 'suspend'} customers. ` + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
+          showAlert("Error", `Failed to set ${status} for customers. ` + (err.message?.includes('Quota') ? "Database quota exceeded." : ""));
         }
       }
     });
   };
 
   const handleDeleteSingle = (id: string) => {
+    const targetCustomer = customers.find(c => c.id === id);
     setConfirmConfig({
       isOpen: true,
       title: "Delete Customer",
@@ -789,7 +835,7 @@ export function CustomersView() {
       showCancel: true,
       onConfirm: async () => {
         try {
-          await deleteCustomer(id);
+          await deleteCustomer(id, targetCustomer?.docId, currentOwnerId || undefined);
           setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
           setIsEditModalOpen(false);
           setEditingCustomer(null);
@@ -820,7 +866,7 @@ export function CustomersView() {
     setIsGeneratingLink(true);
 
     try {
-      const link = await createPortalLink(customer, settings);
+      const link = await createPortalLink(customer, settings, currentOwnerId || undefined);
       const text = `Hi ${customer.name},\nHere is your secure portal link to view your invoice, generate QR and pay online:\n\n${link}\n\nThank you!`;
       setNotifyMessage(text);
     } catch(err: any) {
@@ -1029,7 +1075,7 @@ export function CustomersView() {
           }
 
           setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
-          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1000 : 3500));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500));
         }
 
         setIsSendingNotify(false);
@@ -1166,6 +1212,12 @@ export function CustomersView() {
                 className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-emerald-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 hover:bg-emerald-600 transition-colors"
               >
                 Activate
+              </button>
+              <button 
+                onClick={() => handleUpdateStatusBatch('Advance Paid')}
+                className="flex-1 sm:flex-none flex justify-center items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-blue-500/20 hover:bg-blue-700 transition-colors"
+              >
+                Advance Paid
               </button>
               <button 
                 onClick={() => handleUpdateStatusBatch('Suspended')}
@@ -1319,20 +1371,34 @@ export function CustomersView() {
                 <span>{showFaultyOnly ? 'Conflict View' : 'All Valid'}</span>
               </motion.button>
 
-              <div className="flex p-1 neu-pressed rounded-2xl">
+              <div className="flex p-1 neu-pressed rounded-2xl flex-wrap gap-1">
                 <motion.button 
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setFilterStatus('all')}
-                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'all' && !showFaultyOnly ? 'neu-flat bg-[var(--accent)] text-white' : 'neu-text-muted opacity-60'}`}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'all' && !showFaultyOnly ? 'neu-flat bg-[var(--accent)] text-white' : 'neu-text-muted opacity-60'}`}
                 >
                   All
                 </motion.button>
                 <motion.button 
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setFilterStatus('Active')}
-                  className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'Active' ? 'neu-flat bg-emerald-500 text-white' : 'neu-text-muted opacity-60'}`}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'Active' ? 'neu-flat bg-emerald-500 text-white' : 'neu-text-muted opacity-60'}`}
                 >
                   Active
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setFilterStatus('Advance Paid')}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'Advance Paid' ? 'neu-flat bg-blue-500 text-white' : 'neu-text-muted opacity-60'}`}
+                >
+                  Advance Paid
+                </motion.button>
+                <motion.button 
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => setFilterStatus('Suspended')}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${filterStatus === 'Suspended' ? 'neu-flat bg-red-500 text-white' : 'neu-text-muted opacity-60'}`}
+                >
+                  Suspended
                 </motion.button>
               </div>
             </div>
@@ -1504,7 +1570,6 @@ export function CustomersView() {
                     </span>
                     <input 
                       type="text" 
-                      required
                       value={newCustomer.id || ""}
                       onChange={e => setNewCustomer({...newCustomer, id: e.target.value.trim()})}
                       className={`w-full pl-8 pr-4 py-2 neu-pressed rounded-xl outline-none font-mono font-bold text-sm ${
@@ -1521,7 +1586,7 @@ export function CustomersView() {
                     </p>
                   ) : (
                     <p className="text-[10px] neu-text-muted mt-1">
-                      Sequential digital ID is auto-assigned. You can customize this ID if needed.
+                      Sequential digital ID is auto-assigned if left blank. You can customize this ID if needed.
                     </p>
                   )}
                 </div>
@@ -1542,12 +1607,10 @@ export function CustomersView() {
                   <label className="block text-sm font-medium mb-1">{t('Mobile Number')}</label>
                   <input 
                     type="tel" 
-                    required
-                    pattern="[0-9]{10}"
                     value={newCustomer.mobileNumber}
                     onChange={e => setNewCustomer({...newCustomer, mobileNumber: e.target.value})}
                     className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50"
-                    placeholder="10-digit mobile number"
+                    placeholder="10-digit mobile number (e.g. 9876543210)"
                   />
                 </div>
 
@@ -1560,6 +1623,7 @@ export function CustomersView() {
                       className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent"
                     >
                       <option value="Active">Active</option>
+                      <option value="Advance Paid">Advance Paid</option>
                       <option value="Suspended">Suspended</option>
                     </select>
                   </div>
@@ -1688,6 +1752,7 @@ export function CustomersView() {
                       className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent"
                     >
                       <option value="Active">Active</option>
+                      <option value="Advance Paid">Advance Paid</option>
                       <option value="Suspended">Suspended</option>
                     </select>
                   </div>
@@ -1897,10 +1962,13 @@ export function CustomersView() {
                                   ? 'bg-emerald-500/10 text-emerald-700 border-emerald-500/30' 
                                   : c.status === 'Suspended'
                                   ? 'bg-red-500/10 text-red-700 border-red-500/30'
+                                  : c.status === 'Advance Paid'
+                                  ? 'bg-purple-500/10 text-purple-700 border-purple-500/30'
                                   : 'bg-amber-500/10 text-amber-700 border-amber-500/30'
                               }`}
                             >
                               <option value="Active">Active</option>
+                              <option value="Advance Paid">Advance Paid</option>
                               <option value="Suspended">Suspended</option>
                               <option value="Faulty">Faulty</option>
                             </select>

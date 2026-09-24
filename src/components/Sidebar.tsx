@@ -21,6 +21,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { useTranslation } from "react-i18next";
 import { usePWAInstall } from "../hooks/usePWAInstall";
 import { Download } from "lucide-react";
+import { useData } from "../contexts/DataContext";
 
 export const layers = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, description: "Overview & Metrics" },
@@ -62,10 +63,14 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle, setUiStyle, isExpanded, setIsExpanded, appLogoImage }: SidebarProps) {
+  const { settings } = useData();
   const [showThemes, setShowThemes] = useState(false);
   const { t, i18n } = useTranslation();
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
+
+  const orgName = settings?.organizationName || 'Gram Panchayat GP. Jhanda Khurd';
+  const logoInitials = orgName.split(' ').map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'WS';
 
   const toggleLanguage = () => {
     const langs = ['en', 'hi', 'pa'];
@@ -102,7 +107,7 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
             {appLogoImage ? (
               <img src={appLogoImage} alt="Logo" className="w-full h-full object-cover" />
             ) : (
-              'GP'
+              logoInitials
             )}
           </motion.div>
           <AnimatePresence>
@@ -111,10 +116,12 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -20 }}
-                className="whitespace-nowrap"
+                className="whitespace-nowrap max-w-[190px] overflow-hidden"
               >
-                <h1 className="neu-text font-black text-lg leading-tight tracking-tighter group-hover:text-[var(--accent)] transition-colors">Gram Panchayat</h1>
-                <p className="text-[10px] neu-accent uppercase tracking-widest font-black opacity-80">GP. Jhanda Khurd</p>
+                <h1 className="neu-text font-black text-sm leading-tight tracking-tight truncate group-hover:text-[var(--accent)] transition-colors" title={orgName}>
+                  {orgName}
+                </h1>
+                <p className="text-[10px] neu-accent uppercase tracking-widest font-black opacity-80">Billing Console</p>
               </motion.div>
             )}
           </AnimatePresence>

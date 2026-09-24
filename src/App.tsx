@@ -18,7 +18,7 @@ import { ReportsView } from "./views/ReportsView";
 import { ManualView } from "./views/ManualView";
 import { ChatbotView } from "./views/ChatbotView";
 import { AnimatePresence, motion } from "motion/react";
-import { Menu, X, AlertTriangle } from "lucide-react";
+import { Menu, X, AlertTriangle, Loader2 } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -76,7 +76,7 @@ export default function App() {
     localStorage.setItem("app_uiStyle", uiStyle);
     document.documentElement.setAttribute("data-ui", uiStyle);
   }, [uiStyle]);
-  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(() => Boolean(auth.currentUser));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -125,7 +125,16 @@ export default function App() {
       setUser(currentUser);
       setIsAuthReady(true);
     });
-    return () => unsubscribe();
+    // Safety fallback: ensure auth ready within 400ms max so screen is never blank
+    const safetyTimer = setTimeout(() => {
+      setIsAuthReady(true);
+      if (auth.currentUser) setUser(auth.currentUser);
+    }, 400);
+
+    return () => {
+      unsubscribe();
+      clearTimeout(safetyTimer);
+    };
   }, []);
 
   // Cleanup logic
@@ -166,15 +175,13 @@ export default function App() {
     document.documentElement.setAttribute("data-ui", uiStyle);
   }, [theme, uiStyle]);
 
-  const [quotaExceededFlag, setQuotaExceededFlag] = useState(false);
   useEffect(() => {
-    const checkQuota = async () => {
-      const { isQuotaExceeded } = await import('./lib/db');
-      setQuotaExceededFlag(isQuotaExceeded());
-    };
-    checkQuota();
-    const interval = setInterval(checkQuota, 30000); // Check every 30s
-    return () => clearInterval(interval);
+    // Clear any stale local quota locks
+    try {
+      localStorage.removeItem('firestore_quota_expiry');
+    } catch (e) {
+      // ignore
+    }
   }, []);
 
   // Auto-collapse sidebar on smaller screens
@@ -281,13 +288,13 @@ export default function App() {
           className="p-8 neu-pressed rounded-3xl max-w-md w-full text-center space-y-6 relative z-20 elite-sparkle-card"
         >
           <div className="w-20 h-20 mx-auto rounded-2xl flex items-center justify-center text-white font-bold text-4xl static-glow transition-all duration-300" style={{ background: 'var(--accent)' }}>
-            GP
+            ⚡
           </div>
           <div>
-            <h1 className="text-3xl font-black bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent">Gram Panchayat GP. Jhanda Khurd</h1>
-            <p className="neu-text-muted mt-2 font-bold uppercase tracking-widest text-xs">Automated Billing System</p>
+            <h1 className="text-3xl font-black bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent">Multi-Tenant Billing Platform</h1>
+            <p className="neu-text-muted mt-2 font-bold uppercase tracking-widest text-xs">Automated Utility & Enterprise Billing</p>
             <p className="text-xs text-blue-600 font-medium mt-4 px-4 py-2 bg-blue-50 rounded-lg inline-block">
-              Registration is open! Create your own private workspace.
+              Secure Zero-Trust Workspace Login
             </p>
           </div>
           
@@ -450,27 +457,6 @@ export default function App() {
         </div>
       </div>
       <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full min-w-0">
-        {quotaExceededFlag && (
-          <motion.div 
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 p-4 bg-rose-50 border-2 border-rose-200 rounded-2xl flex flex-col sm:flex-row items-center gap-4 text-rose-800 shadow-lg shadow-rose-500/10"
-          >
-            <div className="p-2 bg-rose-100 rounded-xl">
-              <AlertTriangle className="w-6 h-6 text-rose-600" />
-            </div>
-            <div className="flex-1 text-center sm:text-left">
-              <p className="font-bold">Database Quota Exceeded & Locked (Free Tier)</p>
-              <p className="text-sm opacity-90 leading-tight mt-1">You've reached your free tier Firebase limit. Background cycles and heavy actions are temporarily locked to protect you. You can turn this lock off in Settings {'>'} Danger Zone.</p>
-            </div>
-            <button 
-              onClick={() => window.open('https://console.firebase.google.com/project/_/firestore/usage', '_blank')}
-              className="px-4 py-2 bg-rose-600 text-white rounded-xl text-xs font-bold hover:bg-rose-700 transition-colors whitespace-nowrap"
-            >
-              Check Usage
-            </button>
-          </motion.div>
-        )}
         <div className="flex justify-between items-center mb-4">
           <button 
             className="md:hidden p-2 neu-flat rounded-xl"

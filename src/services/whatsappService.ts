@@ -13,6 +13,7 @@ export interface WhatsAppMessage {
   templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
   templateParams?: any[];
   customTemplateName?: string;
+  ownerId?: string;
 }
 
 class WhatsAppService {
@@ -70,7 +71,7 @@ class WhatsAppService {
     // We now use our backend proxy to send messages safely (avoiding CORS and keeping keys server-side)
     try {
       const { auth } = await import('../firebase');
-      const ownerId = auth.currentUser?.uid;
+      const ownerId = params.ownerId || auth.currentUser?.uid;
       
       if (!ownerId) {
         return { success: false, error: 'USER_NOT_AUTHENTICATED' };

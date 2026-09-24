@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { auth } from '../firebase';
+import { useTenant } from './TenantContext';
 import { 
   Customer, 
   AppSettings, 
@@ -18,7 +18,9 @@ import {
   subscribeToPendingReceipts
 } from '../lib/db';
 
-interface DataContextType {
+export interface DataContextType {
+  currentOwnerId: string | null;
+  tenantId: string | null;
   customers: Customer[];
   settings: AppSettings | null;
   transactions: Transaction[];
@@ -33,6 +35,7 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { currentOwnerId, tenantId, currentUser } = useTenant();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -47,76 +50,104 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let unsubs: (() => void)[] = [];
 
     const clearSubscriptions = () => {
-      unsubs.forEach(unsub => unsub());
+      unsubs.forEach(unsub => {
+        try { unsub(); } catch (e) { /* ignore */ }
+      });
       unsubs = [];
     };
 
-    const unsubAuth = auth.onAuthStateChanged((user) => {
-      if (user) {
-        clearSubscriptions(); // Just in case
-        
-        // Provide immediate safe defaults so components never hang or crash
-        setSettings(prev => prev || {
-          upiQrCodeImage: null,
-          billTemplateImage: null,
-          billingAmount: 200,
-          billingCycleMonths: 2,
-          penaltyAmount: 40,
-          penaltyDays: 10,
-          escalationDays: 60,
-          autoSuspend: false,
-          defaultBillingDate: '1',
-          metaWhatsAppApiKey: '',
-          metaWhatsAppPhoneNumberId: '',
-          watiAccessToken: '',
-          watiApiEndpoint: '',
-          automation: {
-            billingLifecycle: true,
-            ruleBased: true,
-            lateFee: true,
-            scheduledBilling: true,
-            bulkProcessing: true,
-            smartNotifications: true
-          },
-          ownerId: user.uid
-        });
+    // Strict Zero-Trust purge: clear all state from memory whenever tenant changes or logs out
+    clearSubscriptions();
+    setCustomers([]);
+    setTransactions([]);
+    setComplaints([]);
+    setReports([]);
+    setMessages([]);
+    setAutomationErrors([]);
+    setPendingReceipts([]);
+    setSettings(null);
 
-        // Initializing consolidated subscriptions
-        unsubs.push(subscribeToCustomers(setCustomers));
-        unsubs.push(subscribeToSettings((freshSettings) => {
-          if (freshSettings) setSettings(freshSettings);
-        }));
-        unsubs.push(subscribeToTransactions(setTransactions));
-        unsubs.push(subscribeToComplaints(setComplaints));
-        unsubs.push(subscribeToReports(setReports));
-        unsubs.push(subscribeToWhatsappMessages(setMessages));
-        unsubs.push(subscribeToAutomationErrors(setAutomationErrors));
-        unsubs.push(subscribeToPendingReceipts(setPendingReceipts));
+    if (currentOwnerId) {
+      const activeUid = currentOwnerId;
 
-        setIsLoading(false);
-      } else {
-        clearSubscriptions();
-        // Clear data on logout
-        setCustomers([]);
-        setSettings(null);
-        setTransactions([]);
-        setComplaints([]);
-        setReports([]);
-        setMessages([]);
-        setAutomationErrors([]);
-        setPendingReceipts([]);
-        setIsLoading(false);
-      }
-    });
+      // Isolated default settings strictly scoped to the newly authenticated tenant
+      const defaultSettings: AppSettings = {
+        upiQrCodeImage: null,
+        billTemplateImage: null,
+        billingAmount: 200,
+        billingCycleMonths: 2,
+        penaltyAmount: 40,
+        penaltyDays: 10,
+        escalationDays: 60,
+        autoSuspend: false,
+        defaultBillingDate: '1',
+        metaWhatsAppApiKey: '',
+        metaWhatsAppPhoneNumberId: '',
+        watiAccessToken: '',
+        watiApiEndpoint: '',
+        organizationName: currentUser?.email === 'ksmotalkar@gmail.com' ? 'Gram Panchayat GP. Jhanda Khurd' : 'Billing Workspace',
+        automation: {
+          billingLifecycle: true,
+          ruleBased: true,
+          lateFee: true,
+          scheduledBilling: true,
+          bulkProcessing: true,
+          smartNotifications: true
+        },
+        ownerId: activeUid
+      };
+
+      setSettings(defaultSettings);
+
+      // Attach scoped subscriptions with identity verification guards explicitly passing activeUid
+      unsubs.push(subscribeToCustomers(activeUid, (custs) => {
+        setCustomers(custs);
+      }));
+
+      unsubs.push(subscribeToSettings(activeUid, (freshSettings) => {
+        if (freshSettings) {
+          setSettings(freshSettings);
+        }
+      }));
+
+      unsubs.push(subscribeToTransactions(activeUid, (txns) => {
+        setTransactions(txns);
+      }));
+
+      unsubs.push(subscribeToComplaints(activeUid, (comps) => {
+        setComplaints(comps);
+      }));
+
+      unsubs.push(subscribeToReports(activeUid, (reps) => {
+        setReports(reps);
+      }));
+
+      unsubs.push(subscribeToWhatsappMessages(activeUid, (msgs) => {
+        setMessages(msgs);
+      }));
+
+      unsubs.push(subscribeToAutomationErrors(activeUid, (errs) => {
+        setAutomationErrors(errs);
+      }));
+
+      unsubs.push(subscribeToPendingReceipts(activeUid, (rcpts) => {
+        setPendingReceipts(rcpts);
+      }));
+
+      setIsLoading(false);
+    } else {
+      setIsLoading(false);
+    }
 
     return () => {
       clearSubscriptions();
-      unsubAuth();
     };
-  }, []);
+  }, [currentOwnerId]);
 
   return (
     <DataContext.Provider value={{
+      currentOwnerId,
+      tenantId,
       customers,
       settings,
       transactions,
@@ -134,7 +165,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
 export const useData = () => {
   const context = useContext(DataContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useData must be used within a DataProvider');
   }
   return context;

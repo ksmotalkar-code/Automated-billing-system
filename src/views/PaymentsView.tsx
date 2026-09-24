@@ -4,6 +4,7 @@ import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image 
 import { motion, AnimatePresence } from "motion/react";
 import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus } from "../lib/db";
 import { useData } from "../contexts/DataContext";
+import { useTenant } from "../contexts/TenantContext";
 import { PaymentReceipt } from "../lib/portal";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -16,6 +17,7 @@ export function PaymentsView() {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<'pending' | 'list'>('pending');
   const { customers, settings, pendingReceipts } = useData();
+  const { currentOwnerId } = useTenant();
   const [searchQuery, setSearchQuery] = useState("");
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -136,17 +138,18 @@ export function PaymentsView() {
       const newBalance = Math.max(0, selectedCustomer.balance - amount);
       const updatedCustomer = {
         ...selectedCustomer,
-        balance: newBalance
+        balance: newBalance,
+        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       };
       
-      await updateCustomer(updatedCustomer);
+      await updateCustomer(updatedCustomer, false, undefined, currentOwnerId);
 
       // Save transaction
       await addTransaction({
         customerId: selectedCustomer.id,
         amount: amount,
         transactionId: transactionId.trim()
-      });
+      }, currentOwnerId);
 
       setIsPaymentModalOpen(false);
       const paymentStatusText = newBalance === 0 
@@ -159,7 +162,7 @@ export function PaymentsView() {
         if (newBalance === 0) {
           const message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received and fully SETTLED. Thank you! Attached is your official receipt.`;
           const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
-          await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
+          await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
           sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         } else {
           const message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(newBalance)}. Attached is your updated receipt.`;
@@ -167,7 +170,7 @@ export function PaymentsView() {
           sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
         }
       } else if (newBalance === 0) {
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false });
+        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false }, false, undefined, currentOwnerId);
       }
     } catch (error) {
       console.error("Payment confirmation error:", error);
@@ -206,10 +209,18 @@ export function PaymentsView() {
           const batch = writeBatch(db);
           for (const customer of chunk) {
               const amount = customer.balance;
-              const updatedCustomer = { ...customer, balance: 0, invoiceSent: true, paymentNotified: true };
+              const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+              const updatedCustomer = { 
+                ...customer, 
+                docId: targetDocId,
+                ownerId: currentOwnerId || customer.ownerId || auth.currentUser?.uid || '',
+                balance: 0, 
+                invoiceSent: true, 
+                paymentNotified: true 
+              };
               
-              // Direct batch update to avoid updateCustomer queries
-              batch.update(doc(db, 'customers', customer.id), updatedCustomer);
+              // Direct batch update targeting proper docId and maintaining tenant isolation
+              batch.update(doc(db, 'customers', targetDocId), updatedCustomer);
 
               const txnId = `TXN-${uuidv4().substring(0, 8).toUpperCase()}`;
               batch.set(doc(db, 'transactions', txnId), {
@@ -218,7 +229,7 @@ export function PaymentsView() {
                 amount: amount,
                 transactionId: bulkTransactionId.trim(),
                 date: new Date().toISOString(),
-                ownerId: auth.currentUser?.uid || ''
+                ownerId: currentOwnerId || auth.currentUser?.uid || ''
               });
 
               // Background auto-notify for bulk manual payments
@@ -255,18 +266,19 @@ export function PaymentsView() {
     try {
       const updatedCustomer = {
         ...customer,
-        balance: Math.max(0, customer.balance - receipt.amount)
+        balance: Math.max(0, customer.balance - receipt.amount),
+        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       };
       
-      await updateCustomer(updatedCustomer);
+      await updateCustomer(updatedCustomer, false, undefined, currentOwnerId);
 
       await addTransaction({
         customerId: customer.id,
         amount: receipt.amount,
         transactionId: `REC-${receipt.id.substring(0, 8).toUpperCase()}`
-      });
+      }, currentOwnerId);
 
-      await updateReceiptStatus(receipt.id, 'Approved');
+      await updateReceiptStatus(receipt.id, 'Approved', currentOwnerId);
       
       setIsReceiptModalOpen(false);
       setSelectedReceipt(null);
@@ -275,7 +287,7 @@ export function PaymentsView() {
       if (updatedCustomer.balance === 0) {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official invoice.`;
         const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, receipt.amount);
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true });
+        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
         sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       } else {
         const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(receipt.amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
@@ -293,7 +305,7 @@ export function PaymentsView() {
   const handleRejectReceipt = async (receiptId: string) => {
     setIsActioningReceipt(`${receiptId}-reject`);
     try {
-      await updateReceiptStatus(receiptId, 'Rejected');
+      await updateReceiptStatus(receiptId, 'Rejected', currentOwnerId);
       setIsReceiptModalOpen(false);
       setSelectedReceipt(null);
     } catch (error) {

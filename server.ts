@@ -7,6 +7,11 @@ import compression from "compression";
 import { GoogleGenAI, Type } from "@google/genai";
 import admin from "firebase-admin";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { backgroundQueue } from "./src/server/services/queue.ts";
+import { createStorageRouter } from "./src/server/routes/storage.ts";
+import { createPortalsRouter } from "./src/server/routes/portals.ts";
+import { createBillingRouter } from "./src/server/routes/billing.ts";
+import { tenantMiddleware, errorHandler } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from "firebase/app";
 import {
@@ -30,14 +35,16 @@ import fs from "fs";
 // Modern Node ESM directory resolution
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
-enum OperationType {
-  CREATE = "create",
-  UPDATE = "update",
-  DELETE = "delete",
-  LIST = "list",
-  GET = "get",
-  WRITE = "write",
-}
+const OperationType = {
+  CREATE: "create",
+  UPDATE: "update",
+  DELETE: "delete",
+  LIST: "list",
+  GET: "get",
+  WRITE: "write",
+} as const;
+
+type OperationType = (typeof OperationType)[keyof typeof OperationType];
 
 interface FirestoreErrorInfo {
   error: string;
@@ -172,16 +179,11 @@ function getRequiredAdminDb() {
 export async function getSettings(
   ownerId: string,
 ): Promise<AppSettings | null> {
-  const primaryOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
   const adminDb = getAdminDb();
   if (adminDb) {
     try {
-      let docRef = adminDb.collection("settings").doc(ownerId);
-      let snap = await docRef.get();
-      if (!snap.exists && ownerId !== primaryOwnerId) {
-        docRef = adminDb.collection("settings").doc(primaryOwnerId);
-        snap = await docRef.get();
-      }
+      const docRef = adminDb.collection("settings").doc(ownerId);
+      const snap = await docRef.get();
       if (snap.exists) return snap.data() as AppSettings;
     } catch (error: any) {
       handleFirestoreError(error, OperationType.GET, `settings/${ownerId}`);
@@ -190,12 +192,8 @@ export async function getSettings(
 
   try {
     // Fallback to client SDK
-    let docRef = docClient(clientDb, "settings", ownerId);
-    let snap = await getDocClient(docRef);
-    if (!snap.exists() && ownerId !== primaryOwnerId) {
-      docRef = docClient(clientDb, "settings", primaryOwnerId);
-      snap = await getDocClient(docRef);
-    }
+    const docRef = docClient(clientDb, "settings", ownerId);
+    const snap = await getDocClient(docRef);
     if (snap.exists()) return snap.data() as AppSettings;
   } catch (error) {
     console.error("Client getSettings error:", error);
@@ -203,23 +201,65 @@ export async function getSettings(
   return null;
 }
 
+export async function resolveOwnerIdForWebhook(
+  requestedOwnerId: string,
+  phoneNumberId?: string
+): Promise<{ ownerId: string; settings: AppSettings | null }> {
+  // If explicitly provided and valid
+  if (requestedOwnerId && requestedOwnerId !== "system") {
+    const s = await getSettings(requestedOwnerId);
+    if (s) return { ownerId: requestedOwnerId, settings: s };
+  }
+
+  // If phoneNumberId is available, search settings for this phoneNumberId
+  if (phoneNumberId) {
+    const adminDb = getAdminDb();
+    if (adminDb) {
+      try {
+        const snap = await adminDb
+          .collection("settings")
+          .where("metaWhatsAppPhoneNumberId", "==", phoneNumberId)
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          const doc = snap.docs[0];
+          return { ownerId: doc.id, settings: doc.data() as AppSettings };
+        }
+      } catch (e) {
+        console.warn("[Webhook] Error looking up settings by phoneNumberId:", e);
+      }
+    }
+  }
+
+  // Fallback: If any tenant settings exist in DB with WhatsApp configured
+  const adminDb = getAdminDb();
+  if (adminDb) {
+    try {
+      const snap = await adminDb.collection("settings").limit(10).get();
+      for (const doc of snap.docs) {
+        const data = doc.data() as AppSettings;
+        if (data?.metaWhatsAppApiKey && data?.metaWhatsAppPhoneNumberId) {
+          return { ownerId: doc.id, settings: data };
+        }
+      }
+      if (!snap.empty) {
+        return { ownerId: snap.docs[0].id, settings: snap.docs[0].data() as AppSettings };
+      }
+    } catch (e) {
+      console.warn("[Webhook] Error looking up fallback settings:", e);
+    }
+  }
+
+  return { ownerId: requestedOwnerId || "system", settings: null };
+}
+
 export async function getReportsForOwner(ownerId: string): Promise<any[]> {
-  const primaryOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
   const adminDb = getAdminDb();
   let reports: any[] = [];
 
   if (adminDb) {
     try {
-      let snap = await adminDb.collection("reports").where("ownerId", "==", ownerId).get();
-      if (snap.empty && ownerId !== primaryOwnerId) {
-        snap = await adminDb.collection("reports").where("ownerId", "==", primaryOwnerId).get();
-      }
-      if (snap.empty) {
-        const allSnap = await adminDb.collection("reports").limit(25).get();
-        if (!allSnap.empty) {
-          snap = allSnap;
-        }
-      }
+      const snap = await adminDb.collection("reports").where("ownerId", "==", ownerId).get();
       reports = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
     } catch (e: any) {
       console.warn("Error fetching reports from adminDb:", e?.message);
@@ -229,15 +269,7 @@ export async function getReportsForOwner(ownerId: string): Promise<any[]> {
   if (reports.length === 0) {
     try {
       const q = queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", ownerId));
-      let snap = await getDocsClient(q);
-      if (snap.empty && ownerId !== primaryOwnerId) {
-        const q2 = queryClient(collectionClient(clientDb, "reports"), whereClient("ownerId", "==", primaryOwnerId));
-        snap = await getDocsClient(q2);
-      }
-      if (snap.empty) {
-        const qAll = queryClient(collectionClient(clientDb, "reports"), limitClient(25));
-        snap = await getDocsClient(qAll);
-      }
+      const snap = await getDocsClient(q);
       reports = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
     } catch (e: any) {
       console.warn("Error fetching reports from clientDb:", e?.message);
@@ -1196,29 +1228,17 @@ After submitting your inquiry, please wait for a response. We will inform you of
 }
 
 async function getChatbotSettings(ownerId: string) {
-  const primaryOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
   try {
     if (admin.apps.length) {
-      let doc = await getRequiredAdminDb()
+      const doc = await getRequiredAdminDb()
         .collection("chatbotSettings")
         .doc(ownerId)
         .get();
-      if (!doc.exists && ownerId !== primaryOwnerId) {
-        doc = await getRequiredAdminDb()
-          .collection("chatbotSettings")
-          .doc(primaryOwnerId)
-          .get();
-      }
       return doc.exists ? doc.data() : null;
     } else {
-      let docSnap = await getDocClient(
+      const docSnap = await getDocClient(
         docClient(clientDb, "chatbotSettings", ownerId),
       );
-      if (!docSnap.exists() && ownerId !== primaryOwnerId) {
-        docSnap = await getDocClient(
-          docClient(clientDb, "chatbotSettings", primaryOwnerId),
-        );
-      }
       return docSnap.exists() ? docSnap.data() : null;
     }
   } catch (e) {
@@ -1228,59 +1248,46 @@ async function getChatbotSettings(ownerId: string) {
 }
 
 async function getCustomerByMobile(ownerId: string, mobileSearch: string) {
-  const cleanSearch = (mobileSearch || "").replace(/\D/g, "");
+  const cleanSearch = String(mobileSearch || "").replace(/\D/g, "");
   const search10 = cleanSearch.slice(-10);
-  const primaryOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
 
   const matchCustomer = (customers: any[]) => {
     return customers.find((c) => {
-      const dataMobile = (c.mobileNumber || "").replace(/\D/g, "");
+      const dataMobile = String(c.mobileNumber || "").replace(/\D/g, "");
       const data10 = dataMobile.slice(-10);
       if (search10.length === 10 && data10.length === 10 && search10 === data10) {
         return true;
       }
       return (
-        cleanSearch.endsWith(dataMobile) || dataMobile.endsWith(cleanSearch)
+        cleanSearch.length >= 8 &&
+        (cleanSearch.endsWith(dataMobile) || dataMobile.endsWith(cleanSearch))
       );
     });
   };
 
   if (admin.apps.length) {
     const db = getRequiredAdminDb();
-    // 1. Try owner's own collection
     let snap = await db.collection("customers").where("ownerId", "==", ownerId).get();
     let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    let found = matchCustomer(customers);
-    if (found) return found;
-
-    // 2. Try primary Gram Panchayat owner
-    if (ownerId !== primaryOwnerId) {
-      snap = await db.collection("customers").where("ownerId", "==", primaryOwnerId).get();
-      customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      found = matchCustomer(customers);
-      if (found) return found;
+    let matched = matchCustomer(customers);
+    
+    // Resilient fallback: If no match found under current ownerId, search across customer records
+    if (!matched) {
+      try {
+        const fallbackSnap = await db.collection("customers").limit(300).get();
+        const allCustomers = fallbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        matched = matchCustomer(allCustomers);
+      } catch (err) {
+        console.warn("[getCustomerByMobile] Fallback customer search warning:", err);
+      }
     }
-
-    // 3. Fallback: all customers
-    snap = await db.collection("customers").limit(1000).get();
-    customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    return matchCustomer(customers);
+    return matched;
   } else {
     // Client SDK
     const q1 = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
-    let snap = await getDocsClient(q1);
-    let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    let found = matchCustomer(customers);
-    if (found) return found;
-
-    if (ownerId !== primaryOwnerId) {
-      const q2 = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", primaryOwnerId));
-      snap = await getDocsClient(q2);
-      customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      found = matchCustomer(customers);
-      if (found) return found;
-    }
-    return undefined;
+    const snap = await getDocsClient(q1);
+    const customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+    return matchCustomer(customers);
   }
 }
 
@@ -1340,6 +1347,36 @@ async function startServer() {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
   });
 
+  // Background Job Queue Status & Trigger Probes
+  backgroundQueue.registerWorker("PDF_GENERATION", async (job, onProgress) => {
+    onProgress(15);
+    const data = job.data as any;
+    const pdfBase64 = await generateInvoicePdf(
+      data.customer,
+      data.settings,
+      data.templateImage,
+      data.isSuspended,
+      data.settings?.billingAmount || 200
+    );
+    onProgress(100);
+    return { pdfBase64 };
+  });
+
+  app.get("/api/queue/status/:jobId", (req, res) => {
+    const job = backgroundQueue.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    return res.json(job);
+  });
+
+  // Mount Persistent Cloud Storage API
+  app.use("/api", createStorageRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
+
+  // Mount Citizen Portals Router
+  app.use(createPortalsRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
+
+  // Mount Automated Billing & Cron Router
+  app.use("/api", createBillingRouter(runDailyAutomation));
+
   // Server-side Gemini AI Client
   let geminiClient: GoogleGenAI | null = null;
   function getGeminiClient(): GoogleGenAI {
@@ -1398,15 +1435,37 @@ async function startServer() {
         parts: [{ text: String(m.content || "") }],
       }));
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents,
-        config: {
-          systemInstruction:
-            "You are the official Gram Panchayat Water Committee AI Assistant for GP. Jhanda Khurd. Assist residents and administrators with water billing questions, meter readings, tariffs, payment acknowledgments, leak complaints, and village water schedules. Be concise, polite, accurate, and helpful.",
-          temperature: 0.7,
-        },
-      });
+      let response: any;
+      for (let aiAttempt = 0; aiAttempt < 3; aiAttempt++) {
+        try {
+          response = await ai.models.generateContent({
+            model: "gemini-3.8-flash",
+            contents,
+            config: {
+              systemInstruction:
+                "You are the official Gram Panchayat Water Committee AI Assistant for GP. Jhanda Khurd. Assist residents and administrators with water billing questions, meter readings, tariffs, payment acknowledgments, leak complaints, and village water schedules. Be concise, polite, accurate, and helpful.",
+              temperature: 0.7,
+            },
+          });
+          break;
+        } catch (geminiErr: any) {
+          const errStr = String(geminiErr?.message || geminiErr);
+          if (
+            (errStr.includes("429") ||
+              errStr.includes("RESOURCE_EXHAUSTED") ||
+              errStr.includes("overloaded") ||
+              errStr.includes("Rate exceeded")) &&
+            aiAttempt < 2
+          ) {
+            console.warn(
+              `[Gemini AI] Rate limit hit. Backing off for ${(aiAttempt + 1) * 1500}ms...`,
+            );
+            await new Promise((r) => setTimeout(r, (aiAttempt + 1) * 1500));
+            continue;
+          }
+          throw geminiErr;
+        }
+      }
 
       const reply = response.text || "I have received your query. How else can I help you regarding water connections or billing?";
       return res.json({ reply });
@@ -2053,19 +2112,43 @@ async function startServer() {
     let latestData = await response.json();
     if (!response.ok) {
       let isRecovered = false;
+      let lastStatus = response.status;
       
       for (let attempt = 0; attempt < 3; attempt++) {
         if (isRecovered) break;
         
         let errMsg = latestData.error?.message || "Meta API Error";
+        let userTitle = latestData.error?.error_user_title || "";
+        let userMsg = latestData.error?.error_user_msg || "";
         let detailsStr = latestData.error?.error_data?.details?.toLowerCase() || "";
+        const errCode = latestData.error?.code;
         
-        const isParamCountError = errMsg.toLowerCase().includes("132000") || latestData.error?.code === 132000 || detailsStr.includes("does not match the expected number of params");
-        const isHeaderIssue = errMsg.toLowerCase().includes("132018") || latestData.error?.code === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
+        const isParamCountError = errMsg.toLowerCase().includes("132000") || errCode === 132000 || detailsStr.includes("does not match the expected number of params");
+        const isHeaderIssue = errMsg.toLowerCase().includes("132018") || errCode === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
         const isButtonNoParamAllowed = detailsStr.includes("button") && detailsStr.includes("no parameters allowed");
-        const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || latestData.error?.code === 131008 || (detailsStr.includes("button") && detailsStr.includes("requires a parameter"));
+        const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || errCode === 131008 || (detailsStr.includes("button") && detailsStr.includes("requires a parameter"));
+        
+        const isRateLimit =
+          lastStatus === 429 ||
+          errCode === 130429 ||
+          errCode === 80007 ||
+          errCode === 131056 ||
+          errCode === 131048 ||
+          errMsg.toLowerCase().includes("rate") ||
+          errMsg.toLowerCase().includes("limit") ||
+          errMsg.toLowerCase().includes("too many calls") ||
+          errMsg.toLowerCase().includes("too many requests") ||
+          userTitle.toLowerCase().includes("rate") ||
+          userMsg.toLowerCase().includes("rate");
 
         let madeChanges = false;
+
+        if (isRateLimit) {
+          const backoffMs = (attempt + 1) * 3000;
+          console.warn(`[WhatsApp] Meta API Rate limit hit (${userTitle || errMsg || errCode}). Backing off for ${backoffMs}ms before retry ${attempt + 1}/3...`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          madeChanges = true;
+        }
         
         if (bodyPayload.type === "template" && bodyPayload.template.components) {
           if (isHeaderIssue || isButtonNoParamAllowed || isButtonMissingParam) {
@@ -2151,6 +2234,7 @@ async function startServer() {
               body: JSON.stringify(bodyPayload),
             }
           );
+          lastStatus = retryResponse.status;
           latestData = await retryResponse.json();
           if (retryResponse.ok) {
             isRecovered = true;
@@ -2178,7 +2262,19 @@ async function startServer() {
         console.error(`[WhatsApp] Meta API Error Details:`, JSON.stringify(latestData));
       }
 
-      if (
+      const finalCode = latestData.error?.code;
+      const isStillRateLimit =
+        lastStatus === 429 ||
+        finalCode === 130429 ||
+        finalCode === 80007 ||
+        finalCode === 131056 ||
+        errStr.includes("rate") ||
+        errStr.includes("too many calls") ||
+        (latestData.error?.error_user_title && latestData.error.error_user_title.toLowerCase().includes("rate"));
+
+      if (isStillRateLimit) {
+        finalErrMsg = `Rate limit exceeded on WhatsApp Cloud API. Meta throughput threshold reached for Phone Number ID ${settings.metaWhatsAppPhoneNumberId}. Please wait 30-60 seconds before sending more messages. (Meta Code: ${finalCode || 429})`;
+      } else if (
         latestData.error &&
         latestData.error.message &&
         latestData.error.message.includes("register this phone number")
@@ -2961,6 +3057,8 @@ async function startServer() {
             finalTemplateParams,
           );
           results.success++;
+          // Rate-limiting throttle to prevent Meta burst limit (#80007 / Rate exceeded)
+          await new Promise((r) => setTimeout(r, 1200));
         } catch (e: any) {
           results.failed++;
           results.errors.push(`${customer.name}: ${e.message}`);
@@ -3687,36 +3785,54 @@ async function startServer() {
 
   app.get(["/api/whatsapp-webhook", "/api/whatsapp-webhook/:ownerId"], async (req, res) => {
     try {
-      let ownerId = req.params.ownerId || (req.query.ownerId as string);
-      if (!ownerId) {
-        ownerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
-      }
+      const requestedOwnerId = req.params.ownerId || (req.query.ownerId as string) || "system";
       const mode = req.query["hub.mode"];
       const token = req.query["hub.verify_token"];
       const challenge = req.query["hub.challenge"];
 
-      console.log(`[Webhook] Verification attempt for owner: ${ownerId}`);
+      console.log(`[Webhook] Verification attempt for owner: ${requestedOwnerId}, token: ${token}`);
 
       if (mode === "subscribe" && token && challenge) {
         let storedToken = process.env.META_VERIFY_TOKEN;
 
-        // Dynamic fetch using helper
-        const settings = await getSettings(ownerId);
+        // Try getting settings for the given ownerId
+        let settings = await getSettings(requestedOwnerId);
         if (settings?.metaWhatsAppVerifyToken) {
           storedToken = settings.metaWhatsAppVerifyToken;
         }
 
-        // Verification logic with trimming
         const cleanToken = String(token).trim();
-        const cleanStored = storedToken ? String(storedToken).trim() : "";
+        let isMatch = Boolean(storedToken && cleanToken === String(storedToken).trim());
 
-        if (!cleanStored || cleanToken === cleanStored) {
-          console.log(`[Webhook] Verified owner: ${ownerId}`);
+        // If not matched yet, check all settings docs in DB
+        if (!isMatch && admin.apps.length) {
+          try {
+            const allSettingsSnap = await getRequiredAdminDb().collection("settings").get();
+            for (const doc of allSettingsSnap.docs) {
+              const sData = doc.data() as AppSettings;
+              if (sData?.metaWhatsAppVerifyToken && String(sData.metaWhatsAppVerifyToken).trim() === cleanToken) {
+                isMatch = true;
+                console.log(`[Webhook] Verified via settings doc: ${doc.id}`);
+                break;
+              }
+            }
+          } catch (e) {
+            console.warn("[Webhook] Error scanning verify tokens:", e);
+          }
+        }
+
+        // If no token was ever configured, allow verification (standard zero-config onboarding)
+        if (!storedToken && !isMatch) {
+          isMatch = true;
+        }
+
+        if (isMatch || !cleanToken) {
+          console.log(`[Webhook] Successfully verified challenge for owner: ${requestedOwnerId}`);
           res.set("Content-Type", "text/plain");
-          return res.status(200).send(challenge);
+          return res.status(200).send(String(challenge));
         } else {
           console.warn(
-            `[Webhook] Token mismatch. Expected: ${cleanStored}, Got: ${cleanToken}`,
+            `[Webhook] Token mismatch. Expected: ${storedToken}, Got: ${cleanToken}`,
           );
           return res.sendStatus(403);
         }
@@ -3732,10 +3848,7 @@ async function startServer() {
   const processedMessageIds: string[] = [];
   app.post(["/api/whatsapp-webhook", "/api/whatsapp-webhook/:ownerId"], async (req, res) => {
     try {
-      let ownerId = req.params.ownerId || (req.query.ownerId as string);
-      if (!ownerId) {
-        ownerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
-      }
+      const incomingOwnerId = req.params.ownerId || (req.query.ownerId as string) || "system";
 
       const body = req.body;
       if (!body.object) {
@@ -3753,6 +3866,12 @@ async function startServer() {
           for (const entry of entries) {
             const changes = entry.changes || [];
             for (const change of changes) {
+              const phoneNumberId = change.value?.metadata?.phone_number_id;
+              const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+                await resolveOwnerIdForWebhook(incomingOwnerId, phoneNumberId);
+              const effectiveOwnerId = resolvedOwnerId;
+              let settings = resolvedSettings || (await getSettings(effectiveOwnerId));
+
               const messages = change.value?.messages || [];
               for (const messageObj of messages) {
                 const msgId = messageObj.id;
@@ -3789,18 +3908,49 @@ async function startServer() {
                 }
               }
 
-              const fromMobile = messageObj.from;
-              const msgBody = messageObj.text?.body;
+              const ownerId = effectiveOwnerId;
+              const fromMobile = String(messageObj.from || "");
+
+              // Extract text body from regular text, interactive button replies, list replies, or template buttons
+              let msgBody = messageObj.text?.body || "";
+              if (!msgBody) {
+                if (messageObj.type === "interactive") {
+                  if (messageObj.interactive?.type === "button_reply") {
+                    msgBody =
+                      messageObj.interactive.button_reply?.title ||
+                      messageObj.interactive.button_reply?.id ||
+                      "";
+                  } else if (messageObj.interactive?.type === "list_reply") {
+                    msgBody =
+                      messageObj.interactive.list_reply?.title ||
+                      messageObj.interactive.list_reply?.id ||
+                      "";
+                  }
+                } else if (messageObj.type === "button") {
+                  msgBody =
+                    messageObj.button?.text ||
+                    messageObj.button?.payload ||
+                    "";
+                }
+              }
+
+              // Extract sender's WhatsApp profile name if available
+              const contacts = change.value?.contacts || [];
+              const senderContact = contacts.find(
+                (c: any) => c.wa_id === fromMobile || String(fromMobile).endsWith(c.wa_id),
+              );
+              const senderDisplayName = senderContact?.profile?.name || "";
+
               const msgType = messageObj.type;
 
               console.log(
-                `[Webhook] Received message from ${fromMobile} for owner ${ownerId}: ${msgBody || msgType}`,
+                `[Webhook] Received message from ${fromMobile} (${senderDisplayName || "Resident"}) for owner ${effectiveOwnerId}: "${msgBody || msgType}"`,
               );
 
               try {
                 const cleanMobile = fromMobile.replace(/\D/g, "");
                 let matchedCustomer = await getCustomerByMobile(
-                  ownerId,
+                  effectiveOwnerId,
                   cleanMobile,
                 );
 
@@ -4475,7 +4625,9 @@ async function startServer() {
                         id: complaintId,
                         customerId: "unregistered",
                         ownerId: ownerId,
-                        customerName: `Resident (+${fromMobile})`,
+                        customerName: senderDisplayName
+                          ? `${senderDisplayName} (+${fromMobile})`
+                          : `Resident (+${fromMobile})`,
                         mobileNumber: fromMobile,
                         category: "Public Grievance",
                         message: "WhatsApp Complaint",
@@ -4488,9 +4640,9 @@ async function startServer() {
                           Date.now() + 180 * 24 * 60 * 60 * 1000,
                         ).toISOString(),
                       });
-                      unregReply = `Thank you! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our office will investigate and resolve it promptly.`;
+                      unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our office will investigate and resolve it promptly.`;
                     } else {
-                      unregReply = `Namaste! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Services.
+                      unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Services.
 
 Your mobile number (+${fromMobile}) is not currently linked in our consumer records.
 
@@ -4540,9 +4692,12 @@ To link your connection or update your mobile number, please contact the Gram Pa
   // Diagnostic and Verification endpoint for Chatbot & Webhook
   app.get("/api/chatbot/diagnostics", async (req, res) => {
     try {
-      const ownerId = (req.query.ownerId as string) || "8n38K7tvJ3OHchV76zhbx6cjRa13";
-      const settings = await getSettings(ownerId);
-      const chatbotSettings = await getChatbotSettings(ownerId);
+      const requestedOwnerId = (req.query.ownerId as string) || "system";
+      const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+        await resolveOwnerIdForWebhook(requestedOwnerId);
+      const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
+      const settings = resolvedSettings || (await getSettings(effectiveOwnerId));
+      const chatbotSettings = await getChatbotSettings(effectiveOwnerId);
 
       const hasMetaApiKey = Boolean(settings?.metaWhatsAppApiKey);
       const hasPhoneId = Boolean(settings?.metaWhatsAppPhoneNumberId);
@@ -4576,8 +4731,8 @@ To link your connection or update your mobile number, please contact the Gram Pa
 
       res.json({
         ok: true,
-        ownerId,
-        webhookUrl: `${req.protocol}://${req.get("host")}/api/whatsapp-webhook`,
+        ownerId: effectiveOwnerId,
+        webhookUrl: `${req.protocol}://${req.get("host")}/api/whatsapp-webhook${effectiveOwnerId !== "system" ? `/${effectiveOwnerId}` : ""}`,
         verifyToken,
         botActive,
         activeRules,
@@ -4595,13 +4750,17 @@ To link your connection or update your mobile number, please contact the Gram Pa
   // Simulation test endpoint: simulates an incoming WhatsApp message and returns the exact chatbot response
   app.post("/api/chatbot/simulate", async (req, res) => {
     try {
-      const ownerId = (req.body.ownerId as string) || "8n38K7tvJ3OHchV76zhbx6cjRa13";
+      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+        await resolveOwnerIdForWebhook(requestedOwnerId);
+      const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
+
       const msgBody = req.body.message || "Hi";
       const mobile = req.body.mobile || "9876543210";
 
-      const settings = await getSettings(ownerId);
-      const chatbotSettings = await getChatbotSettings(ownerId);
-      let matchedCustomer = await getCustomerByMobile(ownerId, mobile);
+      const settings = resolvedSettings || (await getSettings(effectiveOwnerId));
+      const chatbotSettings = await getChatbotSettings(effectiveOwnerId);
+      let matchedCustomer = await getCustomerByMobile(effectiveOwnerId, mobile);
 
       if (!matchedCustomer) {
         matchedCustomer = {
@@ -4649,7 +4808,7 @@ To link your connection or update your mobile number, please contact the Gram Pa
       const intentRes = await routeSystemIntent(
         msgLower,
         matchedCustomer,
-        ownerId,
+        effectiveOwnerId,
         settings,
         matched ? responseText : "",
         chatbotSettings,
