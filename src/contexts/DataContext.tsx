@@ -70,35 +70,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (currentOwnerId) {
       const activeUid = currentOwnerId;
 
-      // Isolated default settings strictly scoped to the newly authenticated tenant
-      const defaultSettings: AppSettings = {
-        upiQrCodeImage: null,
-        billTemplateImage: null,
-        billingAmount: 200,
-        billingCycleMonths: 2,
-        penaltyAmount: 40,
-        penaltyDays: 10,
-        escalationDays: 60,
-        autoSuspend: false,
-        defaultBillingDate: '1',
-        metaWhatsAppApiKey: '',
-        metaWhatsAppPhoneNumberId: '',
-        watiAccessToken: '',
-        watiApiEndpoint: '',
-        organizationName: currentUser?.email === 'ksmotalkar@gmail.com' ? 'Gram Panchayat GP. Jhanda Khurd' : 'Billing Workspace',
-        automation: {
-          billingLifecycle: true,
-          ruleBased: true,
-          lateFee: true,
-          scheduledBilling: true,
-          bulkProcessing: true,
-          smartNotifications: true
-        },
-        ownerId: activeUid
-      };
-
-      setSettings(defaultSettings);
-
       // Attach scoped subscriptions with identity verification guards explicitly passing activeUid
       unsubs.push(subscribeToCustomers(activeUid, (custs) => {
         setCustomers(custs);

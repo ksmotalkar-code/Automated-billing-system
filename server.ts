@@ -205,52 +205,97 @@ export async function resolveOwnerIdForWebhook(
   requestedOwnerId: string,
   phoneNumberId?: string
 ): Promise<{ ownerId: string; settings: AppSettings | null }> {
-  // If explicitly provided and valid
-  if (requestedOwnerId && requestedOwnerId !== "system") {
-    const s = await getSettings(requestedOwnerId);
-    if (s) return { ownerId: requestedOwnerId, settings: s };
-  }
-
-  // If phoneNumberId is available, search settings for this phoneNumberId
-  if (phoneNumberId) {
-    const adminDb = getAdminDb();
-    if (adminDb) {
-      try {
-        const snap = await adminDb
-          .collection("settings")
-          .where("metaWhatsAppPhoneNumberId", "==", phoneNumberId)
-          .limit(1)
-          .get();
-        if (!snap.empty) {
-          const doc = snap.docs[0];
-          return { ownerId: doc.id, settings: doc.data() as AppSettings };
-        }
-      } catch (e) {
-        console.warn("[Webhook] Error looking up settings by phoneNumberId:", e);
-      }
-    }
-  }
-
-  // Fallback: If any tenant settings exist in DB with WhatsApp configured
   const adminDb = getAdminDb();
+  let masterSettings: AppSettings | null = null;
+
+  // 1. First, locate working WhatsApp settings across all settings docs
   if (adminDb) {
     try {
-      const snap = await adminDb.collection("settings").limit(10).get();
-      for (const doc of snap.docs) {
+      const allSettingsSnap = await adminDb.collection("settings").get();
+      for (const doc of allSettingsSnap.docs) {
         const data = doc.data() as AppSettings;
         if (data?.metaWhatsAppApiKey && data?.metaWhatsAppPhoneNumberId) {
-          return { ownerId: doc.id, settings: data };
+          if (!phoneNumberId || data.metaWhatsAppPhoneNumberId === phoneNumberId) {
+            masterSettings = data;
+            break;
+          }
+          if (!masterSettings) {
+            masterSettings = data;
+          }
         }
       }
-      if (!snap.empty) {
-        return { ownerId: snap.docs[0].id, settings: snap.docs[0].data() as AppSettings };
-      }
     } catch (e) {
-      console.warn("[Webhook] Error looking up fallback settings:", e);
+      console.warn("[Webhook] Error looking up master settings:", e);
     }
   }
 
-  return { ownerId: requestedOwnerId || "system", settings: null };
+  // 2. Determine target ownerId
+  let targetOwnerId = requestedOwnerId && requestedOwnerId !== "system" ? requestedOwnerId : "";
+
+  // If phoneNumberId is available, see which tenant matching this phoneNumberId owns customer records
+  if (phoneNumberId && adminDb) {
+    try {
+      const snap = await adminDb
+        .collection("settings")
+        .where("metaWhatsAppPhoneNumberId", "==", phoneNumberId)
+        .get();
+      
+      for (const doc of snap.docs) {
+        // Check if this doc owns customers
+        const custSnap = await adminDb.collection("customers").where("ownerId", "==", doc.id).limit(1).get();
+        if (!custSnap.empty) {
+          targetOwnerId = doc.id;
+          break;
+        }
+        if (!targetOwnerId) {
+          targetOwnerId = doc.id;
+        }
+      }
+    } catch (e) {
+      console.warn("[Webhook] Error checking settings by phoneNumberId:", e);
+    }
+  }
+
+  // If targetOwnerId is still empty or has no customers, find which tenant owns the customer database
+  if ((!targetOwnerId || targetOwnerId === "system") && adminDb) {
+    try {
+      const custSample = await adminDb.collection("customers").limit(1).get();
+      if (!custSample.empty) {
+        const custOwnerId = custSample.docs[0].data().ownerId;
+        if (custOwnerId) {
+          targetOwnerId = custOwnerId;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (!targetOwnerId || targetOwnerId === "system") {
+    targetOwnerId = "8n38K7tvJ3OHchV76zhbx6cjRa13";
+  }
+
+  let s = await getSettings(targetOwnerId);
+  // Ensure the settings object returned ALWAYS has the active credentials and templates
+  if (!s?.metaWhatsAppApiKey && masterSettings?.metaWhatsAppApiKey) {
+    s = {
+      ...(s || {}),
+      metaWhatsAppApiKey: masterSettings.metaWhatsAppApiKey,
+      metaWhatsAppPhoneNumberId: masterSettings.metaWhatsAppPhoneNumberId || phoneNumberId,
+      metaWhatsAppVerifyToken: masterSettings.metaWhatsAppVerifyToken || s?.metaWhatsAppVerifyToken || "random_123",
+      preferredNotificationMethod: masterSettings.preferredNotificationMethod || s?.preferredNotificationMethod || "api",
+      metaTemplateBilling: masterSettings.metaTemplateBilling || s?.metaTemplateBilling || "payment_due_reminder",
+      metaTemplateReceipt: masterSettings.metaTemplateReceipt || s?.metaTemplateReceipt || "invoice_bill",
+      metaTemplateBroadcast: masterSettings.metaTemplateBroadcast || s?.metaTemplateBroadcast || "operation_disruption_2",
+      metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome",
+      metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "payment_overdue_1",
+      metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "autopay",
+      metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "general_notification",
+      metaCustomTemplates: masterSettings.metaCustomTemplates || s?.metaCustomTemplates,
+      appLogoImage: masterSettings.appLogoImage || s?.appLogoImage,
+      upiQrCodeImage: masterSettings.upiQrCodeImage || s?.upiQrCodeImage,
+    } as AppSettings;
+  }
+
+  return { ownerId: targetOwnerId, settings: s || masterSettings };
 }
 
 export async function getReportsForOwner(ownerId: string): Promise<any[]> {
@@ -325,7 +370,19 @@ interface AppSettings {
   metaTemplateBilling?: string;
   metaTemplateReceipt?: string;
   metaTemplateBroadcast?: string;
+  metaTemplateWelcome?: string;
+  metaTemplateOverdue?: string;
+  metaTemplateSuspension?: string;
+  metaTemplateCustom?: string;
   metaCustomTemplates?: any[];
+  appLogoImage?: string | null;
+  organizationName?: string;
+  appTheme?: string;
+  appUiStyle?: string;
+  enableFreeTierLock?: boolean;
+  cronSchedule?: string;
+  customAutomationParams?: any[];
+  enableAutosave?: boolean;
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
@@ -1267,27 +1324,48 @@ async function getCustomerByMobile(ownerId: string, mobileSearch: string) {
 
   if (admin.apps.length) {
     const db = getRequiredAdminDb();
-    let snap = await db.collection("customers").where("ownerId", "==", ownerId).get();
-    let customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    let matched = matchCustomer(customers);
     
-    // Resilient fallback: If no match found under current ownerId, search across customer records
-    if (!matched) {
+    // 1. Search directly under the provided ownerId
+    if (ownerId && ownerId !== "system") {
       try {
-        const fallbackSnap = await db.collection("customers").limit(300).get();
-        const allCustomers = fallbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-        matched = matchCustomer(allCustomers);
+        const snap = await db.collection("customers").where("ownerId", "==", ownerId).get();
+        const customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const matched = matchCustomer(customers);
+        if (matched) return matched;
       } catch (err) {
-        console.warn("[getCustomerByMobile] Fallback customer search warning:", err);
+        console.warn("[getCustomerByMobile] Primary search error:", err);
       }
     }
-    return matched;
+    
+    // 2. Resilient fallback: Search across ALL customer records (no limit to ensure all 765+ villagers match)
+    try {
+      const fallbackSnap = await db.collection("customers").get();
+      const allCustomers = fallbackSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+      const matched = matchCustomer(allCustomers);
+      if (matched) {
+        console.log(`[getCustomerByMobile] Matched resident ${matched.name} (owner: ${matched.ownerId})`);
+        return matched;
+      }
+    } catch (err) {
+      console.warn("[getCustomerByMobile] Fallback customer search warning:", err);
+    }
+    return null;
   } else {
     // Client SDK
-    const q1 = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
-    const snap = await getDocsClient(q1);
-    const customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-    return matchCustomer(customers);
+    try {
+      if (ownerId && ownerId !== "system") {
+        const q1 = queryClient(collectionClient(clientDb, "customers"), whereClient("ownerId", "==", ownerId));
+        const snap = await getDocsClient(q1);
+        const customers = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+        const matched = matchCustomer(customers);
+        if (matched) return matched;
+      }
+      const allSnap = await getDocsClient(collectionClient(clientDb, "customers"));
+      return matchCustomer(allSnap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    } catch (e) {
+      console.warn("[getCustomerByMobile] Client SDK search error:", e);
+      return null;
+    }
   }
 }
 
@@ -2093,7 +2171,7 @@ async function startServer() {
         }
       } else {
         bodyPayload.type = "text";
-        bodyPayload.text = { body: message };
+        bodyPayload.text = { body: message && message.trim() ? message : "Namaste! Welcome to Gram Panchayat Smart Water Billing. Type Menu for available services." };
       }
     }
 
@@ -3955,7 +4033,17 @@ async function startServer() {
                 );
 
                 if (matchedCustomer && matchedCustomer.status !== "Suspended") {
-                  const settings = await getSettings(ownerId);
+                  const tenantOwnerId = matchedCustomer.ownerId || effectiveOwnerId;
+                  const ownerId = tenantOwnerId;
+                  let rawSettings = await getSettings(tenantOwnerId);
+                  const settings: any = {
+                    ...(rawSettings || {}),
+                    ...(resolvedSettings?.metaWhatsAppApiKey ? {
+                      metaWhatsAppApiKey: rawSettings?.metaWhatsAppApiKey || resolvedSettings.metaWhatsAppApiKey,
+                      metaWhatsAppPhoneNumberId: rawSettings?.metaWhatsAppPhoneNumberId || resolvedSettings.metaWhatsAppPhoneNumberId,
+                      metaWhatsAppVerifyToken: rawSettings?.metaWhatsAppVerifyToken || resolvedSettings.metaWhatsAppVerifyToken,
+                    } : {})
+                  };
 
                   if (msgType === "image") {
                     const imageId = messageObj.image?.id;
@@ -4597,17 +4685,38 @@ async function startServer() {
                     if (!handled) {
                       // All messages were handled either by exact keyword matches or complaints.
                     }
-                  } // End of else if (msgBody)
+                  } else {
+                    // Non-text message from registered resident (e.g. sticker, location, audio, button click)
+                    try {
+                      const chatbotSettings = (await getChatbotSettings(ownerId)) as any;
+                      const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
+                      const cmdList = activeCommands.map((c: any, i: number) => `${i + 1}️⃣ *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
+                      const greeting = `Namaste ${matchedCustomer.name || "Resident"}! 🙏\n\nI received your message. Please reply with the service number you need:\n\n${cmdList || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Download My Bill*\n4️⃣ *Complaints*"}\n\nType *Menu* anytime to see all options.`;
+                      await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, greeting);
+                    } catch (nonTextErr) {
+                      console.error("[Webhook] Failed to send non-text fallback:", nonTextErr);
+                    }
+                  }
                 } else {
                   console.log(
                     `[Webhook] Message received from unregistered number: ${fromMobile}`,
                   );
-                  const settings = await getSettings(ownerId);
+                  let unregSettings = await getSettings(effectiveOwnerId);
+                  if (!unregSettings?.metaWhatsAppApiKey || !unregSettings?.metaWhatsAppPhoneNumberId) {
+                    unregSettings = { ...(unregSettings || {}), ...(resolvedSettings || {}) } as AppSettings;
+                  }
+                  if (!unregSettings?.metaWhatsAppApiKey) {
+                    const fallbackRes = await resolveOwnerIdForWebhook("8n38K7tvJ3OHchV76zhbx6cjRa13", phoneNumberId);
+                    if (fallbackRes.settings) {
+                      unregSettings = fallbackRes.settings;
+                    }
+                  }
+
                   if (
-                    settings &&
-                    ((settings.metaWhatsAppApiKey &&
-                      settings.metaWhatsAppPhoneNumberId) ||
-                      settings.watiAccessToken)
+                    unregSettings &&
+                    ((unregSettings.metaWhatsAppApiKey &&
+                      unregSettings.metaWhatsAppPhoneNumberId) ||
+                      unregSettings.watiAccessToken)
                   ) {
                     const msgLower = (msgBody || "").toLowerCase().trim();
                     let unregReply = "";
@@ -4624,7 +4733,7 @@ async function startServer() {
                       await saveComplaintData(complaintId, {
                         id: complaintId,
                         customerId: "unregistered",
-                        ownerId: ownerId,
+                        ownerId: effectiveOwnerId,
                         customerName: senderDisplayName
                           ? `${senderDisplayName} (+${fromMobile})`
                           : `Resident (+${fromMobile})`,
@@ -4640,23 +4749,24 @@ async function startServer() {
                           Date.now() + 180 * 24 * 60 * 60 * 1000,
                         ).toISOString(),
                       });
-                      unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our office will investigate and resolve it promptly.`;
+                      unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our maintenance team will review and resolve it promptly.`;
                     } else {
-                      unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Services.
+                      unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Citizen Services.
 
 Your mobile number (+${fromMobile}) is not currently linked in our consumer records.
 
-Available Services:
-🛠️ *Complaint* - Type *Complaint* followed by your issue to report a leak or problem.
-⏰ *Water Timings:* Morning 6:00-8:00 AM, Evening 6:00-8:00 PM.
-📞 *Panchayat Helpline:* 1800-123-4567.
+📌 *Available Citizen Services:*
+🛠️ *Complaint / Grievance:* Type *Complaint* followed by your issue (e.g. *Complaint Water pressure is low in ward 3*).
+⏰ *Water Supply Timings:* Morning 6:00 - 8:00 AM | Evening 6:00 - 8:00 PM.
+📞 *Panchayat Helpline:* 1800-123-4567 / 0161-2345678.
+📍 *Office:* Gram Panchayat Jhanda Khurd, Dist. Mansa, Punjab.
 
-To link your connection or update your mobile number, please contact the Gram Panchayat office.`;
+To link your connection or update your registered number, please contact the Gram Panchayat office or Sarpanch.`;
                     }
 
                     try {
                       await sendWhatsAppMessage(
-                        settings as unknown as AppSettings,
+                        unregSettings as unknown as AppSettings,
                         fromMobile,
                         unregReply,
                       );
@@ -5031,6 +5141,45 @@ To link your connection or update your mobile number, please contact the Gram Pa
     console.log(
       `SmartBilling Full-Stack Server running on http://localhost:${PORT}`,
     );
+
+    // Automated Self-Healing: Verify active tenant settings and chatbot commands on boot
+    (async () => {
+      try {
+        const db = getAdminDb();
+        if (!db) return;
+        const targetUid = "8n38K7tvJ3OHchV76zhbx6cjRa13";
+        const docRef = db.collection("settings").doc(targetUid);
+        const snap = await docRef.get();
+        const data = snap.data() as AppSettings;
+        if (!data?.metaWhatsAppApiKey || !data?.metaWhatsAppPhoneNumberId) {
+          console.log("[Self-Healing] Restoring Meta WhatsApp credentials to", targetUid);
+          const dpoSnap = await db.collection("settings").doc("DpoIU4s6W1TenQVGc1RqNEHefdv2").get();
+          if (dpoSnap.exists && dpoSnap.data()?.metaWhatsAppApiKey) {
+            await docRef.set({
+              ...dpoSnap.data(),
+              ownerId: targetUid
+            }, { merge: true });
+            console.log("[Self-Healing] Restored successfully.");
+          }
+        }
+
+        const botRef = db.collection("chatbotSettings").doc(targetUid);
+        const botSnap = await botRef.get();
+        const botData = botSnap.data() as any;
+        if (!botData || !botData.isActive || !Array.isArray(botData.commands) || botData.commands.length === 0) {
+          const dpoBotSnap = await db.collection("chatbotSettings").doc("DpoIU4s6W1TenQVGc1RqNEHefdv2").get();
+          if (dpoBotSnap.exists) {
+            await botRef.set({
+              ...dpoBotSnap.data(),
+              ownerId: targetUid
+            }, { merge: true });
+            console.log("[Self-Healing] Chatbot settings restored successfully.");
+          }
+        }
+      } catch (selfHealingErr) {
+        console.warn("[Self-Healing] Non-fatal check warning:", selfHealingErr);
+      }
+    })();
   });
 }
 

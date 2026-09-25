@@ -854,7 +854,61 @@ export const saveSettings = async (settings: AppSettings, explicitOwnerId?: stri
     if (!payload.billTemplateImage) {
       payload.billTemplateImage = null;
     }
-    await setDoc(doc(db, 'settings', uid), payload);
+
+    // Defensive Preservation: If incoming settings has empty or missing WhatsApp credentials/templates,
+    // preserve whatever non-empty values currently exist in Firestore to prevent accidental wipes.
+    try {
+      const existingSnap = await getDoc(doc(db, 'settings', uid));
+      if (existingSnap.exists()) {
+        const existing = existingSnap.data() as AppSettings;
+        if (!payload.metaWhatsAppApiKey && existing.metaWhatsAppApiKey) {
+          payload.metaWhatsAppApiKey = existing.metaWhatsAppApiKey;
+        }
+        if (!payload.metaWhatsAppPhoneNumberId && existing.metaWhatsAppPhoneNumberId) {
+          payload.metaWhatsAppPhoneNumberId = existing.metaWhatsAppPhoneNumberId;
+        }
+        if (!payload.metaWhatsAppVerifyToken && existing.metaWhatsAppVerifyToken) {
+          payload.metaWhatsAppVerifyToken = existing.metaWhatsAppVerifyToken;
+        }
+        if (!payload.preferredNotificationMethod && existing.preferredNotificationMethod) {
+          payload.preferredNotificationMethod = existing.preferredNotificationMethod;
+        }
+        if (!payload.metaTemplateBilling && existing.metaTemplateBilling) {
+          payload.metaTemplateBilling = existing.metaTemplateBilling;
+        }
+        if (!payload.metaTemplateReceipt && existing.metaTemplateReceipt) {
+          payload.metaTemplateReceipt = existing.metaTemplateReceipt;
+        }
+        if (!payload.metaTemplateBroadcast && existing.metaTemplateBroadcast) {
+          payload.metaTemplateBroadcast = existing.metaTemplateBroadcast;
+        }
+        if (!payload.metaTemplateWelcome && existing.metaTemplateWelcome) {
+          payload.metaTemplateWelcome = existing.metaTemplateWelcome;
+        }
+        if (!payload.metaTemplateOverdue && existing.metaTemplateOverdue) {
+          payload.metaTemplateOverdue = existing.metaTemplateOverdue;
+        }
+        if (!payload.metaTemplateSuspension && existing.metaTemplateSuspension) {
+          payload.metaTemplateSuspension = existing.metaTemplateSuspension;
+        }
+        if (!payload.metaTemplateCustom && existing.metaTemplateCustom) {
+          payload.metaTemplateCustom = existing.metaTemplateCustom;
+        }
+        if ((!payload.metaCustomTemplates || payload.metaCustomTemplates.length === 0) && existing.metaCustomTemplates && existing.metaCustomTemplates.length > 0) {
+          payload.metaCustomTemplates = existing.metaCustomTemplates;
+        }
+        if (!payload.appLogoImage && existing.appLogoImage) {
+          payload.appLogoImage = existing.appLogoImage;
+        }
+        if (!payload.upiQrCodeImage && existing.upiQrCodeImage) {
+          payload.upiQrCodeImage = existing.upiQrCodeImage;
+        }
+      }
+    } catch (checkErr) {
+      console.warn("Could not check existing settings document for preservation:", checkErr);
+    }
+
+    await setDoc(doc(db, 'settings', uid), payload, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `settings/${uid}`);
   }
@@ -1135,10 +1189,10 @@ export function subscribeToSettings(
       // Inject missing default custom templates config for predefined ones (so user doesn't have to manually create them instantly)
       if (!data.metaCustomTemplates || data.metaCustomTemplates.length === 0) {
         data.metaCustomTemplates = [
-          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome_customer_v1', parameters: 'customer_name, button_param' },
-          { id: 'def_billing', templateName: data.metaTemplateBilling || 'bill_reminder_v1', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
-          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'payment_ack_v3', parameters: 'customer_name, payment_amount, button_param' },
-          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'penalty_alert_v1', parameters: 'customer_name, overdue_amount, date, button_param' },
+          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome', parameters: 'customer_name, button_param' },
+          { id: 'def_billing', templateName: data.metaTemplateBilling || 'payment_due_reminder', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
+          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'invoice_bill', parameters: 'customer_name, payment_amount, button_param' },
+          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'payment_overdue_1', parameters: 'customer_name, overdue_amount, date, button_param' },
         ];
       }
       

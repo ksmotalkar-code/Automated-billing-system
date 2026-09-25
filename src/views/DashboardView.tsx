@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { resolveAutomationError } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
+import { ChatbotDiagnosticWidget } from "../components/ChatbotDiagnosticWidget";
 
 export function DashboardView() {
   const { t } = useTranslation();
@@ -392,6 +393,9 @@ export function DashboardView() {
           </motion.div>
         </div>
       )}
+
+      {/* Real-Time WhatsApp Chatbot Diagnostic Status Widget */}
+      <ChatbotDiagnosticWidget />
 
       <div className="grid gap-6 grid-cols-1">
         <motion.div className="col-span-1" whileHover={{ scale: 1.005 }} transition={{ type: "spring", stiffness: 300 }}>
