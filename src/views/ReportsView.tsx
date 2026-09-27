@@ -17,7 +17,7 @@ export function ReportsView() {
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isSharing, setIsSharing] = useState<string | null>(null);
-  const [shareGroup, setShareGroup] = useState<'All' | 'Active' | 'Overdue'>('Active');
+  const [shareGroup, setShareGroup] = useState<'All' | 'Active' | 'Overdue' | 'Advance Paid'>('Active');
   
   const [newTitle, setNewTitle] = useState("");
   const [newContent, setNewContent] = useState("");
@@ -116,8 +116,9 @@ export function ReportsView() {
        
        if (settings?.automation?.autoShareReports) {
            let recipients = customers;
-           if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active');
+           if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid');
            else if (shareGroup === 'Overdue') recipients = customers.filter(c => c.balance > 0);
+           else if (shareGroup === 'Advance Paid') recipients = customers.filter(c => c.status === 'Advance Paid' || (c.advanceBalance && c.advanceBalance > 0));
            
            if (recipients.length > 0) {
               await shareReportToCustomers(updatedReport, recipients, settings);
@@ -141,8 +142,9 @@ export function ReportsView() {
     setIsSharing(report.id);
     try {
       let recipients = customers;
-      if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active');
+      if (shareGroup === 'Active') recipients = customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid');
       else if (shareGroup === 'Overdue') recipients = customers.filter(c => c.balance > 0);
+      else if (shareGroup === 'Advance Paid') recipients = customers.filter(c => c.status === 'Advance Paid' || (c.advanceBalance && c.advanceBalance > 0));
 
       if (recipients.length === 0) {
         showAlert('Logic Notice', `No target vectors found in group: ${shareGroup}`);
@@ -287,6 +289,7 @@ export function ReportsView() {
                       >
                         <option value="Active">Pulse: Active</option>
                         <option value="Overdue">Pulse: Overdue</option>
+                        <option value="Advance Paid">Pulse: Advance Paid</option>
                         <option value="All">Pulse: Omni</option>
                       </select>
                    </div>

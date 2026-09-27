@@ -211,12 +211,23 @@ export function DataUploadView() {
         row['Balance'] || row['balance'] || row['Amount'] || row['amount'] || "0"
       ).replace(/[^0-9.-]+/g, "");
       let balance = parseFloat(balanceStr) || 0;
+      let advanceBalance = 0;
 
       // 4. Smart Status detection & normalization
       const rawStatusVal = findVal(/^(status|account\s*status|customer\s*status|conn(?:ection)?\s*status|meter\s*status|state|condition|is_?active|status\s*description)$/i);
       let statusStr = String(
         rawStatusVal !== undefined ? rawStatusVal : (row['Status'] || row['status'] || row['STATUS'] || "")
       ).trim().toLowerCase();
+
+      // Check for explicit advance column if present in row
+      const rawAdvanceVal = findVal(/^(advance|advance\s*balance|advance\s*amount|advance\s*paid|prepaid|credit)$/i);
+      if (rawAdvanceVal !== undefined) {
+        const cleanAdv = String(rawAdvanceVal).replace(/[^0-9.-]+/g, "");
+        const parsedAdv = parseFloat(cleanAdv) || 0;
+        if (parsedAdv > 0) {
+          advanceBalance = parsedAdv;
+        }
+      }
 
       // Check for suspended/inactive/closed states
       const isSuspended = 
@@ -244,10 +255,18 @@ export function DataUploadView() {
         statusStr.includes('tamper') || 
         statusStr.includes('error');
 
-      const isAdvancePaid = 
+      let isAdvancePaid = 
         statusStr.includes('advance') || 
         statusStr.includes('prepaid') || 
         statusStr.includes('advance paid');
+
+      if (balance < 0) {
+        advanceBalance = advanceBalance + Math.abs(balance);
+        balance = 0;
+        isAdvancePaid = true;
+      } else if (advanceBalance > 0 && balance === 0) {
+        isAdvancePaid = true;
+      }
 
       let finalStatus: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = 'Active';
       if (isFaulty) {
@@ -264,6 +283,7 @@ export function DataUploadView() {
         name: name,
         mobileNumber: mobile,
         balance: balance,
+        advanceBalance: advanceBalance,
         status: finalStatus,
         ownerId: effectiveOwnerId,
         createdAt: new Date().toISOString()

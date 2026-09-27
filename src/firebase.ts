@@ -10,18 +10,23 @@ const dbId = (firebaseConfig.firestoreDatabaseId === '(default)' || firebaseConf
 export const db = getFirestore(app, dbId);
 export const storage = getStorage(app);
 
-// Enable offline persistence
+// Enable offline persistence safely
 if (typeof window !== 'undefined') {
-  enableMultiTabIndexedDbPersistence(db).catch((err) => {
-    if (err.code === 'failed-precondition') {
-      // Multiple tabs open, persistence can only be enabled in one tab at a time.
-      console.warn('Firestore persistence failed-precondition (multiple tabs open)');
-    } else if (err.code === 'unimplemented') {
-      // The current browser doesn't support all of the features required to enable persistence
-      console.warn('Firestore persistence unimplemented in this browser');
-    }
-  });
+  try {
+    enableMultiTabIndexedDbPersistence(db).catch((err) => {
+      if (err.code === 'failed-precondition') {
+        console.warn('Firestore persistence failed-precondition (multiple tabs open)');
+      } else if (err.code === 'unimplemented') {
+        console.warn('Firestore persistence unimplemented in this browser');
+      } else {
+        console.warn('Firestore persistence note:', err.message);
+      }
+    });
+  } catch (e) {
+    console.warn('Firestore persistence initialization bypassed in restricted iframe:', e);
+  }
 }
+
 
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({

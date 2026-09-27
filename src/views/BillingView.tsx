@@ -88,6 +88,9 @@ export function BillingView() {
   };
 
   const getMockStatus = (customer: Customer) => {
+    if ((customer.advanceBalance && customer.advanceBalance > 0) || customer.status === 'Advance Paid') {
+      return "Advance Paid";
+    }
     if (customer.balance === 0) {
       return customer.invoiceSent ? "Paid & Sent" : "Paid";
     }
@@ -104,9 +107,9 @@ export function BillingView() {
 
     const status = getMockStatus(c);
     if (activeTab === 'Unpaid') {
-      if (status === "Paid" || status === "Paid & Sent") return false;
+      if (status === "Paid" || status === "Paid & Sent" || status === "Advance Paid") return false;
     } else {
-      if (status !== "Paid" && status !== "Paid & Sent") return false;
+      if (status !== "Paid" && status !== "Paid & Sent" && status !== "Advance Paid") return false;
     }
     return true;
   });
@@ -180,7 +183,9 @@ export function BillingView() {
     }
     const status = getMockStatus(customer);
     let message = "";
-    if (status === "Pending" || status === "Overdue") {
+    if (status === "Advance Paid") {
+      message = `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit balance. Your remaining advance balance is ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`;
+    } else if (status === "Pending" || status === "Overdue") {
       message = `Dear ${customer.name}, your water bill for ${currentMonth} is currently due. Your outstanding balance is ₹${customer.balance}. Please make the payment at your earliest convenience to avoid any service interruption. Attached is your official invoice.`;
     } else {
       message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official receipt.`;
@@ -339,7 +344,12 @@ export function BillingView() {
   const deliveryModeRef = useRef("api");
 
   const handleSendMonthlyPaidBills = () => {
-    const paidCustomers = customers.filter(c => c.status === 'Active' && getMockStatus(c) === "Paid" && c.mobileNumber && c.mobileNumber.replace(/\D/g, '').length >= 10);
+    const paidCustomers = customers.filter(c => 
+      (c.status === 'Active' || c.status === 'Advance Paid') && 
+      (getMockStatus(c) === "Paid" || getMockStatus(c) === "Advance Paid") && 
+      c.mobileNumber && 
+      c.mobileNumber.replace(/\D/g, '').length >= 10
+    );
     if (paidCustomers.length === 0) {
       showAlert("No Pending Invoices", "No valid customers currently need a paid bill receipt sent.");
       return;
@@ -357,7 +367,7 @@ export function BillingView() {
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk WhatsApp Invoices",
-      message: `Send authentic PDF invoices to all ${paidCustomers.length} valid newly paid customers via WhatsApp?`,
+      message: `Send authentic PDF invoices/statements to all ${paidCustomers.length} paid and advance-covered customers via WhatsApp?`,
       isDestructive: false,
       showCancel: true,
       children: (
@@ -405,7 +415,10 @@ export function BillingView() {
 
         for (let i = 0; i < paidCustomers.length; i++) {
           const customer = paidCustomers[i];
-          const message = `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
+          const isAdv = getMockStatus(customer) === "Advance Paid" || (customer.advanceBalance && customer.advanceBalance > 0);
+          const message = isAdv
+            ? `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit. Remaining advance balance: ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`
+            : `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
           
           // Generate PDF for attachment
           const pdfBlob = generateInvoicePDF(customer, settings);
@@ -489,21 +502,52 @@ export function BillingView() {
       isDestructive: false,
       showCancel: true,
       onConfirm: async () => {
-        const activeCustomers = customers.filter(c => c.status === 'Active');
+        const activeCustomers = customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid');
         let processedCount = 0;
         let totalBilled = 0;
+        let advanceSettledCount = 0;
+        let totalAdvanceSettled = 0;
+
         for (let i = 0; i < activeCustomers.length; i += 400) {
           const batch = writeBatch(db);
           const chunk = activeCustomers.slice(i, i + 400);
           for (const customer of chunk) {
             const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+            const advance = Number(customer.advanceBalance) || 0;
+            const billingAmt = Number(settings.billingAmount) || 200;
+            let newBalance = Number(customer.balance) || 0;
+            let newAdvance = advance;
+            let newStatus = customer.status;
+            let isCoveredByAdvance = false;
+
+            if (advance >= billingAmt) {
+              newAdvance = advance - billingAmt;
+              newBalance = 0;
+              newStatus = newAdvance > 0 ? 'Advance Paid' : 'Active';
+              isCoveredByAdvance = true;
+              advanceSettledCount++;
+              totalAdvanceSettled += billingAmt;
+            } else if (advance > 0) {
+              newBalance = (Number(customer.balance) || 0) + (billingAmt - advance);
+              newAdvance = 0;
+              newStatus = 'Active';
+              advanceSettledCount++;
+              totalAdvanceSettled += advance;
+            } else {
+              newBalance = (Number(customer.balance) || 0) + billingAmt;
+              newAdvance = 0;
+            }
+
             batch.update(doc(db, 'customers', targetDocId), { 
-              balance: customer.balance + settings.billingAmount,
-              invoiceSent: false,
+              balance: newBalance,
+              advanceBalance: newAdvance,
+              status: newStatus,
+              invoiceSent: isCoveredByAdvance,
+              paymentNotified: isCoveredByAdvance,
               ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
             });
             processedCount++;
-            totalBilled += settings.billingAmount;
+            totalBilled += billingAmt;
           }
            try {
                await batch.commit();
@@ -516,10 +560,14 @@ export function BillingView() {
         
         const effectiveOwnerId = currentOwnerId || auth.currentUser?.uid;
         if (processedCount > 0 && effectiveOwnerId) {
+          const auditDesc = advanceSettledCount > 0
+            ? `Manual Bulk Bill Generation (${advanceSettledCount} accounts settled from advance credit: ₹${totalAdvanceSettled})`
+            : 'Manual Bulk Bill Generation';
+
           await saveBillingAuditLog({
             ownerId: effectiveOwnerId,
             type: 'bill_generation',
-            description: 'Manual Bulk Bill Generation',
+            description: auditDesc,
             affectedCustomersCount: processedCount,
             totalAmount: totalBilled,
             timestamp: new Date().toISOString(),
@@ -527,7 +575,11 @@ export function BillingView() {
           }, effectiveOwnerId);
         }
         
-        showAlert("Success", "Billing cycle completed successfully!");
+        let successMessage = `Billing cycle completed successfully! Generated bills for ${processedCount} accounts.`;
+        if (advanceSettledCount > 0) {
+          successMessage += `\n\n💰 Advance Payment Impact: ${advanceSettledCount} accounts were automatically settled from pre-paid advance credit (Total ${formatCurrency(totalAdvanceSettled)} deducted).`;
+        }
+        showAlert("Success", successMessage);
       }
     });
   };
@@ -540,7 +592,7 @@ export function BillingView() {
       isDestructive: true,
       showCancel: true,
       onConfirm: async () => {
-        const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+        const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance === 0));
         let processedCount = 0;
         let totalPenalties = 0;
         for (let i = 0; i < activeCustomers.length; i += 400) {
@@ -757,17 +809,28 @@ export function BillingView() {
                       </td>
                       <td className="px-4 py-4">{customer.name}</td>
                       <td className="px-4 py-4">{currentMonth}</td>
-                      <td className="px-4 py-4 font-medium">{formatCurrency(customer.balance)}</td>
+                      <td className="px-4 py-4 font-medium">
+                        {customer.balance > 0 ? (
+                          formatCurrency(customer.balance)
+                        ) : (customer.advanceBalance && customer.advanceBalance > 0) ? (
+                          <div className="flex flex-col">
+                            <span className="text-slate-400 text-xs">₹0</span>
+                            <span className="text-teal-600 font-bold text-xs">+{formatCurrency(customer.advanceBalance)} Adv</span>
+                          </div>
+                        ) : (
+                          <span className="text-emerald-600">₹0</span>
+                        )}
+                      </td>
                       <td className="px-4 py-4">
-                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                        <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                           customer.status === 'Suspended' ? 'bg-red-200 text-red-900 border border-red-500 font-bold tracking-wider' :
-                          customer.status === 'Advance Paid' ? 'bg-blue-100 text-blue-800 border border-blue-400 font-bold tracking-wider' :
+                          ((customer.advanceBalance && customer.advanceBalance > 0) || customer.status === 'Advance Paid') ? 'bg-teal-100 text-teal-800 border border-teal-400 font-bold tracking-wider' :
                           status === 'Paid' ? 'bg-emerald-100 text-emerald-700' : 
                           status === 'Paid & Sent' ? 'bg-blue-100 text-blue-700' :
                           status === 'Overdue' ? 'bg-red-100 text-red-700' :
                           'bg-amber-100 text-amber-700'
                         }`}>
-                          {customer.status === 'Suspended' ? 'SUSPENDED' : customer.status === 'Advance Paid' ? 'ADVANCE PAID' : status}
+                          {customer.status === 'Suspended' ? 'SUSPENDED' : ((customer.advanceBalance && customer.advanceBalance > 0) || customer.status === 'Advance Paid') ? `ADVANCE PAID (${formatCurrency(customer.advanceBalance || 0)})` : status}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-xs neu-text-muted">{formattedDueDate}</td>

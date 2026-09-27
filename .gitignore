@@ -1,6 +1,4 @@
 node_modules/
-build/
-dist/
 coverage/
 .DS_Store
 *.log
@@ -8,3 +6,4 @@ coverage/
 !.env.example
 .wwebjs_auth/
 .wwebjs_cache/
+

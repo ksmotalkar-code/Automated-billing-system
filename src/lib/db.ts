@@ -26,6 +26,30 @@ export interface FirestoreErrorInfo {
   }
 }
 
+let quotaExceededUntil = 0;
+
+export const setQuotaLock = (durationMs = 45000) => {
+  quotaExceededUntil = Date.now() + durationMs;
+  try {
+    localStorage.setItem('firestore_quota_expiry', String(quotaExceededUntil));
+  } catch (e) {}
+};
+
+export const isQuotaExceeded = () => {
+  if (Date.now() < quotaExceededUntil) return true;
+  try {
+    const stored = localStorage.getItem('firestore_quota_expiry');
+    if (stored) {
+      const expiry = parseInt(stored, 10);
+      if (!isNaN(expiry) && Date.now() < expiry) {
+        quotaExceededUntil = expiry;
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+};
+
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errorMessage = error instanceof Error ? error.message : String(error);
   
@@ -48,9 +72,20 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
 
-  if (errorMessage.includes('resource-exhausted') || errorMessage.includes('Quota')) {
-    console.warn('Firestore Quota Notice.', errInfo);
-    throw new Error('resource-exhausted: Your database quota or rate limit has been reached. Please wait a moment or check project limits.');
+  if (
+    errorMessage.includes('resource-exhausted') || 
+    errorMessage.includes('Quota') || 
+    errorMessage.includes('rate') || 
+    errorMessage.includes('Rate') || 
+    errorMessage.includes('429') ||
+    errorMessage.includes('EXCEEDED')
+  ) {
+    console.warn('[WARNING] Firestore Quota / Rate Limit Exceeded.', errInfo);
+    setQuotaLock(45000); // 45 seconds cooling-off lock
+    if (operationType === OperationType.LIST || operationType === OperationType.GET) {
+      return; // Do NOT throw on read/list subscriptions so the UI stays stable and cached data displays
+    }
+    throw new Error('Rate limit temporarily reached. Please wait a few seconds before retrying.');
   }
 
   if (errorMessage.includes('client is offline')) {
@@ -58,13 +93,20 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     return; // Do NOT throw, so we can fall back to null/default and not break the UI
   }
 
+  if (errorMessage.includes('Disconnecting idle stream') || errorMessage.includes('Timed out waiting for new targets') || errorMessage.includes('CANCELLED')) {
+    console.debug('Firestore idle stream reconnected:', errInfo);
+    return; // Normal gRPC idle channel refresh, do not throw
+  }
+
+  if (errorMessage.includes('permission-denied') || errorMessage.includes('Missing or insufficient permissions')) {
+    console.warn(`[WARNING] Firestore Permission Notice (${operationType} ${path}): User may be unauthenticated or auth token updating.`, errInfo);
+    return; // Do NOT throw on permission warnings during subscriptions
+  }
+
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-export const isQuotaExceeded = () => {
-  return false;
-};
 
 export interface Customer {
   id: string; // The sequential digital ID (e.g. "1", "2")
@@ -73,6 +115,7 @@ export interface Customer {
   mobileNumber: string;
   status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid';
   balance: number;
+  advanceBalance?: number; // Pre-paid credit amount in advance
   ownerId?: string;
   invoiceSent?: boolean;
   paymentNotified?: boolean;
@@ -143,10 +186,20 @@ export interface Report {
 export interface Transaction {
   id: string;
   customerId: string;
+  customerName?: string;
   amount: number;
   transactionId: string;
   date: string;
   ownerId?: string;
+  isAdvanceCredit?: boolean;
+  advanceAdjustment?: number; // Positive (+₹X) when advance credit is recorded, Negative (-₹X) when deducted during billing cycle
+  paymentType?: 'bill_payment' | 'advance_credit' | 'advance_adjustment' | 'bill_and_advance' | string;
+  paymentMode?: 'cash' | 'upi' | 'bank_transfer' | 'advance_credit' | string;
+  previousBalance?: number;
+  newBalance?: number;
+  previousAdvance?: number;
+  newAdvance?: number;
+  notes?: string;
 }
 
 export interface AutomationSettings {
@@ -435,13 +488,26 @@ export const addCustomer = async (
     ? 'Faulty' 
     : (['Active', 'Suspended', 'Faulty', 'Advance Paid'].includes(customer.status as any) ? customer.status as any : 'Active');
 
+  let rawBalance = Number(customer.balance) || 0;
+  let rawAdvance = Number(customer.advanceBalance) || 0;
+  let statusToSet = finalStatus;
+
+  if (rawBalance < 0) {
+    rawAdvance = rawAdvance + Math.abs(rawBalance);
+    rawBalance = 0;
+    statusToSet = 'Advance Paid';
+  } else if (rawAdvance > 0 && rawBalance === 0) {
+    statusToSet = 'Advance Paid';
+  }
+
   const newCustomer: Customer = {
     ...customer,
     id: assignedId,
     name: String(customer.name || "Customer").trim().slice(0, 100),
     mobileNumber: cleanMobile,
-    status: finalStatus,
-    balance: Number(customer.balance) || 0,
+    status: statusToSet,
+    balance: rawBalance,
+    advanceBalance: rawAdvance,
     docId,
     ownerId: uid,
     createdAt: new Date().toISOString()
@@ -598,6 +664,17 @@ export const updateCustomer = async (
   }
 
   try {
+    let bal = typeof updatedCustomer.balance === 'number' ? updatedCustomer.balance : (Number(updatedCustomer.balance) || 0);
+    let adv = typeof updatedCustomer.advanceBalance === 'number' ? updatedCustomer.advanceBalance : (Number(updatedCustomer.advanceBalance) || 0);
+    let stat = updatedCustomer.status || 'Active';
+    if (bal < 0) {
+      adv = adv + Math.abs(bal);
+      bal = 0;
+      stat = 'Advance Paid';
+    } else if (adv > 0 && bal === 0) {
+      stat = 'Advance Paid';
+    }
+
     if (oldCustomerSeq !== targetId) {
       // Migrate document from currentDocId to targetDocId atomically
       const batch = writeBatch(db);
@@ -609,6 +686,9 @@ export const updateCustomer = async (
         id: targetId,
         docId: targetDocId,
         ownerId: uid,
+        balance: bal,
+        advanceBalance: adv,
+        status: stat,
       };
 
       batch.set(newRef, newCustomerData);
@@ -631,7 +711,9 @@ export const updateCustomer = async (
             ...pData,
             portalId: targetId,
             customerId: targetId,
-            ownerId: uid
+            ownerId: uid,
+            balance: bal,
+            advanceBalance: adv,
           });
           batch.delete(portalOldRef);
         }
@@ -682,9 +764,34 @@ export const updateCustomer = async (
         id: targetId,
         docId: currentDocId,
         ownerId: uid,
-        balance: typeof updatedCustomer.balance === 'number' ? updatedCustomer.balance : (Number(updatedCustomer.balance) || 0),
-        status: updatedCustomer.status || 'Active',
+        balance: bal,
+        advanceBalance: adv,
+        status: stat,
       }, { merge: true });
+
+      // Synchronize public_portals record so citizen portal reflects live advance balance
+      try {
+        await setDoc(doc(db, 'public_portals', targetId), {
+          balance: bal,
+          advanceBalance: adv,
+          customerId: targetId,
+          customerName: updatedCustomer.name,
+          mobileNumber: updatedCustomer.mobileNumber,
+          ownerId: uid,
+        }, { merge: true });
+        if (currentDocId !== targetId) {
+          await setDoc(doc(db, 'public_portals', currentDocId), {
+            balance: bal,
+            advanceBalance: adv,
+            customerId: targetId,
+            customerName: updatedCustomer.name,
+            mobileNumber: updatedCustomer.mobileNumber,
+            ownerId: uid,
+          }, { merge: true });
+        }
+      } catch (portalSyncErr) {
+        console.warn("Non-fatal public_portal sync notice:", portalSyncErr);
+      }
       
       // If duplicate, update other docs to Faulty
       if (isDuplicate && snapshotDocs.length > 0) {

@@ -20,15 +20,25 @@
     },
     "Transaction": {
       "title": "Transaction",
-      "description": "A payment transaction ledger entry",
+      "description": "A payment transaction ledger entry with advance adjustment tracking",
       "type": "object",
       "properties": {
         "id": { "type": "string", "description": "Transaction ID", "maxLength": 64 },
         "customerId": { "type": "string", "description": "Customer ID", "maxLength": 64 },
+        "customerName": { "type": "string", "description": "Customer Name", "maxLength": 100 },
         "amount": { "type": "number", "description": "Payment Amount" },
         "transactionId": { "type": "string", "description": "UPI / Cash Transaction ID / UTR", "maxLength": 100 },
         "date": { "type": "string", "format": "date-time", "description": "Transaction Date" },
-        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 }
+        "ownerId": { "type": "string", "description": "ID of the user who owns this record", "maxLength": 128 },
+        "isAdvanceCredit": { "type": "boolean", "description": "Whether payment is or includes advance credit" },
+        "advanceAdjustment": { "type": "number", "description": "Amount credited (+) or deducted (-) from advance balance" },
+        "paymentType": { "type": "string", "description": "Type of payment: bill_payment, advance_credit, advance_adjustment" },
+        "paymentMode": { "type": "string", "description": "Payment mode: cash, upi, bank_transfer, advance_credit" },
+        "previousBalance": { "type": "number", "description": "Balance before transaction" },
+        "newBalance": { "type": "number", "description": "Balance after transaction" },
+        "previousAdvance": { "type": "number", "description": "Advance balance before transaction" },
+        "newAdvance": { "type": "number", "description": "Advance balance after transaction" },
+        "notes": { "type": "string", "description": "Transaction notes or audit description" }
       },
       "required": ["id", "customerId", "amount", "transactionId", "date", "ownerId"]
     },
@@ -175,6 +185,28 @@
         "createdAt": { "type": "number", "description": "Creation millisecond timestamp" }
       },
       "required": ["portalId", "ownerId", "customerId", "customerName", "balance", "createdAt"]
+    },
+    "WhatsappLog": {
+      "title": "WhatsappLog",
+      "description": "Live audit logs of WhatsApp webhook and outbound messages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Log ID", "maxLength": 64 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "direction": { "type": "string", "enum": ["inbound", "outbound", "system"], "description": "Message direction" },
+        "mobile": { "type": "string", "description": "Mobile number", "maxLength": 30 },
+        "senderName": { "type": "string", "description": "Resident or sender name", "maxLength": 100 },
+        "messageType": { "type": "string", "description": "Message type" },
+        "messageBody": { "type": "string", "description": "Message body" },
+        "replyText": { "type": "string", "description": "Bot reply text" },
+        "intentMatched": { "type": "string", "description": "Matched intent or rule" },
+        "status": { "type": "string", "enum": ["success", "warning", "failed"], "description": "Execution status" },
+        "metaMessageId": { "type": "string", "description": "Meta WhatsApp message ID" },
+        "error": { "type": "string", "description": "Error details if any" },
+        "latencyMs": { "type": "number", "description": "Latency in milliseconds" },
+        "createdAtIso": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "ownerId", "direction", "mobile", "status"]
     }
   },
   "firestore": {
@@ -225,6 +257,10 @@
     "/public_portals/{portalId}": {
       "schema": { "$ref": "#/entities/PublicPortal" },
       "description": "Citizen public portal records"
+    },
+    "/whatsapp_logs/{logId}": {
+      "schema": { "$ref": "#/entities/WhatsappLog" },
+      "description": "Live WhatsApp webhook and outbound audit logs"
     }
   }
 }

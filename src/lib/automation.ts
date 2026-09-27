@@ -107,7 +107,14 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   const watermarkCenterX = (colLeft + colRight) / 2; // 105mm (exact center of page)
   const watermarkCenterY = startY + (rowHeight * totalRows) / 2; // 122.5mm (exact center of table)
 
-  if (isPaid || customer.balance <= 0) {
+  const hasAdvance = (customer.advanceBalance || 0) > 0 || customer.status === 'Advance Paid';
+
+  if (hasAdvance && customer.balance <= 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(38);
+    doc.setTextColor(190, 245, 205); // soft faint pastel green
+    doc.text("ADVANCE PAID", watermarkCenterX, watermarkCenterY, { align: 'center', angle: 25 });
+  } else if (isPaid || customer.balance <= 0) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(55);
     doc.setTextColor(190, 245, 205); // soft faint pastel green
@@ -171,13 +178,20 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   doc.setFont("helvetica", "bold");
   doc.text("Total Payable", colLeft + 4, startY + (rowHeight * 5) + 6.5);
   doc.setFont("helvetica", "normal");
-  const totalPayableStr = (customer.balance <= 0 && isPaid) ? "None" : customer.balance.toFixed(2);
+  const totalPayableStr = (customer.balance <= 0 && (isPaid || hasAdvance)) ? "None" : customer.balance.toFixed(2);
   doc.text(totalPayableStr, verticalLineX + 4, startY + (rowHeight * 5) + 6.5);
 
   // 7. Bottom Solid Horizontal Divider Line (edge to edge)
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.8);
   doc.line(14, 163, 196, 163);
+
+  if (customer.advanceBalance && customer.advanceBalance > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(13, 148, 136); // teal
+    doc.text(`* Pre-paid Advance Credit Balance: Rs. ${customer.advanceBalance.toFixed(2)} (Will automatically apply to future bills)`, 16, 170);
+  }
 
   return doc.output('blob');
 };
@@ -194,7 +208,7 @@ export const sendWhatsAppNotification = async (
   templateParams?: any[],
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
-  if (customer.status === 'Suspended' || customer.status === 'Advance Paid') {
+  if (customer.status === 'Suspended') {
     return { success: false, error: `Customer status is "${customer.status}". Automated billing notifications are disabled for this account.` };
   }
   if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
@@ -372,7 +386,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     
     if (automation.scheduledBilling && isBillingDay && monthsSinceLastBill >= settings.billingCycleMonths) {
       console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
-      const activeCustomers = customers.filter(c => c.status === 'Active');
+      const activeCustomers = customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid');
       
       // Prevent loop immediately by saving locally
       localStorage.setItem(`automation_billing_${settings.ownerId || 'sys'}`, now.toISOString());
@@ -387,22 +401,76 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
         const chunk = activeCustomers.slice(i, i + 200);
         
         for (const customer of chunk) {
-          const newBalance = customer.balance + settings.billingAmount;
+          const advance = Number(customer.advanceBalance) || 0;
+          const billingAmt = Number(settings.billingAmount) || 200;
+          let newBalance = Number(customer.balance) || 0;
+          let newAdvance = advance;
+          let newStatus = customer.status;
+          let isCoveredByAdvance = false;
+
+          if (advance >= billingAmt) {
+            newAdvance = advance - billingAmt;
+            newBalance = 0;
+            newStatus = newAdvance > 0 ? 'Advance Paid' : 'Active';
+            isCoveredByAdvance = true;
+          } else if (advance > 0) {
+            newBalance = (Number(customer.balance) || 0) + (billingAmt - advance);
+            newAdvance = 0;
+            newStatus = 'Active';
+          } else {
+            newBalance = (Number(customer.balance) || 0) + billingAmt;
+            newAdvance = 0;
+          }
+
           const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
           batch.update(doc(db, 'customers', targetDocId), {
             balance: newBalance,
-            invoiceSent: false,
-            paymentNotified: false
+            advanceBalance: newAdvance,
+            status: newStatus,
+            invoiceSent: isCoveredByAdvance,
+            paymentNotified: isCoveredByAdvance
           });
+
+          // Log transaction for advance credit deductions
+          if (advance > 0) {
+            const usedAdvance = advance >= billingAmt ? billingAmt : advance;
+            const autoTxnId = `AUTO-ADV-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+            batch.set(doc(db, 'transactions', autoTxnId), {
+              id: autoTxnId,
+              customerId: customer.id,
+              customerName: customer.name,
+              amount: usedAdvance,
+              transactionId: `CYCLE-ADJ-${now.toISOString().split('T')[0]}`,
+              date: now.toISOString(),
+              ownerId: effectiveOwnerId || auth.currentUser?.uid || '',
+              paymentMode: 'advance_credit',
+              paymentType: 'advance_adjustment',
+              isAdvanceCredit: false,
+              advanceAdjustment: -usedAdvance,
+              previousBalance: Number(customer.balance) || 0,
+              newBalance: newBalance,
+              previousAdvance: advance,
+              newAdvance: newAdvance,
+              notes: `Automated advance credit adjustment of INR ${usedAdvance.toFixed(2)} applied to billing cycle`
+            });
+          }
+
           processedCount++;
-          totalBilled += settings.billingAmount;
+          totalBilled += billingAmt;
 
           // If smart notifications are enabled, automatically text them their new bill
           if (automation.smartNotifications && automation.bulkProcessing) {
             try {
-              const message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
-              const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance }, updatedSettings);
-              sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, 'billing')
+              let message = "";
+              if (isCoveredByAdvance) {
+                message = `Dear ${customer.name}, your water bill of INR ${billingAmt.toFixed(2)} for the new cycle has been automatically paid from your advance credit. Remaining advance balance: INR ${newAdvance.toFixed(2)}. No payment is required. Thank you!`;
+              } else if (advance > 0) {
+                message = `Dear ${customer.name}, your water bill of INR ${billingAmt.toFixed(2)} has been partially covered by your INR ${advance.toFixed(2)} advance credit. Remaining balance due is INR ${newBalance.toFixed(2)}. Please pay by the due date.`;
+              } else {
+                message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
+              }
+              const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance, advanceBalance: newAdvance, status: newStatus }, updatedSettings);
+              sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, isCoveredByAdvance ? 'receipt' : 'billing')
                 .then(res => {
                   if (!res.success && res.error) {
                     logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'billing' });
@@ -446,7 +514,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   const daysSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24) : 0;
   if (automation.lateFee && daysSinceLastBill >= settings.penaltyDays && (!lastPenalty || lastPenalty < (lastBilling || now))) {
     console.log("Automated Penalty Application Triggered");
-    const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+    const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance === 0));
     
     // Pre-save to avoid quota loop
     localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
@@ -514,7 +582,7 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   const escalationDays = settings.escalationDays || 60;
   if (automation.billingLifecycle && automation.ruleBased && daysSinceLastBill >= escalationDays && settings.autoSuspend) {
     console.log("Automated Escalation / Suspension Triggered");
-    const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount);
+    const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance <= 0));
     
     localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
     let suspendProcessedCount = 0;

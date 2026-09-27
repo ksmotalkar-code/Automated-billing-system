@@ -20,15 +20,35 @@ const saveLogs = () => {
   } catch (e) {}
 };
 
-const addLog = (level: 'info' | 'warn' | 'error', ...args: any[]) => {
-  const message = args.map(a => 
-    typeof a === 'object' ? (a instanceof Error ? a.stack || a.message : JSON.stringify(a)) : String(a)
-  ).join(' ');
-  logs.push({ timestamp: Date.now(), level, message });
-  if (logs.length > MAX_LOGS) {
-    logs = logs.slice(logs.length - MAX_LOGS);
+const safeStringify = (arg: any): string => {
+  if (arg === null || arg === undefined) return String(arg);
+  if (typeof arg !== 'object') return String(arg);
+  if (arg instanceof Error) return arg.stack || arg.message;
+  try {
+    return JSON.stringify(arg, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (typeof window !== 'undefined' && (value instanceof HTMLElement || value instanceof Window)) {
+          return '[DOM Object]';
+        }
+      }
+      return value;
+    });
+  } catch (e) {
+    return String(arg);
   }
-  saveLogs();
+};
+
+const addLog = (level: 'info' | 'warn' | 'error', ...args: any[]) => {
+  try {
+    const message = args.map(a => safeStringify(a)).join(' ');
+    logs.push({ timestamp: Date.now(), level, message });
+    if (logs.length > MAX_LOGS) {
+      logs = logs.slice(logs.length - MAX_LOGS);
+    }
+    saveLogs();
+  } catch (e) {
+    // Prevent logger error from breaking console calls
+  }
 };
 
 const originalLog = console.log;
@@ -56,3 +76,4 @@ export const clearLogs = () => {
   logs = [];
   saveLogs();
 };
+

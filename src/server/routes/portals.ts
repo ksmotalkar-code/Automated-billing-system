@@ -48,6 +48,7 @@ export function createPortalsRouter(getDb: () => any) {
         customerName: customer.name || "Customer",
         mobileNumber: customer.mobileNumber || "",
         balance: customer.balance || 0,
+        advanceBalance: customer.advanceBalance || 0,
         billingAmount: settings.billingAmount || 0,
         penaltyAmount: settings.penaltyAmount || 0,
         penaltyDays: settings.penaltyDays || 0,

@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CommandManagerWrapper } from "../components/CommandManager";
 import { useTranslation } from "react-i18next";
 import { useTenant } from "../contexts/TenantContext";
+import { ChatbotDiagnosticWidget } from "../components/ChatbotDiagnosticWidget";
 
 export function ChatbotView() {
   const { currentOwnerId } = useTenant();
@@ -210,6 +211,8 @@ export function ChatbotView() {
           </AnimatePresence>
         </div>
       </div>
+      
+      <ChatbotDiagnosticWidget className="mb-6" />
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Statistics and Status */}
@@ -331,11 +334,16 @@ export function ChatbotView() {
                 </div>
               </div>
 
-              {/* Interactive Bot Simulation */}
+              {/* Live Real-Case Command Test */}
               <div className="p-3.5 neu-pressed rounded-2xl bg-blue-500/5 space-y-2.5">
-                <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 block">
-                  Simulate WhatsApp Incoming Message
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-black uppercase tracking-widest text-blue-600 block">
+                    Quick Live Command Test
+                  </span>
+                  <span className="text-[8px] font-bold text-emerald-600 uppercase bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                    Real Case Engine
+                  </span>
+                </div>
                 <div className="flex gap-1.5">
                   <input
                     type="text"
@@ -355,7 +363,7 @@ export function ChatbotView() {
                 </div>
 
                 <div className="flex flex-wrap gap-1">
-                  {["Hi", "Reports", "1", "2", "Download My Bill", "Complaints"].map((btn) => (
+                  {["Hi", "Download My Bill", "Pay Bill", "Check Balance", "Reports", "1", "Complaints"].map((btn) => (
                     <button
                       key={btn}
                       onClick={() => {
@@ -375,8 +383,11 @@ export function ChatbotView() {
                     animate={{ opacity: 1, y: 0 }}
                     className="p-2.5 bg-white dark:bg-black/50 rounded-xl border border-blue-200 dark:border-blue-900 text-[10px] space-y-1"
                   >
-                    <div className="font-bold text-neutral-400 uppercase text-[8px]">Simulated Bot Response:</div>
-                    <div className="whitespace-pre-wrap font-sans text-neutral-800 dark:text-neutral-200">
+                    <div className="flex items-center justify-between font-bold text-neutral-400 uppercase text-[8px]">
+                      <span>Target: {simResult.customer?.name || "Real Resident"}</span>
+                      <span className="text-emerald-600">{simResult.latencyMs ? `${simResult.latencyMs}ms` : "Real Execution"}</span>
+                    </div>
+                    <div className="whitespace-pre-wrap font-sans text-neutral-800 dark:text-neutral-200 text-[11px] leading-relaxed">
                       {simResult.botResponse}
                     </div>
                   </motion.div>

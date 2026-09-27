@@ -12,22 +12,112 @@ export default defineConfig(({mode}) => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['favicon.ico.jpg', 'pwa-192x192.svg', 'pwa-512x512.svg'],
+        includeAssets: ['favicon.ico.jpg', 'pwa-192x192.svg', 'pwa-512x512.svg', 'vwsc_seal.png'],
         devOptions: {
-          enabled: false,
+          enabled: true,
           type: 'module',
         },
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          runtimeCaching: [
+            {
+              // Cache Firestore REST / gRPC web calls for customer profiles and billing history offline access
+              urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'firestore-data-cache',
+                expiration: {
+                  maxEntries: 1000,
+                  maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+                networkTimeoutSeconds: 5,
+              },
+            },
+            {
+              // Cache Firebase Auth endpoints for session persistence
+              urlPattern: /^https:\/\/identitytoolkit\.googleapis\.com\/.*/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'firebase-auth-cache',
+                expiration: {
+                  maxEntries: 50,
+                  maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              // Cache Google Fonts CSS
+              urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'google-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 365 * 24 * 60 * 60, // 1 year
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              // Cache Google Fonts webfonts
+              urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'gstatic-fonts-cache',
+                expiration: {
+                  maxEntries: 10,
+                  maxAgeSeconds: 365 * 24 * 60 * 60, // 1 year
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              // Cache static images, badges, and seals
+              urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp|ico)$/i,
+              handler: 'StaleWhileRevalidate',
+              options: {
+                cacheName: 'images-asset-cache',
+                expiration: {
+                  maxEntries: 100,
+                  maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+                },
+              },
+            },
+            {
+              // Cache API routes
+              urlPattern: /\/api\/.*/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'api-routes-cache',
+                expiration: {
+                  maxEntries: 200,
+                  maxAgeSeconds: 24 * 60 * 60, // 24 hours
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+          ],
         },
         manifest: {
           id: '/',
           start_url: '/',
           scope: '/',
-          name: 'Panchayat Water Billing',
+          name: 'Panchayat Water Billing & Management',
           short_name: 'WaterBill',
-          description: 'A powerful automated billing application for Gram Panchayat',
+          description: 'A powerful automated billing and customer management application for Gram Panchayat with full offline support.',
           theme_color: '#1a202c',
           background_color: '#1a202c',
           display: 'standalone',
@@ -58,6 +148,8 @@ export default defineConfig(({mode}) => {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ""),
     },
     build: {
+      outDir: 'dist',
+      emptyOutDir: true,
       sourcemap: false,
       minify: false,
     },

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2, Banknote, RefreshCw, Smartphone } from "lucide-react";
+import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2, Banknote, RefreshCw, Smartphone, Clock, History, Sparkles, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -8,6 +8,7 @@ import { useTenant } from "../contexts/TenantContext";
 import { PaymentReceipt } from "../lib/portal";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { PaymentHistory } from "../components/PaymentHistory";
 import { sendWhatsAppNotification, generateInvoicePDF } from "../lib/automation";
 import { writeBatch, doc } from "firebase/firestore";
 import { db, auth } from "../firebase";
@@ -15,13 +16,16 @@ import { v4 as uuidv4 } from "uuid";
 
 export function PaymentsView() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'pending' | 'list'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'list' | 'history'>('pending');
   const { customers, settings, pendingReceipts } = useData();
   const { currentOwnerId } = useTenant();
   const [searchQuery, setSearchQuery] = useState("");
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [paymentRecordingType, setPaymentRecordingType] = useState<'standard' | 'advance'>('standard');
+  const [historyModalCustomer, setHistoryModalCustomer] = useState<Customer | null>(null);
   const [selectedReceipt, setSelectedReceipt] = useState<PaymentReceipt | null>(null);
+  const [receiptApprovedAmount, setReceiptApprovedAmount] = useState<string>("");
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState<string>("");
   const [paymentMode, setPaymentMode] = useState<'cash' | 'upi'>('cash');
@@ -91,7 +95,7 @@ export function PaymentsView() {
 
   const filteredCustomers = customers.filter(c => {
     const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
-    const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''}`.toLowerCase();
+    const searchStr = `${c.name} ${c.id} ${c.mobileNumber} ${c.status || ''} ${(c.advanceBalance && c.advanceBalance > 0) ? 'advance advance-paid credit' : ''}`.toLowerCase();
     return searchTerms.length === 0 || searchTerms.every(term => searchStr.includes(term));
   });
 
@@ -109,9 +113,12 @@ export function PaymentsView() {
     currentPage * itemsPerPage
   );
 
-  const handleOpenPayment = (customer: Customer) => {
+  const handleOpenPayment = (customer: Customer, initialMode: 'standard' | 'advance' = 'standard') => {
     setSelectedCustomer(customer);
-    const initialAmount = customer.balance > 0 ? customer.balance.toString() : "0";
+    setPaymentRecordingType(initialMode === 'advance' || customer.balance <= 0 ? 'advance' : 'standard');
+    const initialAmount = customer.balance > 0 && initialMode !== 'advance' 
+      ? customer.balance.toString() 
+      : (settings?.billingAmount || 200).toString();
     setPaymentAmount(initialAmount);
     setPaymentMode('cash');
     setTransactionId(generateCashReceiptId());
@@ -134,41 +141,103 @@ export function PaymentsView() {
 
     setIsConfirming(true);
     try {
-      // Calculate updated balance
-      const newBalance = Math.max(0, selectedCustomer.balance - amount);
-      const updatedCustomer = {
+      // Calculate updated balance and advance balance
+      const currentDue = Number(selectedCustomer.balance) || 0;
+      const currentAdvance = Number(selectedCustomer.advanceBalance) || 0;
+      let newBalance = 0;
+      let newAdvance = currentAdvance;
+      let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = selectedCustomer.status || 'Active';
+      let isAdvanceCreditAdded = false;
+      let isDirectAdvanceDeposit = paymentRecordingType === 'advance';
+      let advanceAdjustment = 0;
+      let paymentType: 'bill_payment' | 'advance_credit' | 'bill_and_advance' = 'bill_payment';
+      let ledgerNote = "";
+
+      if (isDirectAdvanceDeposit) {
+        // Direct pre-payment into Advance Balance
+        newBalance = currentDue;
+        newAdvance = currentAdvance + amount;
+        status = 'Advance Paid';
+        isAdvanceCreditAdded = true;
+        advanceAdjustment = amount;
+        paymentType = 'advance_credit';
+        ledgerNote = `Direct Advance Credit pre-payment of ${formatCurrency(amount)} recorded`;
+      } else if (amount <= currentDue) {
+        // Standard payment applying to current due
+        newBalance = currentDue - amount;
+        advanceAdjustment = 0;
+        paymentType = 'bill_payment';
+        ledgerNote = `Water bill payment of ${formatCurrency(amount)} recorded`;
+        if (newBalance === 0) {
+          status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
+        }
+      } else {
+        // Amount exceeds current due - settle bill & credit remainder as advance
+        newBalance = 0;
+        const excess = amount - currentDue;
+        newAdvance = currentAdvance + excess;
+        status = 'Advance Paid';
+        isAdvanceCreditAdded = true;
+        advanceAdjustment = excess;
+        paymentType = 'bill_and_advance';
+        ledgerNote = `Bill fully settled (${formatCurrency(currentDue)}) & ${formatCurrency(excess)} added as Advance Credit`;
+      }
+
+      const updatedCustomer: Customer = {
         ...selectedCustomer,
         balance: newBalance,
+        advanceBalance: newAdvance,
+        status: status,
         ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       };
       
       await updateCustomer(updatedCustomer, false, undefined, currentOwnerId);
 
-      // Save transaction
+      // Save rich transaction record with advance adjustment tracking
       await addTransaction({
         customerId: selectedCustomer.id,
+        customerName: selectedCustomer.name,
         amount: amount,
-        transactionId: transactionId.trim()
+        transactionId: transactionId.trim(),
+        paymentMode: paymentMode,
+        isAdvanceCredit: isAdvanceCreditAdded || isDirectAdvanceDeposit,
+        advanceAdjustment: advanceAdjustment,
+        paymentType: paymentType,
+        previousBalance: currentDue,
+        newBalance: newBalance,
+        previousAdvance: currentAdvance,
+        newAdvance: newAdvance,
+        notes: ledgerNote
       }, currentOwnerId);
 
       setIsPaymentModalOpen(false);
-      const paymentStatusText = newBalance === 0 
-        ? "fully settled with zero remaining balance" 
-        : `recorded with remaining balance of ${formatCurrency(newBalance)}`;
+      let paymentStatusText = "";
+      if (isDirectAdvanceDeposit) {
+        paymentStatusText = `credited directly to Advance Balance (New Advance Balance: ${formatCurrency(newAdvance)})`;
+      } else if (isAdvanceCreditAdded) {
+        paymentStatusText = `fully settled, and an advance credit of ${formatCurrency(newAdvance - currentAdvance)} has been credited (Total Advance Balance: ${formatCurrency(newAdvance)})`;
+      } else if (newBalance === 0) {
+        paymentStatusText = "fully settled with zero remaining balance";
+      } else {
+        paymentStatusText = `recorded with remaining balance of ${formatCurrency(newBalance)}`;
+      }
       showAlert("Payment Recorded", `Payment of ${formatCurrency(amount)} (${paymentMode === 'cash' ? 'Cash at Counter' : 'UPI/Online'}) processed successfully! The customer's account is ${paymentStatusText}.`);
 
       // Automatically send invoice or receipt if enabled
-      if (settings.automation?.smartNotifications) {
-        if (newBalance === 0) {
-          const message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received and fully SETTLED. Thank you! Attached is your official receipt.`;
-          const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
-          await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+      if (settings?.automation?.smartNotifications) {
+        let message = "";
+        if (isDirectAdvanceDeposit) {
+          message = `Dear ${updatedCustomer.name}, your advance payment of ${formatCurrency(amount)} has been received and credited to your Advance Balance (Total Advance Balance: ${formatCurrency(newAdvance)}). Future billing cycles will deduct automatically. Attached is your official receipt.`;
+        } else if (isAdvanceCreditAdded) {
+          message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received. Your current bill is fully SETTLED, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Thank you! Attached is your official receipt.`;
+        } else if (newBalance === 0) {
+          message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received and fully SETTLED. Thank you! Attached is your official receipt.`;
         } else {
-          const message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(newBalance)}. Attached is your updated receipt.`;
-          const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
-          sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+          message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(newBalance)}. Attached is your updated receipt.`;
         }
+        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
+        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
       } else if (newBalance === 0) {
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false }, false, undefined, currentOwnerId);
       }
@@ -255,18 +324,49 @@ export function PaymentsView() {
     }
   };
 
-  const handleApproveReceipt = async (receipt: PaymentReceipt) => {
+  const handleApproveReceipt = async (receipt: PaymentReceipt, overrideAmount?: number) => {
     const customer = customers.find(c => c.id === receipt.customerId);
     if (!customer) {
       showAlert("Error", "Customer not found for this receipt.");
       return;
     }
 
+    const effectiveAmount = typeof overrideAmount === 'number' && overrideAmount > 0 
+      ? overrideAmount 
+      : (parseFloat(receiptApprovedAmount) || receipt.amount || (settings?.billingAmount || 200));
+
+    if (effectiveAmount <= 0) {
+      showAlert("Invalid Amount", "Payment amount must be greater than ₹0.");
+      return;
+    }
+
     setIsActioningReceipt(`${receipt.id}-approve`);
     try {
-      const updatedCustomer = {
+      const currentDue = Number(customer.balance) || 0;
+      const currentAdvance = Number(customer.advanceBalance) || 0;
+      let newBalance = 0;
+      let newAdvance = currentAdvance;
+      let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = customer.status || 'Active';
+      let isAdvanceCredit = false;
+
+      if (effectiveAmount <= currentDue) {
+        newBalance = currentDue - effectiveAmount;
+        if (newBalance === 0) {
+          status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
+        }
+      } else {
+        newBalance = 0;
+        const excess = effectiveAmount - currentDue;
+        newAdvance = currentAdvance + excess;
+        status = 'Advance Paid';
+        isAdvanceCredit = true;
+      }
+
+      const updatedCustomer: Customer = {
         ...customer,
-        balance: Math.max(0, customer.balance - receipt.amount),
+        balance: newBalance,
+        advanceBalance: newAdvance,
+        status: status,
         ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       };
       
@@ -274,26 +374,43 @@ export function PaymentsView() {
 
       await addTransaction({
         customerId: customer.id,
-        amount: receipt.amount,
-        transactionId: `REC-${receipt.id.substring(0, 8).toUpperCase()}`
+        customerName: customer.name,
+        amount: effectiveAmount,
+        transactionId: `REC-${receipt.id.substring(0, 8).toUpperCase()}`,
+        paymentMode: 'upi',
+        isAdvanceCredit: isAdvanceCredit,
+        advanceAdjustment: isAdvanceCredit ? (newAdvance - currentAdvance) : 0,
+        paymentType: isAdvanceCredit ? 'bill_and_advance' : 'bill_payment',
+        previousBalance: currentDue,
+        newBalance: newBalance,
+        previousAdvance: currentAdvance,
+        newAdvance: newAdvance,
+        notes: isAdvanceCredit
+          ? `Receipt verified: Bill settled & ${formatCurrency(newAdvance - currentAdvance)} credited as Advance Balance`
+          : `Receipt verified payment of ${formatCurrency(effectiveAmount)}`
       }, currentOwnerId);
 
       await updateReceiptStatus(receipt.id, 'Approved', currentOwnerId);
       
       setIsReceiptModalOpen(false);
       setSelectedReceipt(null);
-      showAlert("Approved", `Receipt approved and payment of ${formatCurrency(receipt.amount)} recorded.`);
-
-      if (updatedCustomer.balance === 0) {
-        const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, receipt.amount);
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
-      } else {
-        const message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(receipt.amount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, receipt.amount);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+      let alertMsg = `Receipt approved and payment of ${formatCurrency(effectiveAmount)} recorded.`;
+      if (isAdvanceCredit) {
+        alertMsg += ` Advance credit of ${formatCurrency(newAdvance - currentAdvance)} added to account! (Total Advance: ${formatCurrency(newAdvance)})`;
       }
+      showAlert("Approved", alertMsg);
+
+      let message = "";
+      if (isAdvanceCredit) {
+        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Attached is your official receipt.`;
+      } else if (updatedCustomer.balance === 0) {
+        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
+      } else {
+        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(effectiveAmount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated receipt.`;
+      }
+      const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, effectiveAmount);
+      await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
+      sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
     } catch (error) {
       console.error("Error approving receipt:", error);
       showAlert("Error", "Failed to approve receipt.");
@@ -361,10 +478,10 @@ export function PaymentsView() {
         )}
       </div>
 
-      <div className="flex bg-[var(--bg-color)] p-1 rounded-xl w-full max-w-sm border border-[var(--shadow-light)]">
+      <div className="flex bg-[var(--bg-color)] p-1 rounded-xl w-full max-w-md border border-[var(--shadow-light)]">
         <button
           onClick={() => setActiveTab('pending')}
-          className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'pending' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
           }`}
         >
@@ -375,14 +492,27 @@ export function PaymentsView() {
         </button>
         <button
           onClick={() => setActiveTab('list')}
-          className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
             activeTab === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
           }`}
         >
           <CreditCard className="w-4 h-4" /> Receivables
         </button>
+        <button
+          onClick={() => setActiveTab('history')}
+          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+            activeTab === 'history' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          <Clock className="w-4 h-4" /> Payment History
+        </button>
       </div>
 
+      {activeTab === 'history' ? (
+        <Card className="p-4 sm:p-6 bg-slate-950/60 border-slate-800">
+          <PaymentHistory />
+        </Card>
+      ) : (
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
           {activeTab === 'list' && (
@@ -435,6 +565,7 @@ export function PaymentsView() {
                       <div 
                         onClick={() => {
                           setSelectedReceipt(receipt);
+                          setReceiptApprovedAmount(receipt.amount > 0 ? String(receipt.amount) : String(settings?.billingAmount || 200));
                           setIsReceiptModalOpen(true);
                         }}
                         className="w-full h-40 bg-slate-100 rounded-xl mb-4 overflow-hidden cursor-pointer relative group flex items-center justify-center border border-slate-200"
@@ -446,7 +577,7 @@ export function PaymentsView() {
                         />
                         <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                           <span className="text-white font-bold text-sm bg-black/50 px-3 py-1 rounded-lg flex items-center gap-2">
-                            <ImageIcon className="w-4 h-4" /> View Full Image
+                            <ImageIcon className="w-4 h-4" /> Inspect & Verify
                           </span>
                         </div>
                       </div>
@@ -460,12 +591,15 @@ export function PaymentsView() {
                           {isActioningReceipt === `${receipt.id}-reject` ? 'Rejecting...' : 'Reject'}
                         </button>
                         <button 
-                          onClick={() => handleApproveReceipt(receipt)}
+                          onClick={() => {
+                            setSelectedReceipt(receipt);
+                            setReceiptApprovedAmount(receipt.amount > 0 ? String(receipt.amount) : String(settings?.billingAmount || 200));
+                            setIsReceiptModalOpen(true);
+                          }}
                           disabled={isActioningReceipt !== null}
                           className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-bold shadow-md shadow-emerald-500/20 transition-colors flex justify-center items-center gap-1 disabled:opacity-50"
                         >
-                          {isActioningReceipt === `${receipt.id}-approve` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                          {isActioningReceipt === `${receipt.id}-approve` ? 'Approving...' : 'Approve'}
+                          <Check className="w-4 h-4" /> Review & Approve
                         </button>
                       </div>
                     </motion.div>
@@ -498,7 +632,7 @@ export function PaymentsView() {
                   <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('balance')}>
                     Outstanding Balance <SortIcon column="balance" />
                   </th>
-                  <th className="px-4 py-3 text-right">Action</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -524,14 +658,42 @@ export function PaymentsView() {
                     </td>
                     <td className="px-4 py-4 font-medium">{customer.name}</td>
                     <td className="px-4 py-4 text-neu-text-muted">{customer.mobileNumber}</td>
-                    <td className="px-4 py-4 font-bold text-rose-600">{formatCurrency(customer.balance)}</td>
+                    <td className="px-4 py-4 font-bold">
+                      {customer.balance > 0 ? (
+                        <span className="text-rose-600">{formatCurrency(customer.balance)}</span>
+                      ) : (customer.advanceBalance && customer.advanceBalance > 0) ? (
+                        <div className="flex flex-col items-start gap-0.5">
+                          <span className="text-slate-400 text-xs">₹0 Due</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold border border-teal-300">
+                            Adv: {formatCurrency(customer.advanceBalance)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-emerald-600">₹0</span>
+                      )}
+                    </td>
                     <td className="px-4 py-4 text-right">
-                      <button 
-                        onClick={() => handleOpenPayment(customer)}
-                        className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-md shadow-emerald-500/20 hover:bg-emerald-700 transition-colors flex items-center gap-1 ml-auto"
-                      >
-                        <QrCode className="w-3 h-3" /> Receive Payment
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setHistoryModalCustomer(customer)}
+                          className="px-2.5 py-1.5 rounded-lg text-xs font-bold neu-flat hover:text-blue-600 transition-colors flex items-center gap-1 text-slate-600 dark:text-slate-300"
+                          title="View Payment & Credit Ledger History"
+                        >
+                          <History className="w-3.5 h-3.5 text-blue-500" />
+                          <span className="hidden sm:inline">History</span>
+                        </button>
+                        <button 
+                          onClick={() => handleOpenPayment(customer)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${
+                            customer.balance > 0
+                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-700'
+                              : 'bg-teal-600 text-white shadow-md shadow-teal-500/20 hover:bg-teal-700'
+                          }`}
+                        >
+                          <QrCode className="w-3 h-3" /> {customer.balance > 0 ? 'Receive Payment' : '+ Advance Pay'}
+                        </button>
+                      </div>
                     </td>
                   </motion.tr>
                 ))}
@@ -578,6 +740,7 @@ export function PaymentsView() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Bulk Confirm Modal */}
       <AnimatePresence>
@@ -686,18 +849,66 @@ export function PaymentsView() {
                   <div>
                     <p className="text-xs neu-text-muted font-medium">Customer Account</p>
                     <p className="font-bold text-base">{selectedCustomer.name}</p>
-                    <p className="text-xs neu-text-muted">ID: <span className="font-mono">{selectedCustomer.id}</span> | Mob: {selectedCustomer.mobileNumber}</p>
+                    <p className="text-xs neu-text-muted">ID: <span className="font-mono">{selectedCustomer.id}</span> | Mob: {selectedCustomer.mobileNumber || "None"}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-xs neu-text-muted font-medium">Current Outstanding</p>
                     <p className="font-bold text-lg text-rose-600">{formatCurrency(selectedCustomer.balance)}</p>
+                    {(selectedCustomer.advanceBalance && selectedCustomer.advanceBalance > 0) ? (
+                      <p className="text-[11px] font-bold text-emerald-600">Advance: {formatCurrency(selectedCustomer.advanceBalance)}</p>
+                    ) : null}
+                  </div>
+                </div>
+
+                {/* Payment Recording Type Switcher */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
+                      Payment Type
+                    </label>
+                    <span className="text-[11px] font-bold text-emerald-600">
+                      {paymentRecordingType === 'advance' ? 'Pre-Payment Credit' : 'Bill Settlement'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 p-1 neu-pressed rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentRecordingType('standard');
+                        if (selectedCustomer.balance > 0) {
+                          setPaymentAmount(selectedCustomer.balance.toString());
+                        }
+                      }}
+                      className={`py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        paymentRecordingType === 'standard'
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                          : 'neu-flat hover:text-blue-600'
+                      }`}
+                    >
+                      <CreditCard className="w-3.5 h-3.5" /> Settle Bill
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaymentRecordingType('advance');
+                        const cycleAmt = settings?.billingAmount || 200;
+                        setPaymentAmount(cycleAmt.toString());
+                      }}
+                      className={`py-2 px-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        paymentRecordingType === 'advance'
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                          : 'neu-flat hover:text-emerald-600'
+                      }`}
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300" /> Advance Credit
+                    </button>
                   </div>
                 </div>
 
                 {/* Payment Method Switcher */}
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
-                    Payment Method
+                    Payment Channel
                   </label>
                   <div className="grid grid-cols-2 gap-2 p-1 neu-pressed rounded-xl">
                     <button
@@ -741,7 +952,9 @@ export function PaymentsView() {
                     <label className="text-xs font-bold uppercase tracking-wider neu-text-muted ml-1">
                       Received Amount (INR ₹)
                     </label>
-                    <span className="text-xs font-medium text-emerald-600">Editable (Supports Partial or Full)</span>
+                    <span className="text-xs font-medium text-emerald-600">
+                      {paymentRecordingType === 'advance' ? 'Deposited directly into Advance' : 'Applied to Bill (Excess to Advance)'}
+                    </span>
                   </div>
                   
                   <div className="relative">
@@ -759,39 +972,77 @@ export function PaymentsView() {
 
                   {/* Quick Preset Buttons */}
                   <div className="flex flex-wrap gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentAmount(selectedCustomer.balance > 0 ? selectedCustomer.balance.toString() : "0")}
-                      className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                    >
-                      Full (₹{selectedCustomer.balance})
-                    </button>
-                    {selectedCustomer.balance > 100 && (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentAmount("100")}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                      >
-                        ₹100
-                      </button>
-                    )}
-                    {selectedCustomer.balance > 200 && (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentAmount("200")}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                      >
-                        ₹200
-                      </button>
-                    )}
-                    {selectedCustomer.balance > 500 && (
-                      <button
-                        type="button"
-                        onClick={() => setPaymentAmount("500")}
-                        className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
-                      >
-                        ₹500
-                      </button>
+                    {paymentRecordingType === 'standard' ? (
+                      <>
+                        {selectedCustomer.balance > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentAmount(selectedCustomer.balance.toString())}
+                            className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                          >
+                            Full Due (₹{selectedCustomer.balance})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount((settings?.billingAmount || 200).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          1 Cycle (₹{settings?.billingAmount || 200})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 3).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          3 Cycles (₹{(settings?.billingAmount || 200) * 3})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 6).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          6 Cycles (₹{(settings?.billingAmount || 200) * 6})
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount((settings?.billingAmount || 200).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          +1 Cycle (₹{settings?.billingAmount || 200})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 2).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          +2 Cycles (₹{(settings?.billingAmount || 200) * 2})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 3).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          +3 Cycles (₹{(settings?.billingAmount || 200) * 3})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 6).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          +6 Cycles (₹{(settings?.billingAmount || 200) * 6})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(((settings?.billingAmount || 200) * 12).toString())}
+                          className="px-2.5 py-1 text-xs font-semibold rounded-lg neu-flat hover:bg-emerald-50 hover:text-emerald-600 transition-colors"
+                        >
+                          +1 Year (₹{(settings?.billingAmount || 200) * 12})
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -799,29 +1050,82 @@ export function PaymentsView() {
                 {/* Real-time Ledger Calculation Preview */}
                 {(() => {
                   const numAmount = parseFloat(paymentAmount) || 0;
-                  const newBalance = Math.max(0, selectedCustomer.balance - numAmount);
-                  const isFullSettlement = numAmount >= selectedCustomer.balance && selectedCustomer.balance > 0;
-                  const isPartial = numAmount > 0 && numAmount < selectedCustomer.balance;
+                  const currentDue = Number(selectedCustomer.balance) || 0;
+                  const currentAdvance = Number(selectedCustomer.advanceBalance) || 0;
+                  let newBalance = 0;
+                  let newAdvance = currentAdvance;
+                  let isAdvance = false;
+                  let advanceCreditAdded = 0;
+
+                  if (paymentRecordingType === 'advance') {
+                    newBalance = currentDue;
+                    newAdvance = currentAdvance + numAmount;
+                    advanceCreditAdded = numAmount;
+                    isAdvance = true;
+                  } else if (numAmount > currentDue) {
+                    newBalance = 0;
+                    const excess = numAmount - currentDue;
+                    newAdvance = currentAdvance + excess;
+                    advanceCreditAdded = excess;
+                    isAdvance = true;
+                  } else {
+                    newBalance = currentDue - numAmount;
+                  }
+
+                  const isFullSettlement = paymentRecordingType === 'standard' && numAmount === currentDue && currentDue > 0;
+                  const isPartial = paymentRecordingType === 'standard' && numAmount > 0 && numAmount < currentDue;
 
                   return (
                     <div className="p-3.5 rounded-xl border border-[var(--shadow-light)] bg-black/5 space-y-2">
                       <div className="flex justify-between text-xs">
-                        <span className="neu-text-muted">Total Outstanding:</span>
-                        <span className="font-semibold">{formatCurrency(selectedCustomer.balance)}</span>
+                        <span className="neu-text-muted">Current Outstanding Due:</span>
+                        <span className="font-semibold">{formatCurrency(currentDue)}</span>
                       </div>
+                      {currentAdvance > 0 && (
+                        <div className="flex justify-between text-xs">
+                          <span className="neu-text-muted">Current Advance Balance:</span>
+                          <span className="font-semibold text-emerald-600">+{formatCurrency(currentAdvance)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-xs">
-                        <span className="neu-text-muted">Paying Now:</span>
-                        <span className="font-bold text-emerald-600">- {formatCurrency(numAmount)}</span>
+                        <span className="neu-text-muted">Received Payment:</span>
+                        <span className="font-bold text-emerald-600">{formatCurrency(numAmount)}</span>
                       </div>
+                      {advanceCreditAdded > 0 && (
+                        <div className="flex justify-between text-xs bg-emerald-500/10 px-2 py-1 rounded-lg">
+                          <span className="font-bold text-emerald-700 dark:text-emerald-400">Advance Credit Adjustment:</span>
+                          <span className="font-black text-emerald-700 dark:text-emerald-400">+{formatCurrency(advanceCreditAdded)}</span>
+                        </div>
+                      )}
                       <div className="h-px bg-slate-200 dark:bg-slate-700 my-1" />
                       <div className="flex justify-between items-center text-sm">
-                        <span className="font-bold">Remaining Balance:</span>
+                        <span className="font-bold">Remaining Total Due:</span>
                         <span className={`font-bold ${newBalance === 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
                           {formatCurrency(newBalance)}
                         </span>
                       </div>
+                      {newAdvance > 0 && (
+                        <div className="flex justify-between items-center text-sm bg-teal-50/60 dark:bg-teal-950/20 px-2.5 py-1.5 rounded-lg border border-teal-200 dark:border-teal-800">
+                          <span className="font-bold text-teal-700 dark:text-teal-300">Updated Advance Credit Balance:</span>
+                          <span className="font-black text-teal-700 dark:text-teal-300">
+                            {formatCurrency(newAdvance)}
+                          </span>
+                        </div>
+                      )}
 
                       <div className="pt-1">
+                        {paymentRecordingType === 'advance' && (
+                          <div className="flex items-center gap-1.5 text-xs text-teal-800 bg-teal-100/80 dark:bg-teal-900/40 px-2.5 py-1.5 rounded-lg font-medium border border-teal-300">
+                            <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-amber-500" />
+                            <span>Pre-Payment Recorded: {formatCurrency(numAmount)} credited to Advance Balance. Future billing cycles will automatically deduct from this balance!</span>
+                          </div>
+                        )}
+                        {paymentRecordingType === 'standard' && isAdvance && (
+                          <div className="flex items-center gap-1.5 text-xs text-teal-800 bg-teal-100/80 dark:bg-teal-900/40 px-2.5 py-1.5 rounded-lg font-medium border border-teal-300">
+                            <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 text-teal-600" />
+                            <span>Advance Payment: Bill settled with ₹0 due, and {formatCurrency(advanceCreditAdded)} credited to Advance Balance! Future bills will deduct automatically.</span>
+                          </div>
+                        )}
                         {isFullSettlement && (
                           <div className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-100/70 dark:bg-emerald-900/30 px-2.5 py-1.5 rounded-lg font-medium">
                             <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
@@ -831,7 +1135,7 @@ export function PaymentsView() {
                         {isPartial && (
                           <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-100/70 dark:bg-amber-900/30 px-2.5 py-1.5 rounded-lg font-medium">
                             <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span>Partial Payment: Remaining ₹{newBalance} rolls forward as arrears.</span>
+                            <span>Partial Payment: Remaining {formatCurrency(newBalance)} rolls forward as arrears.</span>
                           </div>
                         )}
                         {numAmount <= 0 && (
@@ -932,55 +1236,155 @@ export function PaymentsView() {
 
       {/* Receipt Image Modal */}
       <AnimatePresence>
-        {isReceiptModalOpen && selectedReceipt && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+        {isReceiptModalOpen && selectedReceipt && (() => {
+          const relatedCustomer = customers.find(c => c.id === selectedReceipt.customerId);
+          const currentDue = Number(relatedCustomer?.balance) || 0;
+          const currentAdv = Number(relatedCustomer?.advanceBalance) || 0;
+          const numApproved = parseFloat(receiptApprovedAmount) || 0;
+          let newBal = 0;
+          let newAdv = currentAdv;
+          let isAdvance = false;
+
+          if (numApproved > currentDue) {
+            newBal = 0;
+            const excess = numApproved - currentDue;
+            newAdv = currentAdv + excess;
+            isAdvance = true;
+          } else {
+            newBal = currentDue - numApproved;
+          }
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="w-full max-w-4xl bg-slate-900 rounded-2xl overflow-hidden relative flex flex-col items-center max-h-[95vh] border border-white/10 shadow-2xl"
+              >
+                <button 
+                  onClick={() => setIsReceiptModalOpen(false)}
+                  className="absolute top-4 right-4 p-2 bg-black/50 text-white rounded-full hover:bg-black/80 transition-colors z-10"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+                
+                <div className="w-full flex-1 min-h-0 p-4 flex items-center justify-center overflow-hidden bg-black/40">
+                  <img 
+                    src={selectedReceipt.base64Image} 
+                    alt="Receipt Screenshot" 
+                    className="max-w-full max-h-[55vh] object-contain rounded-xl shadow-lg border border-white/10"
+                  />
+                </div>
+                
+                <div className="w-full bg-white p-5 flex flex-col gap-4 border-t border-slate-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="font-black text-lg text-slate-900">{selectedReceipt.customerName}</p>
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">ID: #{selectedReceipt.customerId}</span>
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+                        <span>Submitted: {new Date(selectedReceipt.submittedAt).toLocaleString()}</span>
+                        <span>•</span>
+                        <span>Current Due: <strong className="text-slate-900">{formatCurrency(currentDue)}</strong></span>
+                        {currentAdv > 0 && (
+                          <>
+                            <span>•</span>
+                            <span className="text-teal-700 font-bold">Existing Advance: {formatCurrency(currentAdv)}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-600 whitespace-nowrap">
+                        Verified Amount:
+                      </label>
+                      <div className="relative w-36">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-sm">₹</span>
+                        <input 
+                          type="number"
+                          min="1"
+                          step="0.01"
+                          value={receiptApprovedAmount}
+                          onChange={(e) => setReceiptApprovedAmount(e.target.value)}
+                          className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-300 rounded-lg text-sm font-black text-slate-900 outline-none focus:border-teal-500 focus:ring-1 focus:ring-teal-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Advance Ledger Impact Banner */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <span className="text-slate-500">Remaining Balance: </span>
+                        <strong className={newBal === 0 ? "text-emerald-600 font-black text-sm" : "text-amber-600 font-black text-sm"}>
+                          {formatCurrency(newBal)}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-slate-500">Updated Advance Credit: </span>
+                        <strong className="text-teal-700 font-black text-sm">
+                          {formatCurrency(newAdv)}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {isAdvance && (
+                      <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-100/80 border border-teal-300 text-teal-900 font-bold text-[11px]">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                        <span>Advance Deposit: +{formatCurrency(newAdv - currentAdv)} will be credited to Advance Balance!</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-end gap-3 pt-1">
+                    <button 
+                      onClick={() => handleRejectReceipt(selectedReceipt.id)}
+                      disabled={isActioningReceipt !== null}
+                      className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isActioningReceipt === `${selectedReceipt.id}-reject` ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                      Reject Receipt
+                    </button>
+                    <button 
+                      onClick={() => handleApproveReceipt(selectedReceipt, numApproved)}
+                      disabled={isActioningReceipt !== null || numApproved <= 0}
+                      className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-600/20 transition-all flex items-center gap-2 disabled:opacity-50 active:scale-95"
+                    >
+                      {isActioningReceipt === `${selectedReceipt.id}-approve` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      Approve & Credit {formatCurrency(numApproved)}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
+      </AnimatePresence>
+
+      {/* Customer Specific Payment History Modal */}
+      <AnimatePresence>
+        {historyModalCustomer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-4xl rounded-2xl overflow-hidden relative flex flex-col items-center"
+              className="w-full max-w-5xl bg-slate-900 rounded-3xl shadow-2xl border border-white/10 p-4 sm:p-7 max-h-[92vh] overflow-y-auto"
             >
-              <button 
-                onClick={() => setIsReceiptModalOpen(false)}
-                className="absolute top-4 right-4 p-2 bg-black/50 text-white rounded-full hover:bg-black/80 transition-colors z-10"
-              >
-                <X className="w-6 h-6" />
-              </button>
-              
-              <img 
-                src={selectedReceipt.base64Image} 
-                alt="Receipt Screenshot" 
-                className="max-w-full max-h-[80vh] object-contain rounded-xl"
+              <PaymentHistory 
+                customerId={historyModalCustomer.id} 
+                customerName={historyModalCustomer.name} 
+                onClose={() => setHistoryModalCustomer(null)} 
               />
-              
-              <div className="w-full bg-white p-4 mt-4 flex gap-4 rounded-xl items-center justify-between">
-                <div>
-                  <p className="font-bold">{selectedReceipt.customerName} - {selectedReceipt.customerId}</p>
-                  <p className="text-sm text-slate-500">Amount claimed: <span className="font-bold text-slate-900">{formatCurrency(selectedReceipt.amount)}</span></p>
-                </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => handleRejectReceipt(selectedReceipt.id)}
-                    disabled={isActioningReceipt !== null}
-                    className="px-6 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg font-bold transition-colors flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {isActioningReceipt === `${selectedReceipt.id}-reject` ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                    Reject
-                  </button>
-                  <button 
-                    onClick={() => handleApproveReceipt(selectedReceipt)}
-                    disabled={isActioningReceipt !== null}
-                    className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold shadow-lg transition-colors flex items-center gap-2 disabled:opacity-50"
-                  >
-                    {isActioningReceipt === `${selectedReceipt.id}-approve` ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                    Approve Payment
-                  </button>
-                </div>
-              </div>
             </motion.div>
           </div>
         )}
       </AnimatePresence>
+
       <ConfirmModal
         isOpen={confirmConfig.isOpen}
         onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}

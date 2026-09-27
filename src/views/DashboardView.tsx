@@ -40,6 +40,8 @@ export function DashboardView() {
     totalRevenue,
     activeCustomersCount,
     suspendedCustomersCount,
+    advancePaidCount,
+    totalAdvanceAmount,
     pendingInvoices,
     pendingAmount,
     overdueAccounts,
@@ -47,8 +49,10 @@ export function DashboardView() {
   } = useMemo(() => {
     return {
       totalRevenue: transactions.reduce((sum, t) => sum + t.amount, 0),
-      activeCustomersCount: customers.filter(c => c.status === 'Active').length,
+      activeCustomersCount: customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid').length,
       suspendedCustomersCount: customers.filter(c => c.status === 'Suspended').length,
+      advancePaidCount: customers.filter(c => c.status === 'Advance Paid' || (c.advanceBalance && c.advanceBalance > 0)).length,
+      totalAdvanceAmount: customers.reduce((sum, c) => sum + (c.advanceBalance || 0), 0),
       pendingInvoices: customers.filter(c => c.status === 'Active' && c.balance > 0 && c.balance <= 2000).length,
       pendingAmount: customers.filter(c => c.status === 'Active' && c.balance > 0 && c.balance <= 2000).reduce((sum, c) => sum + c.balance, 0),
       overdueAccounts: customers.filter(c => c.status === 'Active' && c.balance > 2000).length,
@@ -95,17 +99,19 @@ export function DashboardView() {
   const displayData = chartData;
 
   const pieData = useMemo(() => {
-    const paidCount = Math.max(0, activeCustomersCount - pendingInvoices - overdueAccounts);
+    const rawPaidCount = Math.max(0, activeCustomersCount - pendingInvoices - overdueAccounts);
+    const standardPaid = Math.max(0, rawPaidCount - advancePaidCount);
     const list = [
-      { name: 'Paid (Active)', value: paidCount },
+      { name: 'Advance Paid', value: advancePaidCount },
+      { name: 'Paid (Active)', value: standardPaid },
       { name: 'Pending (Active)', value: Math.max(0, pendingInvoices) },
       { name: 'Overdue (Active)', value: Math.max(0, overdueAccounts) },
       { name: 'Suspended', value: Math.max(0, suspendedCustomersCount) }
     ].filter(d => d.value > 0);
 
     return list.length > 0 ? list : [{ name: 'All Customers', value: Math.max(1, customers.length) }];
-  }, [activeCustomersCount, pendingInvoices, overdueAccounts, suspendedCustomersCount, customers.length]);
-  const pieColors = ['#10b981', '#f59e0b', '#ef4444', '#94a3b8'];
+  }, [activeCustomersCount, advancePaidCount, pendingInvoices, overdueAccounts, suspendedCustomersCount, customers.length]);
+  const pieColors = ['#0d9488', '#10b981', '#f59e0b', '#ef4444', '#94a3b8'];
 
   return (
     <motion.div 
@@ -137,11 +143,11 @@ export function DashboardView() {
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3 lg:grid-cols-5">
+      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.1 }}
+          transition={{ delay: 0.05 }}
           whileHover={{ scale: 1.02, y: -5 }} 
           className="group"
         >
@@ -156,10 +162,10 @@ export function DashboardView() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter mt-1">{formatCurrency(totalRevenue)}</div>
+              <div className="text-2xl font-black tracking-tighter mt-1">{formatCurrency(totalRevenue)}</div>
               <p className="text-[10px] text-emerald-500 font-black mt-2 flex items-center gap-1 uppercase tracking-wider">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Trending Up +12%
+                Trending Up
               </p>
             </CardContent>
           </Card>
@@ -168,7 +174,7 @@ export function DashboardView() {
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.1 }}
           whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
@@ -183,7 +189,7 @@ export function DashboardView() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter mt-1">{activeCustomersCount.toLocaleString('en-IN')}</div>
+              <div className="text-2xl font-black tracking-tighter mt-1">{activeCustomersCount.toLocaleString('en-IN')}</div>
               <p className="text-[10px] neu-text-muted font-bold mt-2 uppercase tracking-wider">
                 {suspendedCustomersCount} {t('Suspended')}
               </p>
@@ -194,7 +200,33 @@ export function DashboardView() {
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.15 }}
+          whileHover={{ scale: 1.02, y: -5 }}
+          className="group"
+        >
+          <Card className="overflow-hidden relative border-none border-t border-teal-500/20 bg-teal-500/5">
+            <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-20 transition-opacity">
+              <DollarSign className="h-12 w-12 text-teal-600 rotate-12" />
+            </div>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-[10px] font-black uppercase tracking-[0.2em] text-teal-700">Advance Credit</CardTitle>
+              <div className="p-2 bg-teal-500/10 border border-teal-500/30 rounded-lg">
+                <DollarSign className="h-4 w-4 text-teal-600" />
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-black tracking-tighter mt-1 text-teal-800">{formatCurrency(totalAdvanceAmount)}</div>
+              <p className="text-[10px] text-teal-600 font-bold mt-2 uppercase tracking-wider">
+                {advancePaidCount} ACCOUNTS IN CREDIT
+              </p>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.2 }}
           whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
@@ -209,7 +241,7 @@ export function DashboardView() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter mt-1">{pendingInvoices.toLocaleString('en-IN')}</div>
+              <div className="text-2xl font-black tracking-tighter mt-1">{pendingInvoices.toLocaleString('en-IN')}</div>
               <p className="text-[10px] text-amber-500 font-bold mt-2 uppercase tracking-wider">{formatCurrency(pendingAmount)} DUE</p>
             </CardContent>
           </Card>
@@ -218,7 +250,7 @@ export function DashboardView() {
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.25 }}
           whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >
@@ -233,7 +265,7 @@ export function DashboardView() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-black tracking-tighter mt-1">{overdueAccounts.toLocaleString('en-IN')}</div>
+              <div className="text-2xl font-black tracking-tighter mt-1">{overdueAccounts.toLocaleString('en-IN')}</div>
               <p className="text-[10px] text-red-500 font-black mt-2 uppercase tracking-wider">ACTION REQUIRED</p>
             </CardContent>
           </Card>
@@ -242,7 +274,7 @@ export function DashboardView() {
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: 0.5 }}
+          transition={{ delay: 0.3 }}
           whileHover={{ scale: 1.02, y: -5 }}
           className="group"
         >

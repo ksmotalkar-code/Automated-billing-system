@@ -23,6 +23,12 @@ export function PortalView() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useTranslation();
 
+  const [receiptConfirmModal, setReceiptConfirmModal] = useState<{
+    isOpen: boolean;
+    base64Image: string;
+    amount: string;
+  } | null>(null);
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -37,7 +43,6 @@ export function PortalView() {
        return;
     }
     
-    setChatLoading(true);
     const reader = new FileReader();
     reader.onloadend = async () => {
       try {
@@ -67,29 +72,66 @@ export function PortalView() {
           ctx?.drawImage(img, 0, 0, width, height);
           
           const base64Image = canvas.toDataURL("image/jpeg", 0.6);
-          
-          // Show user they uploaded an image
-          setChatHistory(prev => [...prev, { role: 'user', content: '[Payment Screenshot Uploaded]', attachments: [{ type: 'image', data: base64Image }] }]);
-          
-          // Submit receipt
-          const { submitPaymentReceipt } = await import('../lib/portal');
-          await submitPaymentReceipt(portalData!, base64Image);
-          
-          addBotMessage("Thank you! Your payment screenshot has been uploaded and sent to the waterworks department for verification.");
-          setChatLoading(false);
+          const defaultAmt = (portalData?.balance && portalData.balance > 0)
+            ? String(portalData.balance)
+            : String(portalData?.billingAmount || 200);
+
+          setReceiptConfirmModal({
+            isOpen: true,
+            base64Image,
+            amount: defaultAmt
+          });
         };
         img.onerror = () => {
           addBotMessage("Failed to process image.");
-          setChatLoading(false);
         };
         img.src = reader.result as string;
       } catch (err) {
         addBotMessage("Failed to upload screenshot. Please try again.");
-        setChatLoading(false);
       }
     };
     reader.readAsDataURL(file);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleConfirmSubmitReceipt = async () => {
+    if (!receiptConfirmModal || !portalData) return;
+    const finalAmount = parseFloat(receiptConfirmModal.amount);
+    if (isNaN(finalAmount) || finalAmount <= 0) {
+      alert("Please enter a valid payment amount greater than ₹0.");
+      return;
+    }
+
+    setChatLoading(true);
+    const { base64Image } = receiptConfirmModal;
+    setReceiptConfirmModal(null);
+
+    try {
+      // Show user they uploaded an image
+      setChatHistory(prev => [
+        ...prev, 
+        { 
+          role: 'user', 
+          content: `[Payment Screenshot Uploaded - ₹${finalAmount.toFixed(2)}]`, 
+          attachments: [{ type: 'image', data: base64Image }] 
+        }
+      ]);
+      
+      const { submitPaymentReceipt } = await import('../lib/portal');
+      await submitPaymentReceipt(portalData, base64Image, finalAmount);
+      
+      const isAdvanceDeposit = finalAmount > (portalData.balance || 0);
+      let successMsg = `Thank you! Your payment screenshot for ₹${finalAmount.toFixed(2)} has been uploaded and sent to the waterworks department for verification.`;
+      if (isAdvanceDeposit) {
+        const advCredit = finalAmount - (portalData.balance || 0);
+        successMsg += `\n\n💰 *Advance Payment Note:* After verification, ₹${advCredit.toFixed(2)} will be safely credited to your Advance Balance and automatically deducted from upcoming monthly water bills!`;
+      }
+      addBotMessage(successMsg);
+    } catch (err) {
+      addBotMessage("Failed to upload screenshot. Please try again.");
+    } finally {
+      setChatLoading(false);
+    }
   };
 
   let portalId = new URLSearchParams(window.location.search).get('portal');
@@ -286,6 +328,32 @@ export function PortalView() {
       <div className="flex-1 max-w-6xl w-full mx-auto flex flex-col md:flex-row h-[calc(100vh-56px)]">
         {/* Sidebar */}
         <div className="hidden md:flex flex-col w-[280px] bg-white border-r border-black/5 p-6 gap-5 overflow-y-auto">
+          {/* Resident Account Status Card */}
+          <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-[1px] text-[#64748b]">Resident Account</h3>
+            <div>
+              <p className="text-sm font-bold text-slate-800 leading-tight">{portalData?.customerName}</p>
+              <p className="text-[11px] text-slate-500">Consumer ID: #{portalData?.customerId}</p>
+            </div>
+            {(portalData?.advanceBalance && portalData.advanceBalance > 0) ? (
+              <div className="p-2.5 bg-teal-50 border border-teal-200 rounded-lg">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700 block">Pre-Paid Advance Credit</span>
+                <span className="text-base font-black text-teal-800">₹{portalData.advanceBalance.toFixed(2)}</span>
+                <p className="text-[10.5px] text-teal-600 mt-0.5 leading-snug">Your account is in credit! Future bills will be auto-deducted.</p>
+              </div>
+            ) : (portalData?.balance && portalData.balance > 0) ? (
+              <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">Total Due</span>
+                <span className="text-base font-black text-rose-800">₹{portalData.balance.toFixed(2)}</span>
+              </div>
+            ) : (
+              <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 block">Status</span>
+                <span className="text-xs font-bold text-emerald-800">All Bills Paid (₹0.00)</span>
+              </div>
+            )}
+          </div>
+
           <div>
             <h3 className="text-[11px] font-semibold uppercase tracking-[1px] text-[#64748b] mb-2.5">Office Info</h3>
             <div className="bg-[#f8f6f0] border border-[#ede9df] rounded-xl p-3.5">
@@ -319,8 +387,25 @@ export function PortalView() {
         <div className="flex-1 flex flex-col relative overflow-hidden bg-white">
           <div className="flex-shrink-0 relative overflow-hidden bg-gradient-to-br from-[#0a1628] via-[#112040] to-[#0f3460] px-7 py-5">
             <div className="absolute -right-10 -top-10 w-48 h-48 bg-[#0d9488]/10 rounded-full blur-2xl" />
-            <h2 className="text-xl text-white font-medium mb-1">नमस्ते {portalData?.customerName}! How can we help you?</h2>
-            <p className="text-[12.5px] text-white/55">AI-powered assistant connected to your Panchayat database</p>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div>
+                <h2 className="text-xl text-white font-medium mb-1">नमस्ते {portalData?.customerName}! How can we help you?</h2>
+                <p className="text-[12.5px] text-white/55">AI-powered assistant connected to your Panchayat database</p>
+              </div>
+              {(portalData?.advanceBalance && portalData.advanceBalance > 0) ? (
+                <div className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-teal-500/20 border border-teal-400/40 text-teal-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                  <span>💰</span> Advance Credit: ₹{portalData.advanceBalance.toFixed(2)}
+                </div>
+              ) : (portalData?.balance && portalData.balance > 0) ? (
+                <div className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-rose-500/20 border border-rose-400/40 text-rose-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                  <span>⚠️</span> Due: ₹{portalData.balance.toFixed(2)}
+                </div>
+              ) : (
+                <div className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 shadow-sm">
+                  <span>✓</span> All Bills Paid
+                </div>
+              )}
+            </div>
           </div>
 
           <div ref={chatBodyRef} className="flex-1 overflow-y-auto p-4 md:p-6 flex flex-col gap-4 scroll-smooth">
@@ -481,6 +566,80 @@ export function PortalView() {
 
         </div>
       </div>
+
+      {/* Citizen Payment Screenshot Confirmation Modal */}
+      {receiptConfirmModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col">
+            <div className="bg-[#0a1628] px-5 py-4 flex items-center justify-between text-white">
+              <div>
+                <h3 className="font-bold text-base leading-tight">Submit Payment Proof</h3>
+                <p className="text-xs text-white/60 mt-0.5">{portalData?.customerName} (#{portalData?.customerId})</p>
+              </div>
+              <button 
+                onClick={() => setReceiptConfirmModal(null)}
+                className="text-white/60 hover:text-white text-lg font-bold p-1 rounded-lg"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+              <div className="w-full h-44 bg-slate-100 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center">
+                <img 
+                  src={receiptConfirmModal.base64Image} 
+                  alt="Receipt Preview" 
+                  className="w-full h-full object-contain"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1.5">
+                  Amount Paid (₹)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold">₹</span>
+                  <input 
+                    type="number"
+                    min="1"
+                    step="0.01"
+                    value={receiptConfirmModal.amount}
+                    onChange={(e) => setReceiptConfirmModal({ ...receiptConfirmModal, amount: e.target.value })}
+                    className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-300 focus:border-teal-500 focus:bg-white rounded-xl text-base font-bold text-slate-900 outline-none transition"
+                    placeholder="200"
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 bg-teal-50/80 border border-teal-200 rounded-xl text-xs text-teal-800 space-y-1">
+                <p className="font-bold flex items-center gap-1.5 text-teal-900">
+                  <span>💡</span> Advance Payment Support
+                </p>
+                <p className="leading-relaxed">
+                  Paying extra for future months (e.g. ₹500, ₹1,000, ₹2,000)? Enter the full amount paid above. Any amount beyond current due will be safely stored as <strong>Pre-Paid Advance Credit</strong> and automatically deducted on upcoming bills!
+                </p>
+              </div>
+
+              <div className="flex gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setReceiptConfirmModal(null)}
+                  className="flex-1 py-2.5 px-4 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold text-sm transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmSubmitReceipt}
+                  className="flex-1 py-2.5 px-4 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-sm shadow-md shadow-teal-600/20 transition active:scale-95"
+                >
+                  Confirm & Submit
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

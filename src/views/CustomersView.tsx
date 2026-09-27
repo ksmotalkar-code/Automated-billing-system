@@ -86,7 +86,18 @@ const CustomerTableRow = React.memo(({
           )}
         </div>
       </td>
-      <td className="px-4 py-4 font-black text-[var(--accent)] text-base whitespace-nowrap">{formatCurrency(customer.balance)}</td>
+      <td className="px-4 py-4 whitespace-nowrap">
+        {customer.balance > 0 ? (
+          <span className="font-black text-[var(--accent)] text-base">{formatCurrency(customer.balance)}</span>
+        ) : (customer.advanceBalance && customer.advanceBalance > 0) ? (
+          <div className="flex flex-col">
+            <span className="text-xs text-neutral-400 font-bold">₹0 Due</span>
+            <span className="text-xs font-black text-teal-600">+{formatCurrency(customer.advanceBalance)} Adv</span>
+          </div>
+        ) : (
+          <span className="font-black text-emerald-600 text-base">₹0</span>
+        )}
+      </td>
       <td className="px-4 py-4 text-right">
         <div className="flex justify-end items-center gap-2">
           <motion.button 
@@ -194,7 +205,16 @@ const CustomerMobileCard = React.memo(({
       )}
       <div className="flex justify-between items-center bg-black/5 p-3 rounded-xl">
         <span className="text-xs neu-text font-black tracking-tighter opacity-80">{customer.mobileNumber}</span>
-        <span className="text-xl font-black tracking-tighter text-[var(--accent)]">{formatCurrency(customer.balance)}</span>
+        {customer.balance > 0 ? (
+          <span className="text-xl font-black tracking-tighter text-[var(--accent)]">{formatCurrency(customer.balance)}</span>
+        ) : (customer.advanceBalance && customer.advanceBalance > 0) ? (
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] text-neutral-400 font-bold uppercase">₹0 Due</span>
+            <span className="text-sm font-black text-teal-600">+{formatCurrency(customer.advanceBalance)} Adv</span>
+          </div>
+        ) : (
+          <span className="text-xl font-black tracking-tighter text-emerald-600">₹0</span>
+        )}
       </div>
       <div className="flex justify-end gap-2 mt-2">
          <motion.button
@@ -540,12 +560,20 @@ export function CustomersView() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const [newCustomer, setNewCustomer] = useState({
+  const [newCustomer, setNewCustomer] = useState<{
+    id: string;
+    name: string;
+    mobileNumber: string;
+    status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid';
+    balance: number;
+    advanceBalance?: number;
+  }>({
     id: "",
     name: "",
     mobileNumber: "",
-    status: "Active" as "Active" | "Suspended" | "Faulty",
+    status: "Active",
     balance: 0,
+    advanceBalance: 0,
   });
   const [originalEditingCustomerId, setOriginalEditingCustomerId] = useState<string>("");
 
@@ -556,6 +584,7 @@ export function CustomersView() {
       mobileNumber: "",
       status: "Active",
       balance: 0,
+      advanceBalance: 0,
     });
     setIsAddModalOpen(true);
   };
@@ -608,7 +637,16 @@ export function CustomersView() {
       return;
     }
 
+    let rawBal = Number(newCustomer.balance) || 0;
+    let rawAdv = Number(newCustomer.advanceBalance) || 0;
     let finalStatus = newCustomer.status || 'Active';
+    if (rawBal < 0) {
+      rawAdv = rawAdv + Math.abs(rawBal);
+      rawBal = 0;
+      finalStatus = 'Advance Paid';
+    } else if (rawAdv > 0 && rawBal === 0) {
+      finalStatus = 'Advance Paid';
+    }
 
     setIsSavingUser(true);
     try {
@@ -617,7 +655,8 @@ export function CustomersView() {
         id: assignedId, 
         mobileNumber: cleanMobileNew,
         status: finalStatus, 
-        balance: Number(newCustomer.balance) || 0,
+        balance: rawBal,
+        advanceBalance: rawAdv,
         ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       }, customers, currentOwnerId || undefined);
 
@@ -665,7 +704,17 @@ export function CustomersView() {
         return;
       }
 
-      const finalStatus = editingCustomer.status || 'Active';
+      let rawBal = Number(editingCustomer.balance) || 0;
+      let rawAdv = Number(editingCustomer.advanceBalance) || 0;
+      let finalStatus = editingCustomer.status || 'Active';
+      if (rawBal < 0) {
+        rawAdv = rawAdv + Math.abs(rawBal);
+        rawBal = 0;
+        finalStatus = 'Advance Paid';
+      } else if (rawAdv > 0 && rawBal === 0) {
+        finalStatus = 'Advance Paid';
+      }
+
       const originalCustomer = customers.find(c => c.id === originalEditingCustomerId || c.id === targetId);
       const statusChanged = originalCustomer && originalCustomer.status !== finalStatus;
 
@@ -674,7 +723,8 @@ export function CustomersView() {
         ...editingCustomer, 
         id: targetId, 
         status: finalStatus, 
-        balance: Number(editingCustomer.balance) || 0,
+        balance: rawBal,
+        advanceBalance: rawAdv,
         ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
       }, false, originalEditingCustomerId, currentOwnerId).catch((err: any) => {
         if (err.message && err.message.includes('Quota')) {
@@ -1614,13 +1664,13 @@ export function CustomersView() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm font-medium mb-1">{t('Status')}</label>
                     <select 
                       value={newCustomer.status}
                       onChange={e => setNewCustomer({...newCustomer, status: e.target.value as any})}
-                      className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent"
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent text-sm"
                     >
                       <option value="Active">Active</option>
                       <option value="Advance Paid">Advance Paid</option>
@@ -1629,14 +1679,34 @@ export function CustomersView() {
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium mb-1">Initial Balance (₹)</label>
+                    <label className="block text-sm font-medium mb-1">Balance Due (₹)</label>
                     <input 
                       type="number" 
                       min="0"
                       step="0.01"
                       value={newCustomer.balance}
                       onChange={e => setNewCustomer({...newCustomer, balance: parseFloat(e.target.value) || 0})}
-                      className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50"
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Advance Credit (₹)</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={newCustomer.advanceBalance || ''}
+                      onChange={e => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setNewCustomer({
+                          ...newCustomer, 
+                          advanceBalance: val,
+                          status: val > 0 && (!newCustomer.balance || newCustomer.balance === 0) ? 'Advance Paid' : newCustomer.status
+                        });
+                      }}
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-teal-500/50 text-sm"
                     />
                   </div>
                 </div>
@@ -1743,13 +1813,13 @@ export function CustomersView() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <label className="block text-sm font-medium mb-1">{t('Status')}</label>
                     <select 
                       value={editingCustomer.status}
                       onChange={e => setEditingCustomer({...editingCustomer, status: e.target.value as any})}
-                      className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent"
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 bg-transparent text-sm"
                     >
                       <option value="Active">Active</option>
                       <option value="Advance Paid">Advance Paid</option>
@@ -1758,14 +1828,34 @@ export function CustomersView() {
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium mb-1">{t('Balance')} (₹)</label>
+                    <label className="block text-sm font-medium mb-1">Balance Due (₹)</label>
                     <input 
                       type="number" 
                       min="0"
                       step="0.01"
                       value={editingCustomer.balance}
                       onChange={e => setEditingCustomer({...editingCustomer, balance: parseFloat(e.target.value) || 0})}
-                      className="w-full px-4 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50"
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Advance Credit (₹)</label>
+                    <input 
+                      type="number" 
+                      min="0"
+                      step="0.01"
+                      placeholder="0.00"
+                      value={editingCustomer.advanceBalance || ''}
+                      onChange={e => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setEditingCustomer({
+                          ...editingCustomer, 
+                          advanceBalance: val,
+                          status: val > 0 && (!editingCustomer.balance || editingCustomer.balance === 0) ? 'Advance Paid' : editingCustomer.status
+                        });
+                      }}
+                      className="w-full px-3 py-2 neu-pressed rounded-xl outline-none focus:ring-2 focus:ring-teal-500/50 text-sm"
                     />
                   </div>
                 </div>

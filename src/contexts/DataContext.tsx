@@ -105,6 +105,38 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         setPendingReceipts(rcpts);
       }));
 
+      // Immediate safety fallback for settings to prevent loading stall
+      const settingsFallbackTimer = setTimeout(() => {
+        setSettings((prev) => prev || {
+          upiQrCodeImage: null,
+          billTemplateImage: null,
+          billingAmount: 200,
+          billingCycleMonths: 2,
+          penaltyAmount: 40,
+          penaltyDays: 10,
+          escalationDays: 60,
+          autoSuspend: false,
+          defaultBillingDate: '1',
+          metaWhatsAppApiKey: '',
+          metaWhatsAppPhoneNumberId: '',
+          watiAccessToken: '',
+          watiApiEndpoint: '',
+          organizationName: 'Gram Panchayat GP. Jhanda Khurd',
+          automation: {
+            billingLifecycle: true,
+            ruleBased: true,
+            lateFee: true,
+            scheduledBilling: true,
+            bulkProcessing: true,
+            smartNotifications: true
+          },
+          ownerId: activeUid
+        });
+        setIsLoading(false);
+      }, 300);
+
+      unsubs.push(() => clearTimeout(settingsFallbackTimer));
+
       setIsLoading(false);
     } else {
       setIsLoading(false);
@@ -114,6 +146,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       clearSubscriptions();
     };
   }, [currentOwnerId]);
+
 
   return (
     <DataContext.Provider value={{

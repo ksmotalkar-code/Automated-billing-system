@@ -184,5 +184,13 @@ service cloud.firestore {
     match /webhook_dedup/{msgId} {
       allow read, write: if true;
     }
+
+    // WhatsApp Live Audit Logs
+    match /whatsapp_logs/{logId} {
+      allow read, list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if true;
+      allow update: if false;
+      allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+    }
   }
 }

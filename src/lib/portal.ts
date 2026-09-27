@@ -11,6 +11,7 @@ export interface PublicPortalData {
   customerName: string;
   mobileNumber: string;
   balance: number;
+  advanceBalance?: number;
   billingAmount: number;
   penaltyAmount: number;
   penaltyDays: number;
@@ -43,6 +44,7 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
     customerName: customer.name || "Customer",
     mobileNumber: customer.mobileNumber || "",
     balance: customer.balance || 0,
+    advanceBalance: customer.advanceBalance || 0,
     billingAmount: settings.billingAmount || 0,
     penaltyAmount: settings.penaltyAmount || 0,
     penaltyDays: settings.penaltyDays || 0,
@@ -79,11 +81,15 @@ export const getPortalData = async (portalId: string): Promise<PublicPortalData 
   return null;
 };
 
-export const submitPaymentReceipt = async (portalData: PublicPortalData, base64Image: string) => {
+export const submitPaymentReceipt = async (portalData: PublicPortalData, base64Image: string, customAmount?: number) => {
   const id = uuidv4();
   
   // Guarantee upload directly to Google Cloud Storage bucket (zero Firestore bloat)
   const imageUrl = await uploadImageToStorage(base64Image, 'receipts', portalData.ownerId, id);
+
+  const finalAmount = (typeof customAmount === 'number' && customAmount > 0)
+    ? customAmount
+    : (portalData.balance > 0 ? portalData.balance : (portalData.billingAmount || 200));
 
   await setDoc(doc(db, 'payment_receipts', id), {
     id,
@@ -94,7 +100,7 @@ export const submitPaymentReceipt = async (portalData: PublicPortalData, base64I
     base64Image: imageUrl,
     submittedAt: new Date().toISOString(),
     status: 'Pending',
-    amount: portalData.balance
+    amount: finalAmount
   });
 };
 
