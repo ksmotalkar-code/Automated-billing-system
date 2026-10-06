@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces, Lightbulb, Tag, Sparkles, RotateCcw, Edit2, Check } from "lucide-react";
 import { motion } from "motion/react";
-import { saveSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings, deleteBillTemplateImage } from "../lib/db";
+import { saveSettings, saveChatbotSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings, deleteBillTemplateImage } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
-import { Trash2, LogOut, MessageCircle, Loader2, X, Info } from "lucide-react";
+import { Trash2, LogOut, MessageCircle, Loader2, X, Info, Activity } from "lucide-react";
 import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
 import { getLogs, clearLogs, LogEntry } from '../lib/logger';
 import { CommandManagerWrapper } from '../components/CommandManager';
+import { WhatsAppChatbotConfig } from '../components/WhatsAppChatbotConfig';
 import { uploadImageToStorage, deleteImageFromStorage } from '../lib/storage';
 
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
@@ -110,6 +111,62 @@ export function SettingsView() {
     showCancel: true
   });
 
+  const [tokenVerifyStatus, setTokenVerifyStatus] = useState<{
+    isLoading: boolean;
+    tested: boolean;
+    connected?: boolean;
+    displayPhoneNumber?: string;
+    verifiedName?: string;
+    qualityRating?: string;
+    tokenType?: string;
+    scopes?: string[];
+    error?: string;
+    message?: string;
+  }>({ isLoading: false, tested: false });
+
+  const handleVerifyToken = async () => {
+    setTokenVerifyStatus({ isLoading: true, tested: true });
+    try {
+      const resp = await fetch('/api/wa/verify-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          ownerId: currentOwnerId || auth.currentUser?.uid, 
+          apiKey: settings.metaWhatsAppApiKey, 
+          phoneId: settings.metaWhatsAppPhoneNumberId,
+        })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.connected) {
+        setTokenVerifyStatus({
+          isLoading: false,
+          tested: true,
+          connected: true,
+          displayPhoneNumber: data.displayPhoneNumber,
+          verifiedName: data.verifiedName,
+          qualityRating: data.qualityRating,
+          tokenType: data.tokenType,
+          scopes: data.scopes,
+          message: data.message,
+        });
+      } else {
+        setTokenVerifyStatus({
+          isLoading: false,
+          tested: true,
+          connected: false,
+          error: data.error || "Could not verify Meta/Dealer credentials with WhatsApp API.",
+        });
+      }
+    } catch (e: any) {
+      setTokenVerifyStatus({
+        isLoading: false,
+        tested: true,
+        connected: false,
+        error: "Network error connecting to verification service.",
+      });
+    }
+  };
+
   const showAlert = (title: string, message: string) => {
     setConfirmConfig({
       isOpen: true,
@@ -158,7 +215,26 @@ export function SettingsView() {
         setProviders(provs);
         
         const botData = await getChatbotSettings(currentOwnerId || undefined);
-        setBotSettings(botData);
+        const defaultBotCommands: ChatbotCommand[] = [
+          { id: "sysdlbill", buttonLabel: "📄 Download My Bill", triggerWord: "Download My Bill", response: "Here is your requested PDF bill.", isActive: true },
+          { id: "syspaybill", buttonLabel: "💰 Pay Bill", triggerWord: "Pay Bill", response: "Scan this UPI QR code to make your payment.", isActive: true },
+          { id: "sysdlinvoice", buttonLabel: "🧾 Download Invoice", triggerWord: "Download Invoice", response: "Here is your latest official invoice.", isActive: true },
+          { id: "sysmonthly", buttonLabel: "📊 Panchayat Reports", triggerWord: "Panchayat Reports", response: "Here are the direct PDF download links for Gram Panchayat reports.", isActive: true },
+          { id: "sysdeepreport", buttonLabel: "📑 Deep Details Report", triggerWord: "Deep Details Report", response: "Here are the detailed expenditure reports and vouchers.", isActive: true },
+          { id: "syscomplaint", buttonLabel: "🛠️ Complaints", triggerWord: "Complaints", response: "Please describe your complaint in the next message.", isActive: true }
+        ];
+
+        setBotSettings({
+          isActive: botData?.isActive ?? true,
+          commands: botData?.commands || defaultBotCommands,
+          quickTip: botData?.quickTip || "",
+          quickTips: Array.isArray(botData?.quickTips) && botData.quickTips.length > 0 
+            ? botData.quickTips 
+            : (botData?.quickTip ? [botData.quickTip] : ["Type any command directly to fetch data", "Upload photo of payment receipt to notify admin"]),
+          welcomeMessage: botData?.welcomeMessage || "",
+          includeQuickTip: botData?.includeQuickTip ?? false,
+          hasInitialized: true
+        });
       } catch(e) {
         console.error("Failed to load providers or bot settings", e);
       }
@@ -247,6 +323,9 @@ export function SettingsView() {
         { ...settings, ...(currentOwnerId ? { ownerId: currentOwnerId } : {}) },
         currentOwnerId || undefined
       );
+      if (botSettings) {
+        await saveChatbotSettings(botSettings, currentOwnerId || undefined);
+      }
       showAlert("Saved", "Settings successfully saved.");
     } catch (e) {
       console.error("Save failed", e);
@@ -607,18 +686,21 @@ export function SettingsView() {
                 {settings.preferredNotificationMethod === 'api' ? (
                   <>
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Meta Access Token (Bearer)</label>
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Meta Access Token / Dealer Token (Bearer)</label>
+                        <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-bold uppercase tracking-wider">Permanent / Cloud API</span>
+                      </div>
                       <input
                         type="password"
                         value={settings.metaWhatsAppApiKey || ''}
                         onChange={(e) => setSettings({ ...settings, metaWhatsAppApiKey: e.target.value })}
                         className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-sm font-bold focus:ring-2 focus:ring-emerald-500/30 transition-all shadow-inner"
-                        placeholder="••••••••••••••••••••••••••••"
+                        placeholder="EAAB••••••••••••••••••••••••"
                       />
-                      <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">Located in Meta App Dashboard under API Setup</p>
+                      <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">Dealer Token (System User) or Meta Cloud API Access Token. Supports 24/7 full-time operation.</p>
                     </div>
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Phone Number ID</label>
+                      <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Phone Number ID (15 Digits)</label>
                       <input
                         type="text"
                         value={settings.metaWhatsAppPhoneNumberId || ''}
@@ -626,7 +708,74 @@ export function SettingsView() {
                         className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-sm font-bold focus:ring-2 focus:ring-emerald-500/30 transition-all shadow-inner"
                         placeholder="101XXXXXXXXXXXX"
                       />
-                      <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">Specific ID for the connected phone number</p>
+                      <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">Specific 15-digit Phone Number ID from Meta WhatsApp API Setup</p>
+                    </div>
+
+                    {/* Real-time Connection Status & Health Checker */}
+                    <div className="col-span-full p-5 neu-pressed rounded-2xl bg-gradient-to-r from-emerald-500/5 via-teal-500/5 to-cyan-500/5 border border-emerald-500/20 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`p-2.5 rounded-xl ${tokenVerifyStatus.connected ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' : tokenVerifyStatus.tested && !tokenVerifyStatus.connected ? 'bg-red-500 text-white' : 'bg-emerald-500/20 text-emerald-600'}`}>
+                            <Zap className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-xs font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-400">Real-Time API & Dealer Token Status</h4>
+                              {tokenVerifyStatus.connected ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white shadow-sm">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span> Connected & Active
+                                </span>
+                              ) : tokenVerifyStatus.tested && !tokenVerifyStatus.connected ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-red-500 text-white shadow-sm">
+                                  Connection Failed
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-slate-500/20 text-slate-700 dark:text-slate-300">
+                                  Ready to Verify
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] font-bold text-gray-500 mt-0.5">Live handshake with Meta Graph API servers</p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleVerifyToken}
+                          disabled={tokenVerifyStatus.isLoading}
+                          className="px-5 py-2.5 neu-flat bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50"
+                        >
+                          {tokenVerifyStatus.isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                          {tokenVerifyStatus.isLoading ? "Verifying..." : "Check Live Connection"}
+                        </button>
+                      </div>
+
+                      {tokenVerifyStatus.tested && tokenVerifyStatus.connected && (
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-emerald-500/10 text-xs">
+                          <div className="p-3 neu-flat rounded-xl bg-white/40 dark:bg-slate-900/40">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-gray-400 block">Verified Business</span>
+                            <span className="font-black text-emerald-700 dark:text-emerald-300 truncate block mt-0.5">{tokenVerifyStatus.verifiedName || "WhatsApp Business"}</span>
+                          </div>
+                          <div className="p-3 neu-flat rounded-xl bg-white/40 dark:bg-slate-900/40">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-gray-400 block">Registered Number</span>
+                            <span className="font-black text-emerald-700 dark:text-emerald-300 truncate block mt-0.5">{tokenVerifyStatus.displayPhoneNumber || "Active"}</span>
+                          </div>
+                          <div className="p-3 neu-flat rounded-xl bg-white/40 dark:bg-slate-900/40">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-gray-400 block">Quality Rating</span>
+                            <span className="font-black text-emerald-600 truncate block mt-0.5">🟢 {tokenVerifyStatus.qualityRating || "GREEN"}</span>
+                          </div>
+                          <div className="p-3 neu-flat rounded-xl bg-white/40 dark:bg-slate-900/40">
+                            <span className="text-[9px] uppercase tracking-wider font-bold text-gray-400 block">Token Health</span>
+                            <span className="font-black text-emerald-700 dark:text-emerald-300 truncate block mt-0.5">24/7 Full-Time Operational</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {tokenVerifyStatus.tested && !tokenVerifyStatus.connected && tokenVerifyStatus.error && (
+                        <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-600 text-xs font-bold leading-relaxed">
+                          ⚠️ {tokenVerifyStatus.error}
+                        </div>
+                      )}
                     </div>
                   </>
                 ) : settings.preferredNotificationMethod === 'wati' ? (
@@ -919,6 +1068,18 @@ export function SettingsView() {
                       <div className={`absolute top-1 left-1 w-5 h-5 bg-white rounded-full shadow-sm transition-all duration-300 ${settings.automation?.autoShareReports ? 'translate-x-7' : 'translate-x-0'}`} />
                     </div>
                   </label>
+
+                  {/* WhatsApp Greeting & Dynamic Quick Tips Configuration */}
+                  {botSettings && (
+                    <div className="pt-2">
+                      <WhatsAppChatbotConfig 
+                        settings={botSettings} 
+                        onUpdate={(newSettings) => setBotSettings(newSettings)}
+                        ownerId={currentOwnerId || undefined}
+                        isCompact={false}
+                      />
+                    </div>
+                  )}
 
                   <div className="grid gap-4">
                      <p className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Loaded Bot Commands</p>

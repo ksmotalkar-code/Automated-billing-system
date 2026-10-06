@@ -60,7 +60,8 @@ class WhatsAppService {
   public isConfigured(): boolean {
     const hasMeta = !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
     const hasWati = !!(this.watiAccessToken && this.watiAccessToken.trim());
-    return hasMeta || hasWati;
+    const isPreferred = this.preferredMethod === 'api' || this.preferredMethod === 'wati';
+    return hasMeta || hasWati || isPreferred;
   }
 
   /**

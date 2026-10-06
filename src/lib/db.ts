@@ -979,6 +979,14 @@ export const saveSettings = async (settings: AppSettings, explicitOwnerId?: stri
       payload.billTemplateImage = null;
     }
 
+    // Auto-sanitize Meta / Dealer token and phone number ID
+    if (payload.metaWhatsAppApiKey && typeof payload.metaWhatsAppApiKey === 'string') {
+      payload.metaWhatsAppApiKey = payload.metaWhatsAppApiKey.trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim();
+    }
+    if (payload.metaWhatsAppPhoneNumberId && typeof payload.metaWhatsAppPhoneNumberId === 'string') {
+      payload.metaWhatsAppPhoneNumberId = payload.metaWhatsAppPhoneNumberId.trim().replace(/[\s\-\+]/g, '').replace(/^['"]|['"]$/g, '').trim();
+    }
+
     // Defensive Preservation: If incoming settings has empty or missing WhatsApp credentials/templates,
     // preserve whatever non-empty values currently exist in Firestore to prevent accidental wipes.
     try {
@@ -1656,6 +1664,10 @@ export interface ChatbotCommand {
 export interface ChatbotSettings {
   isActive: boolean;
   commands: ChatbotCommand[];
+  quickTip?: string;
+  quickTips?: string[];
+  welcomeMessage?: string;
+  includeQuickTip?: boolean;
   hasInitialized?: boolean;
   ownerId?: string;
 }

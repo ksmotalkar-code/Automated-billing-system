@@ -5,6 +5,7 @@ export interface WhatsAppRouteDeps {
   getChatbotSettings: (ownerId: string) => Promise<any>;
   getCustomerByMobile: (ownerId: string, mobile: string) => Promise<any>;
   sendMessageUtil: (params: any) => Promise<any>;
+  resolveOwnerIdForWebhook?: (requestedOwnerId: string, phoneNumberId?: string) => Promise<{ ownerId: string; settings: any }>;
 }
 
 export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
@@ -18,11 +19,28 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
         return res.status(400).json({ error: "Missing mobile number or message" });
       }
 
+      let effectiveSettings = settings;
+      if (!effectiveSettings || (!effectiveSettings.metaWhatsAppApiKey && !effectiveSettings.watiAccessToken)) {
+        if (deps.resolveOwnerIdForWebhook) {
+          try {
+            const resolved = await deps.resolveOwnerIdForWebhook("system");
+            if (resolved?.settings) {
+              effectiveSettings = { ...(resolved.settings || {}), ...(effectiveSettings || {}) };
+            }
+          } catch (e) {
+            console.warn("[WhatsAppRouter /wa/test] Settings resolution failed:", e);
+          }
+        }
+      }
+
+      console.log(`\n[WhatsAppRouter] POST /wa/test received for recipient: "${mobileNumber}"`);
+      console.log(`[WhatsAppRouter] Invoking deps.sendMessageUtil...`);
       const result = await deps.sendMessageUtil({
         to: mobileNumber,
         message,
-        settings,
+        settings: effectiveSettings,
       });
+      console.log(`[WhatsAppRouter] deps.sendMessageUtil returned:`, JSON.stringify(result, null, 2));
 
       return res.json({ success: true, result });
     } catch (err: any) {
@@ -35,7 +53,17 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
   router.get("/chatbot/diagnostics", async (req, res) => {
     try {
       const ownerId = (req.query.ownerId as string) || "system";
-      const settings = await deps.getSettings(ownerId);
+      let settings = await deps.getSettings(ownerId);
+      if (deps.resolveOwnerIdForWebhook && (!settings?.metaWhatsAppApiKey || ownerId === "system")) {
+        try {
+          const resolved = await deps.resolveOwnerIdForWebhook(ownerId);
+          if (resolved?.settings) {
+            settings = resolved.settings;
+          }
+        } catch (resErr) {
+          console.warn("[WhatsAppRouter] resolveOwnerIdForWebhook error:", resErr);
+        }
+      }
       const chatbotSettings = await deps.getChatbotSettings(ownerId);
 
       const hasMetaApiKey = Boolean(settings?.metaWhatsAppApiKey);

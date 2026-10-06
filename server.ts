@@ -15,6 +15,7 @@ import { backgroundQueue } from "./src/server/services/queue.ts";
 import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
+import { createWhatsAppRouter } from "./src/server/routes/whatsapp.ts";
 import { tenantMiddleware, errorHandler } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from "firebase/app";
@@ -49,6 +50,23 @@ const OperationType = {
 } as const;
 
 type OperationType = (typeof OperationType)[keyof typeof OperationType];
+
+export function sanitizeMetaCredentials(
+  apiKey?: string | null,
+  phoneId?: string | null
+): { apiKey?: string; phoneId?: string } {
+  let cleanKey = apiKey ? String(apiKey).trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+  if (cleanKey === "" || cleanKey === "null" || cleanKey === "undefined") {
+    cleanKey = undefined;
+  }
+
+  let cleanPhone = phoneId ? String(phoneId).trim().replace(/[\s\-\+]/g, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+  if (cleanPhone === "" || cleanPhone === "null" || cleanPhone === "undefined") {
+    cleanPhone = undefined;
+  }
+
+  return { apiKey: cleanKey, phoneId: cleanPhone };
+}
 
 interface FirestoreErrorInfo {
   error: string;
@@ -683,21 +701,54 @@ function getSvrT(lang: string = 'en', key: string, params: any = {}) {
 }
 
 async function generateInvoicePdf(
-  name: string,
-  balance: number,
-  amountPaid?: number,
-  templateImage?: string | null,
-  lang: string = 'en',
-  customerId: string = 'N/A',
-  billingAmount: number = 200,
-  advanceBalance: number = 0
+  nameOrCustomer: any,
+  balanceOrSettings: any,
+  amountPaidOrTemplateImage?: any,
+  templateImageOrIsSuspended?: any,
+  langOrBillingAmount?: any,
+  customerId?: string,
+  billingAmountParam?: number,
+  advanceBalanceParam?: number,
+  appLogoImageParam?: string | null
 ): Promise<string> {
+  let name = "Customer";
+  let balance = 0;
+  let amountPaid: number | undefined = undefined;
+  let templateImage: string | null = null;
+  let lang = "en";
+  let custId = "N/A";
+  let billingAmount = 200;
+  let advanceBalance = 0;
+  let appLogoImage: string | null = null;
+
+  // Detect signature pattern
+  if (typeof nameOrCustomer === "object" && nameOrCustomer !== null) {
+    const customer = nameOrCustomer;
+    const settings = balanceOrSettings || {};
+    name = customer.name || "Customer";
+    balance = typeof customer.balance === "number" ? customer.balance : 0;
+    templateImage = amountPaidOrTemplateImage || settings.billTemplateImage || null;
+    lang = settings.preferredLanguage || "en";
+    custId = customer.id || "N/A";
+    billingAmount = typeof settings.billingAmount === "number" ? settings.billingAmount : 200;
+    advanceBalance = typeof customer.advanceBalance === "number" ? customer.advanceBalance : 0;
+    appLogoImage = settings.appLogoImage || null;
+  } else {
+    name = typeof nameOrCustomer === "string" ? nameOrCustomer : "Customer";
+    balance = typeof balanceOrSettings === "number" ? balanceOrSettings : 0;
+    amountPaid = typeof amountPaidOrTemplateImage === "number" ? amountPaidOrTemplateImage : undefined;
+    templateImage = typeof templateImageOrIsSuspended === "string" ? templateImageOrIsSuspended : null;
+    lang = typeof langOrBillingAmount === "string" ? langOrBillingAmount : "en";
+    custId = customerId || "N/A";
+    billingAmount = typeof billingAmountParam === "number" ? billingAmountParam : 200;
+    advanceBalance = typeof advanceBalanceParam === "number" ? advanceBalanceParam : 0;
+    appLogoImage = appLogoImageParam || null;
+  }
+
   const pdfDoc = await PDFDocument.create();
-  
   let pgWidth = 595.28;
   let pgHeight = 841.89;
   let image: any = null;
-  let imgScale = 1;
 
   if (
     templateImage &&
@@ -722,7 +773,6 @@ async function generateInvoicePdf(
         const rawDims = image.scale(1);
         pgWidth = rawDims.width;
         pgHeight = rawDims.height;
-        imgScale = pgHeight / 480; 
       } catch (embErr) {
         console.error("Failed to parse image format:", embErr);
       }
@@ -735,6 +785,15 @@ async function generateInvoicePdf(
   
   if (image) {
     page.drawImage(image, { x: 0, y: 0, width: pgWidth, height: pgHeight });
+  } else {
+    // 0. Full Page Yellow Background
+    page.drawRectangle({
+      x: 0,
+      y: 0,
+      width: pgWidth,
+      height: pgHeight,
+      color: rgb(254 / 255, 240 / 255, 138 / 255)
+    });
   }
 
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
@@ -743,16 +802,35 @@ async function generateInvoicePdf(
   const timesRoman = await pdfDoc.embedFont(StandardFonts.TimesRoman);
   const isPaid = balance <= 0 || (amountPaid !== undefined && balance === 0);
 
-  // Attempt to load official VWSC emblem if no full-page image template
+  // Attempt to load official circular emblem with database appLogoImage fallback
   let sealImage: any = null;
   if (!image) {
-    const sealPath = path.join(process.cwd(), 'public', 'vwsc_seal.png');
-    if (fs.existsSync(sealPath)) {
+    if (appLogoImage && typeof appLogoImage === "string" && appLogoImage.trim().length > 20) {
       try {
-        const sealBytes = fs.readFileSync(sealPath);
-        sealImage = await pdfDoc.embedPng(sealBytes);
-      } catch (embErr) {
-        console.warn("Could not embed seal PNG in server PDF:", embErr);
+        let imgData: any;
+        if (appLogoImage.startsWith("http://") || appLogoImage.startsWith("https://")) {
+          const res = await fetch(appLogoImage);
+          imgData = await res.arrayBuffer();
+        } else {
+          const parts = appLogoImage.split(',');
+          imgData = parts.length > 1 ? Buffer.from(parts[1], 'base64') : Buffer.from(appLogoImage, 'base64');
+        }
+        const isPng = appLogoImage.includes('png') || appLogoImage.includes('.png') || appLogoImage.startsWith('data:image/png');
+        sealImage = isPng ? await pdfDoc.embedPng(imgData) : await pdfDoc.embedJpg(imgData);
+      } catch (err) {
+        console.warn("Could not embed appLogoImage in server PDF:", err);
+      }
+    }
+
+    if (!sealImage) {
+      const sealPath = path.join(process.cwd(), 'public', 'vwsc_seal.png');
+      if (fs.existsSync(sealPath)) {
+        try {
+          const sealBytes = fs.readFileSync(sealPath);
+          sealImage = await pdfDoc.embedPng(sealBytes);
+        } catch (embErr) {
+          console.warn("Could not embed seal PNG in server PDF:", embErr);
+        }
       }
     }
   }
@@ -760,9 +838,9 @@ async function generateInvoicePdf(
   if (image) {
     // Legacy support for user's uploaded template 
     const t = (k: string, p?: any) => getSvrT(lang, k, p);
-    const scaleY = (y: number) => pgHeight - ((480 - y) * imgScale);
-    const scaleX = (x: number) => x * imgScale;
-    const sSize = (size: number) => size * imgScale;
+    const scaleY = (y: number) => pgHeight - (480 - y);
+    const scaleX = (x: number) => x;
+    const sSize = (size: number) => size;
 
     const drawTextBg = (text: string, x: number, y: number, size: number, fontFace: any, color: any) => {
       page.drawText(text, { x, y, size, font: fontFace, color });
@@ -770,21 +848,21 @@ async function generateInvoicePdf(
 
     if (amountPaid !== undefined && balance === 0) {
       drawTextBg(t('receipt'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0.1, 0.6, 0.2));
-      drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
-      drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.1, 0.6, 0.2));
-      drawTextBg(`${t('balanceLabel')}: Rs. 0`, scaleX(50), scaleY(280), sSize(14), font, rgb(0, 0, 0));
+      drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), fontBold, rgb(0, 0, 0));
+      drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(310), sSize(14), fontBold, rgb(0.1, 0.6, 0.2));
+      drawTextBg(`${t('balanceLabel')}: Rs. 0`, scaleX(50), scaleY(280), sSize(14), fontBold, rgb(0, 0, 0));
     } else {
       drawTextBg(t('invoice'), scaleX(50), scaleY(400), sSize(20), fontBold, rgb(0, 0, 0));
-      drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), font, rgb(0, 0, 0));
-      drawTextBg(`${t('balanceLabel')}: Rs. ${balance}`, scaleX(50), scaleY(310), sSize(14), font, rgb(0.8, 0.1, 0.1));
+      drawTextBg(`${t('name')}: ${name}`, scaleX(50), scaleY(340), sSize(14), fontBold, rgb(0, 0, 0));
+      drawTextBg(`${t('balanceLabel')}: Rs. ${balance}`, scaleX(50), scaleY(310), sSize(14), fontBold, rgb(0, 0, 0));
       if (amountPaid) {
-        drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(280), sSize(12), font, rgb(0.1, 0.6, 0.2));
+        drawTextBg(`${t('amountPaidLabel')}: Rs. ${amountPaid}`, scaleX(50), scaleY(280), sSize(12), fontBold, rgb(0, 0, 0));
       }
     }
-    drawTextBg(`${t('date')}: ${new Date().toLocaleDateString()}`, scaleX(50), scaleY(200), sSize(12), font, rgb(0, 0, 0));
-    drawTextBg(t('thankYou'), scaleX(50), scaleY(150), sSize(12), font, rgb(0, 0, 0));
+    drawTextBg(`${t('date')}: ${new Date().toLocaleDateString()}`, scaleX(50), scaleY(200), sSize(12), fontBold, rgb(0, 0, 0));
+    drawTextBg(t('thankYou'), scaleX(50), scaleY(150), sSize(12), fontBold, rgb(0, 0, 0));
   } else {
-    // 1. Header with Official Emblem & Serif Typography
+    // 1. Header with Official Emblem & Bold Typography
     if (sealImage) {
       page.drawImage(sealImage, { x: 45, y: pgHeight - 92, width: 68, height: 68 });
     }
@@ -793,17 +871,17 @@ async function generateInvoicePdf(
     page.drawText("VILLAGE WATER & SANITATION COMMITTEE", {
       x: 130,
       y: pgHeight - 56,
-      size: 16,
-      font: timesBold,
-      color: rgb(0.06, 0.09, 0.16)
+      size: 15,
+      font: fontBold,
+      color: rgb(0, 0, 0)
     });
 
     page.drawText("VILLAGE - JHANDA KHURD (MANSA)", {
       x: 130,
       y: pgHeight - 78,
       size: 11,
-      font: timesRoman,
-      color: rgb(0.06, 0.09, 0.16)
+      font: fontBold,
+      color: rgb(0, 0, 0)
     });
 
     // Top Solid Horizontal Divider Line
@@ -814,7 +892,7 @@ async function generateInvoicePdf(
       color: rgb(0, 0, 0)
     });
 
-    // 2. Document Title (Centered as in reference)
+    // 2. Document Title (Centered)
     const title = isPaid ? "RECEIPT" : "WATER BILL";
     const titleW = fontBold.widthOfTextAtSize(title, 16);
     page.drawText(title, {
@@ -825,102 +903,48 @@ async function generateInvoicePdf(
       color: rgb(0, 0, 0)
     });
 
-    // 3. Metadata Key-Value Block
+    // 3. Metadata Key-Value Block (All bold, dark black text)
     const currentDate = new Date().toLocaleDateString();
     const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
-    const acctDisplay = customerId && customerId !== 'N/A' ? String(customerId).trim() : 'N/A';
+    const acctDisplay = custId && custId !== 'N/A' ? String(custId).trim() : 'N/A';
 
     page.drawText("Date:", { x: 56, y: pgHeight - 165, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
-    page.drawText(currentDate, { x: 155, y: pgHeight - 165, size: 10.5, font, color: rgb(0, 0, 0) });
+    page.drawText(currentDate, { x: 155, y: pgHeight - 165, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
     page.drawText("Account No.:", { x: 56, y: pgHeight - 188, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
-    page.drawText(acctDisplay, { x: 155, y: pgHeight - 188, size: 10.5, font, color: rgb(0, 0, 0) });
+    page.drawText(acctDisplay, { x: 155, y: pgHeight - 188, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
     const nameLbl = isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :";
     const nameX = isPaid ? 250 : 180;
     page.drawText(nameLbl, { x: 56, y: pgHeight - 211, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
     
     let displayName = name || "";
-    while (font.widthOfTextAtSize(displayName, 10.5) > (539 - nameX) && displayName.length > 5) {
+    while (fontBold.widthOfTextAtSize(displayName, 10.5) > (539 - nameX) && displayName.length > 5) {
       displayName = displayName.slice(0, -1);
     }
-    page.drawText(displayName, { x: nameX, y: pgHeight - 211, size: 10.5, font, color: rgb(0, 0, 0) });
+    page.drawText(displayName, { x: nameX, y: pgHeight - 211, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
     page.drawText("Water Bill For Month :", { x: 56, y: pgHeight - 234, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
-    page.drawText(currentMonth, { x: 180, y: pgHeight - 234, size: 10.5, font, color: rgb(0, 0, 0) });
+    page.drawText(currentMonth, { x: 180, y: pgHeight - 234, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
     // 4. Financial Calculations
-    const currentCharges = billingAmount;
-    const paymentReceived2 = amountPaid || 0;
-    const totalDueBeforePayment = balance + paymentReceived2;
-    let previousBalanceAndSurcharge = totalDueBeforePayment - currentCharges;
-    if (previousBalanceAndSurcharge < 0) previousBalanceAndSurcharge = 0;
+    const currentCharges = billingAmount || 200;
+    const pendingAmount = balance > currentCharges ? balance - currentCharges : 0;
+    const surcharge = pendingAmount > 0 ? pendingAmount * 0.20 : 0;
 
-    const arrears = previousBalanceAndSurcharge / 1.2;
-    const surcharge = arrears > 0 ? arrears * 0.20 : 0;
-    const waterPayableCharges = currentCharges + arrears;
-
-    // 5. 5-Row Exact Table Layout Geometry
+    // 5. 4-Row Exact Table Layout Geometry (Exact user requirement)
+    // 1. Water consumption charges for last two months
+    // 2. Pending amount ( if any )
+    // 3. Surcharges
+    // 4. Total Payable
     const tableY = pgHeight - 264;
     const col1X = 56;
     const colWidth = 483; // Spans 483pt from 56 to 539 (A4 right margin)
     const col2X = 376; // Description width 320pt, Amount width 163pt
     const rowHeight = 26;
-    const totalDataRows = 5;
+    const totalDataRows = 4;
 
-    // 6. Watermark across Table (Centered inside table bounds)
-    const centerX = col1X + colWidth / 2; // 297.5 pt (center of page)
-    const centerY = tableY + rowHeight - (rowHeight * (totalDataRows + 1)) / 2; // center of table
-
-    if (advanceBalance > 0) {
-      const wAdv = fontBold.widthOfTextAtSize("ADVANCE PAID", 46);
-      const angle = 35;
-      const rad = angle * (Math.PI / 180);
-      page.drawText("ADVANCE PAID", {
-        x: centerX - (wAdv / 2) * Math.cos(rad),
-        y: centerY - (wAdv / 2) * Math.sin(rad),
-        size: 46,
-        font: fontBold,
-        color: rgb(0.65, 0.92, 0.85),
-        rotate: degrees(angle)
-      });
-    } else if (balance <= 0 || isPaid) {
-      const wPaid = fontBold.widthOfTextAtSize("PAID", 55);
-      const angle = 35;
-      const rad = angle * (Math.PI / 180);
-      page.drawText("PAID", {
-        x: centerX - (wPaid / 2) * Math.cos(rad),
-        y: centerY - (wPaid / 2) * Math.sin(rad),
-        size: 55,
-        font: fontBold,
-        color: rgb(0.74, 0.96, 0.8),
-        rotate: degrees(angle)
-      });
-    } else if (paymentReceived2 > 0) {
-      const wPartial = fontBold.widthOfTextAtSize("PARTIAL PAYMENT", 30);
-      const angle = 22;
-      const rad = angle * (Math.PI / 180);
-      page.drawText("PARTIAL PAYMENT", {
-        x: centerX - (wPartial / 2) * Math.cos(rad),
-        y: centerY - (wPartial / 2) * Math.sin(rad),
-        size: 30,
-        font: fontBold,
-        color: rgb(0.99, 0.94, 0.74),
-        rotate: degrees(angle)
-      });
-    } else {
-      const wUnpaid = fontBold.widthOfTextAtSize("UNPAID", 55);
-      const angle = 35;
-      const rad = angle * (Math.PI / 180);
-      page.drawText("UNPAID", {
-        x: centerX - (wUnpaid / 2) * Math.cos(rad),
-        y: centerY - (wUnpaid / 2) * Math.sin(rad),
-        size: 55,
-        font: fontBold,
-        color: rgb(1, 0.84, 0.84),
-        rotate: degrees(angle)
-      });
-    }
+    // Note: Hallmark of PAID / UNPAID watermark has been removed as requested
 
     // Outer Border
     page.drawRectangle({
@@ -929,7 +953,7 @@ async function generateInvoicePdf(
       width: colWidth,
       height: rowHeight * (totalDataRows + 1),
       borderColor: rgb(0, 0, 0),
-      borderWidth: 1
+      borderWidth: 1.2
     });
 
     // Horizontal Dividers
@@ -955,7 +979,7 @@ async function generateInvoicePdf(
     page.drawText("Amount (Rs)", { x: col2X + 10, y: tableY + 8, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
     // Row 1: Water consumption charges for last two months
-    page.drawText("Water consumption charges for last two months", {
+    page.drawText("1. Water consumption charges for last two months", {
       x: col1X + 10,
       y: tableY - 18,
       size: 10,
@@ -966,28 +990,28 @@ async function generateInvoicePdf(
       x: col2X + 10,
       y: tableY - 18,
       size: 10.5,
-      font,
+      font: fontBold,
       color: rgb(0, 0, 0)
     });
 
-    // Row 2: Water Payable Charges
-    page.drawText("Water Payable Charges", {
+    // Row 2: Pending amount ( if any )
+    page.drawText("2. Pending amount ( if any )", {
       x: col1X + 10,
       y: tableY - 44,
       size: 10.5,
       font: fontBold,
       color: rgb(0, 0, 0)
     });
-    page.drawText(String(Math.round(waterPayableCharges)), {
+    page.drawText(pendingAmount > 0 ? pendingAmount.toFixed(2) : "0.00", {
       x: col2X + 10,
       y: tableY - 44,
       size: 10.5,
-      font,
+      font: fontBold,
       color: rgb(0, 0, 0)
     });
 
-    // Row 3: Surcharges ( if any )
-    page.drawText("Surcharges ( if any )", {
+    // Row 3: Surcharges
+    page.drawText("3. Surcharges", {
       x: col1X + 10,
       y: tableY - 70,
       size: 10.5,
@@ -998,59 +1022,43 @@ async function generateInvoicePdf(
       x: col2X + 10,
       y: tableY - 70,
       size: 10.5,
-      font,
-      color: rgb(0, 0, 0)
-    });
-
-    // Row 4: Total Payment Received
-    page.drawText("Total Payment Received", {
-      x: col1X + 10,
-      y: tableY - 96,
-      size: 10.5,
       font: fontBold,
       color: rgb(0, 0, 0)
     });
-    page.drawText(paymentReceived2 > 0 ? paymentReceived2.toFixed(2) : "0", {
-      x: col2X + 10,
-      y: tableY - 96,
-      size: 10.5,
-      font,
-      color: rgb(0, 0, 0)
-    });
 
-    // Row 5: Total Payable
-    page.drawText("Total Payable", {
+    // Row 4: Total Payable
+    page.drawText("4. Total Payable", {
       x: col1X + 10,
-      y: tableY - 122,
+      y: tableY - 96,
       size: 10.5,
       font: fontBold,
       color: rgb(0, 0, 0)
     });
     const totalPayableStr = (balance <= 0 && isPaid) 
-      ? (advanceBalance > 0 ? `None (Adv: Rs. ${advanceBalance.toFixed(2)})` : "None") 
+      ? "0.00" 
       : balance.toFixed(2);
     page.drawText(totalPayableStr, {
       x: col2X + 10,
-      y: tableY - 122,
+      y: tableY - 96,
       size: 10.5,
-      font,
+      font: fontBold,
       color: rgb(0, 0, 0)
     });
 
     if (advanceBalance > 0) {
       page.drawText(`* Pre-paid Advance Credit: Rs. ${advanceBalance.toFixed(2)} (Will automatically apply to future bills)`, {
         x: 38,
-        y: tableY - 146,
+        y: tableY - 122,
         size: 9.5,
         font: fontBold,
-        color: rgb(0.05, 0.55, 0.45)
+        color: rgb(0, 0, 0)
       });
     }
 
     // 7. Bottom Solid Horizontal Divider Line
     page.drawLine({
-      start: { x: 38, y: tableY - 160 },
-      end: { x: 557, y: tableY - 160 },
+      start: { x: 38, y: tableY - 138 },
+      end: { x: 557, y: tableY - 138 },
       thickness: 2,
       color: rgb(0, 0, 0)
     });
@@ -1100,7 +1108,8 @@ async function routeSystemIntent(
         lang,
         custData.id,
         adminSettings?.billingAmount,
-        adv
+        adv,
+        adminSettings?.appLogoImage
       );
       attachments.push({ type: "file", name: "Invoice.pdf", data: b64Pdf });
     } catch (e) {
@@ -1149,43 +1158,61 @@ async function routeSystemIntent(
     const userCommands = chatbotSettings?.commands || [];
     const activeFiltered = userCommands.filter((c: any) => c.isActive);
 
-    let cmdListText = activeFiltered
-      .map((cmd: any, idx: number) => {
-        let emoji = "🔹";
-        switch (idx % 6) {
-          case 0:
-            emoji = "1️⃣";
-            break;
-          case 1:
-            emoji = "2️⃣";
-            break;
-          case 2:
-            emoji = "3️⃣";
-            break;
-          case 3:
-            emoji = "4️⃣";
-            break;
-          case 4:
-            emoji = "5️⃣";
-            break;
-          case 5:
-            emoji = "6️⃣";
-            break;
-        }
-        return `${emoji} *${cmd.triggerWord}* - ${cmd.buttonLabel}`;
-      })
-      .join("\n");
+    // List commands cleanly with bullets (no emoji numbering which breaks/duplicates beyond 6)
+    const cmdListText = activeFiltered
+      .map((cmd: any) => `🔹 *${cmd.triggerWord}* - ${cmd.buttonLabel}`)
+      .join("\n") || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*";
 
     const advNotice = (custData?.advanceBalance && custData.advanceBalance > 0)
       ? `\n💰 *Your Account Credit:* Rs. ${custData.advanceBalance} in Advance\n`
       : "";
 
-    replyText = `Hello ${custData.name || "Customer"}! 🙏 I am your Gram Panchayat Smart Billing Assistant.${advNotice}
+    // Dynamic Quick Tips list (removes hardcoded auto-numbering, uses clean bullet tags)
+    const userQuickTips: string[] = Array.isArray(chatbotSettings?.quickTips) && chatbotSettings.quickTips.length > 0
+      ? chatbotSettings.quickTips.map((t: string) => (t || "").trim()).filter(Boolean)
+      : (chatbotSettings?.quickTip?.trim() ? [chatbotSettings.quickTip.trim()] : []);
 
-Available Services (Reply with number 1, 2, 3... or word):
-${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Download My Bill*\n4️⃣ *Complaints*"}
+    const formattedQuickTip = userQuickTips.length === 1
+      ? `💡 *Quick Tip:* ${userQuickTips[0]}`
+      : userQuickTips.length > 1
+      ? `💡 *Quick Tips:*\n` + userQuickTips.map((t: string) => `• ${t}`).join("\n")
+      : "";
 
-💡 *Quick Tip:* You can simply type the option number (e.g. 1) to proceed!`;
+    // Check if user has defined a custom welcome message template with placeholders
+    if (chatbotSettings?.welcomeMessage && chatbotSettings.welcomeMessage.trim()) {
+      let templated = chatbotSettings.welcomeMessage
+        .replace(/\{\{?name\}\}?/gi, custData.name || "Customer")
+        .replace(/\{\{?(commands|services)\}\}?/gi, cmdListText)
+        .replace(/\{\{?(credit|advance)\}\}?/gi, advNotice)
+        .replace(/\{\{?balance\}\}?/gi, String(custData.balance ?? 0));
+
+      // Dynamic text placeholders: replace specific index placeholders {quick_tip_1}, {quick_tip_2}, etc.
+      userQuickTips.forEach((tipText: string, idx: number) => {
+        const itemRegex = new RegExp(`\\{\\{?quick_?tip_?${idx + 1}\\}\\}?`, "gi");
+        templated = templated.replace(itemRegex, `💡 *Tip:* ${tipText}`);
+      });
+
+      // Quick Tip is customisable and NOT automatic: replaced ONLY if user added {quick_tip} or {{quick_tip}}
+      if (/\{\{?quick_?tips?\}\}?/i.test(templated)) {
+        templated = templated.replace(
+          /\{\{?quick_?tips?\}\}?/gi,
+          formattedQuickTip ? `\n\n${formattedQuickTip}` : ""
+        );
+      }
+
+      replyText = templated.trim();
+    } else {
+      // Standard template: clean bullets with no numbering overflow
+      replyText = `Hello ${custData.name || "Customer"}! 🙏 I am your Gram Panchayat Smart Billing Assistant.${advNotice}
+
+Available Services (Reply with any command below):
+${cmdListText}`;
+
+      // Only include quick tip if explicitly enabled/configured
+      if (chatbotSettings?.includeQuickTip && formattedQuickTip) {
+        replyText += `\n\n${formattedQuickTip}`;
+      }
+    }
     matched = true;
   } else if (
     msgLower === "my bill" ||
@@ -1351,7 +1378,7 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
             : isDeep
             ? "🏷️ [b. Deep Details Report]"
             : "🏷️ [a. Panchayat Reports]";
-          return `${i + 1}️⃣ *${r.title}* ${tagBadge}${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+          return `${i + 1}. *${r.title}* ${tagBadge}${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
         })
         .join("\n\n");
 
@@ -1444,7 +1471,7 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
             ? r.assetLink
             : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
           const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
-          return `${i + 1}️⃣ *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+          return `${i + 1}. *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
         })
         .join("\n\n");
 
@@ -1728,6 +1755,15 @@ async function startServer() {
 
   // Mount Automated Billing & Cron Router
   app.use("/api", createBillingRouter(runDailyAutomation));
+
+  // Mount WhatsApp API Router
+  app.use("/api", createWhatsAppRouter({
+    getSettings,
+    getChatbotSettings,
+    getCustomerByMobile,
+    sendMessageUtil,
+    resolveOwnerIdForWebhook: (ownerId, phoneId) => resolveOwnerIdForWebhook(ownerId, phoneId),
+  }));
 
   // Server-side Gemini AI Client
   let geminiClient: GoogleGenAI | null = null;
@@ -2170,7 +2206,8 @@ async function startServer() {
                         lang,
                         customer?.id,
                         settings?.billingAmount,
-                        newAdvance
+                        newAdvance,
+                        settings?.appLogoImage
                       );
                       
                       let finalTemplateParams: any[] = [
@@ -2234,6 +2271,55 @@ async function startServer() {
     }
   });
 
+  // Generic fetch wrapper with exponential backoff and randomized jitter for network & rate-limit resilience
+  async function fetchWithRetry(
+    url: string,
+    options: RequestInit,
+    maxRetries = 4,
+    baseDelayMs = 1500,
+    factor = 2
+  ): Promise<Response> {
+    let attempt = 0;
+    while (true) {
+      try {
+        const response = await fetch(url, options);
+        const isTransientError =
+          response.status === 429 || // Rate limit
+          response.status === 500 || // Internal Server Error
+          response.status === 502 || // Bad Gateway
+          response.status === 503 || // Service Unavailable
+          response.status === 504;   // Gateway Timeout
+
+        if (isTransientError && attempt < maxRetries) {
+          attempt++;
+          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 500;
+          console.warn(`[Retry Utility] Transient HTTP ${response.status} detected at ${url}. Retrying attempt ${attempt}/${maxRetries} in ${Math.round(delay)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        return response;
+      } catch (err: any) {
+        const isNetworkError =
+          err.code === "ETIMEDOUT" ||
+          err.code === "ECONNRESET" ||
+          err.code === "ENOTFOUND" ||
+          err.code === "ECONNREFUSED" ||
+          err.message?.toLowerCase().includes("fetch failed") ||
+          err.message?.toLowerCase().includes("timeout") ||
+          err.message?.toLowerCase().includes("network");
+
+        if (isNetworkError && attempt < maxRetries) {
+          attempt++;
+          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 500;
+          console.warn(`[Retry Utility] Network error (${err.message || err.code}) at ${url}. Retrying attempt ${attempt}/${maxRetries} in ${Math.round(delay)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
   // Helper for Meta WhatsApp API
   async function sendMetaWhatsApp(
     settings: any,
@@ -2254,8 +2340,12 @@ async function startServer() {
     customTemplateName?: string,
     contextData?: any,
   ) {
-    if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
-      throw new Error("WhatsApp API not configured");
+    const metaCreds = sanitizeMetaCredentials(settings?.metaWhatsAppApiKey, settings?.metaWhatsAppPhoneNumberId);
+    const metaApiKey = metaCreds.apiKey;
+    const metaPhoneId = metaCreds.phoneId;
+
+    if (!metaApiKey || !metaPhoneId) {
+      throw new Error("WhatsApp API not configured: missing Meta/Dealer Token or Phone Number ID");
     }
 
     const mobile = to.replace(/\D/g, "");
@@ -2302,20 +2392,36 @@ async function startServer() {
             blob,
             mediaName || (isImage ? "image.png" : "document.pdf"),
           );
-          formData.append("messaging_product", "whatsapp");
+          const uploadEndpoint = `https://graph.facebook.com/v21.0/${metaPhoneId}/media`;
+          console.log(`\n======================================================`);
+          console.log(`[sendMessageUtil / Meta Media Upload Request]`);
+          console.log(`Method & URL: POST ${uploadEndpoint}`);
+          console.log(`Headers:`, {
+            Authorization: metaApiKey
+              ? `Bearer ${metaApiKey.substring(0, 15)}... (Length: ${metaApiKey.length})`
+              : "MISSING",
+          });
+          console.log(`File: ${mediaName || (isImage ? "image.png" : "document.pdf")}, Mime: ${mimeType}, Size: ${buffer.length} bytes`);
+          console.log(`======================================================\n`);
 
-          const uploadRes = await fetch(
-            `https://graph.facebook.com/v21.0/${settings.metaWhatsAppPhoneNumberId}/media`,
+          const uploadRes = await fetchWithRetry(
+            uploadEndpoint,
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+                Authorization: `Bearer ${metaApiKey}`,
               },
               body: formData as any,
             },
           );
 
           const uploadData = await uploadRes.json();
+          console.log(`\n======================================================`);
+          console.log(`[sendMessageUtil / Meta Media Upload Response]`);
+          console.log(`Status Code: ${uploadRes.status} ${uploadRes.statusText}`);
+          console.log(`Response Body:`, JSON.stringify(uploadData, null, 2));
+          console.log(`======================================================\n`);
+
           if (!uploadRes.ok) {
             console.error(`[WhatsApp] Media Upload Error:`, uploadData);
             if (
@@ -2475,19 +2581,43 @@ async function startServer() {
       }
     }
 
-    const response = await fetch(
-      `https://graph.facebook.com/v21.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
+    const metaMessagesEndpoint = `https://graph.facebook.com/v21.0/${metaPhoneId}/messages`;
+    const metaRequestHeaders = {
+      Authorization: `Bearer ${metaApiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    console.log(`\n======================================================`);
+    console.log(`[sendMessageUtil / Meta API Request]`);
+    console.log(`Method & URL: POST ${metaMessagesEndpoint}`);
+    console.log(`Headers:`, {
+      Authorization: metaApiKey
+        ? `Bearer ${metaApiKey.substring(0, 15)}...${metaApiKey.slice(-6)} (Length: ${metaApiKey.length})`
+        : "MISSING_BEARER_TOKEN",
+      "Content-Type": "application/json",
+    });
+    console.log(`Request Body (JSON Payload):`, JSON.stringify(bodyPayload, null, 2));
+    console.log(`======================================================\n`);
+
+    const response = await fetchWithRetry(
+      metaMessagesEndpoint,
       {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
-          "Content-Type": "application/json",
-        },
+        headers: metaRequestHeaders,
         body: JSON.stringify(bodyPayload),
       },
     );
 
     let latestData = await response.json();
+
+    console.log(`\n======================================================`);
+    console.log(`[sendMessageUtil / Meta API Response]`);
+    console.log(`Response Status Code: ${response.status} ${response.statusText}`);
+    try {
+      console.log(`Response Headers:`, JSON.stringify(Object.fromEntries(response.headers.entries()), null, 2));
+    } catch (e) {}
+    console.log(`Response Body:`, JSON.stringify(latestData, null, 2));
+    console.log(`======================================================\n`);
     if (!response.ok) {
       let isRecovered = false;
       let lastStatus = response.status;
@@ -2601,12 +2731,21 @@ async function startServer() {
         }
 
         if (madeChanges) {
-          const retryResponse = await fetch(
-            `https://graph.facebook.com/v21.0/${settings.metaWhatsAppPhoneNumberId}/messages`,
+          const retryEndpoint = `https://graph.facebook.com/v21.0/${metaPhoneId}/messages`;
+          console.log(`\n--- [sendMessageUtil / Meta API Auto-Recovery Retry Attempt ${attempt + 1}] ---`);
+          console.log(`Method & URL: POST ${retryEndpoint}`);
+          console.log(`Headers:`, {
+            Authorization: metaApiKey ? `Bearer ${metaApiKey.substring(0, 15)}... (Length: ${metaApiKey.length})` : "MISSING",
+            "Content-Type": "application/json",
+          });
+          console.log(`Adjusted Request Body:`, JSON.stringify(bodyPayload, null, 2));
+
+          const retryResponse = await fetchWithRetry(
+            retryEndpoint,
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+                Authorization: `Bearer ${metaApiKey}`,
                 "Content-Type": "application/json",
               },
               body: JSON.stringify(bodyPayload),
@@ -2614,6 +2753,10 @@ async function startServer() {
           );
           lastStatus = retryResponse.status;
           latestData = await retryResponse.json();
+
+          console.log(`[sendMessageUtil / Meta API Retry Response] Status: ${retryResponse.status} ${retryResponse.statusText}`);
+          console.log(`[sendMessageUtil / Meta API Retry Response] Body:`, JSON.stringify(latestData, null, 2));
+
           if (retryResponse.ok) {
             isRecovered = true;
             return latestData;
@@ -2651,7 +2794,7 @@ async function startServer() {
         (latestData.error?.error_user_title && latestData.error.error_user_title.toLowerCase().includes("rate"));
 
       if (isStillRateLimit) {
-        finalErrMsg = `Rate limit exceeded on WhatsApp Cloud API. Meta throughput threshold reached for Phone Number ID ${settings.metaWhatsAppPhoneNumberId}. Please wait 30-60 seconds before sending more messages. (Meta Code: ${finalCode || 429})`;
+        finalErrMsg = `Rate limit exceeded on WhatsApp Cloud API. Meta throughput threshold reached for Phone Number ID ${metaPhoneId}. Please wait 30-60 seconds before sending more messages. (Meta Code: ${finalCode || 429})`;
       } else if (
         latestData.error &&
         latestData.error.message &&
@@ -2708,7 +2851,7 @@ async function startServer() {
       body = { file: mediaBase64 };
     }
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${settings.watiAccessToken}`,
@@ -2745,6 +2888,18 @@ async function startServer() {
     customTemplateName?: string,
     contextData?: any,
   ) {
+    if (!settings || (!settings.metaWhatsAppApiKey && !settings.watiAccessToken)) {
+      try {
+        const resolved = await resolveOwnerIdForWebhook("system");
+        if (resolved?.settings) {
+          settings = { ...(resolved.settings || {}), ...(settings || {}) } as AppSettings;
+        }
+      } catch (err) {
+        console.warn("[sendWhatsAppMessage] Failed to auto-resolve settings:", err);
+      }
+    }
+    settings = settings || ({} as any);
+
     if (settings.preferredNotificationMethod === "manual_link") {
       throw new Error("Manual link selected, API disabled.");
     }
@@ -2783,6 +2938,76 @@ async function startServer() {
         customTemplateName,
         contextData,
       );
+    }
+  }
+
+  /**
+   * Primary message sending utility with detailed request, header, payload,
+   * and response telemetry for Meta API troubleshooting.
+   */
+  async function sendMessageUtil(params: {
+    settings?: any;
+    to: string;
+    message: string;
+    mediaBase64?: string;
+    mediaName?: string;
+    isTestMessage?: boolean;
+    templateCategory?: any;
+    templateParams?: any[];
+    customTemplateName?: string;
+    contextData?: any;
+  }): Promise<any> {
+    if (!params.settings || (!params.settings.metaWhatsAppApiKey && !params.settings.watiAccessToken)) {
+      console.log(`[sendMessageUtil] Missing or incomplete settings in params, resolving master settings...`);
+      try {
+        const resolved = await resolveOwnerIdForWebhook("system");
+        if (resolved?.settings) {
+          params.settings = { ...(resolved.settings || {}), ...(params.settings || {}) };
+        }
+      } catch (e) {
+        console.warn(`[sendMessageUtil] Settings resolution warning:`, e);
+      }
+    }
+    params.settings = params.settings || {};
+
+    console.log(`\n======================================================`);
+    console.log(`[sendMessageUtil] Invocation Triggered`);
+    console.log(`[sendMessageUtil] Target (To): "${params.to}"`);
+    console.log(`[sendMessageUtil] Has Settings Object: ${Boolean(params.settings)}`);
+    if (params.settings) {
+      console.log(`[sendMessageUtil] Settings:`, {
+        hasMetaApiKey: Boolean(params.settings.metaWhatsAppApiKey),
+        metaApiKeyLength: params.settings.metaWhatsAppApiKey ? params.settings.metaWhatsAppApiKey.length : 0,
+        metaPhoneNumberId: params.settings.metaWhatsAppPhoneNumberId || "MISSING",
+        hasWatiToken: Boolean(params.settings.watiAccessToken),
+        preferredNotificationMethod: params.settings.preferredNotificationMethod || "default (meta)",
+      });
+    }
+    console.log(`[sendMessageUtil] Template Category: ${params.templateCategory || "None"}`);
+    console.log(`[sendMessageUtil] Custom Template Name: ${params.customTemplateName || "None"}`);
+    console.log(`[sendMessageUtil] Template Params:`, JSON.stringify(params.templateParams || [], null, 2));
+    console.log(`[sendMessageUtil] Media Attached: ${Boolean(params.mediaBase64)} (Name: ${params.mediaName || "N/A"})`);
+    console.log(`[sendMessageUtil] Message Content: "${params.message ? params.message.substring(0, 150) : ""}"`);
+    console.log(`======================================================\n`);
+
+    try {
+      const result = await sendWhatsAppMessage(
+        params.settings,
+        params.to,
+        params.message,
+        params.mediaBase64,
+        params.mediaName,
+        params.isTestMessage,
+        params.templateCategory,
+        params.templateParams,
+        params.customTemplateName,
+        params.contextData
+      );
+      console.log(`[sendMessageUtil] Execution SUCCESS for ${params.to}. Response ID:`, result?.messages?.[0]?.id || result?.id || "OK");
+      return result;
+    } catch (err: any) {
+      console.error(`[sendMessageUtil] Execution FAILED for ${params.to}:`, err.message);
+      throw err;
     }
   }
 
@@ -3046,7 +3271,8 @@ async function startServer() {
                   settings.preferredLanguage || 'en',
                   customer.id || cDoc.id,
                   billingAmt,
-                  newAdvance
+                  newAdvance,
+                  settings.appLogoImage
                 );
                 mediaBase64 = b64PdfTemp.includes(',') ? b64PdfTemp.split(',')[1] : b64PdfTemp;
               } catch (e: any) {
@@ -3349,43 +3575,57 @@ async function startServer() {
         preferredNotificationMethod: method,
       };
 
+      // Clean up whitespace or empty/null/undefined string values to ensure fallback
+      if (settings.metaWhatsAppApiKey && typeof settings.metaWhatsAppApiKey === 'string') {
+        settings.metaWhatsAppApiKey = settings.metaWhatsAppApiKey.trim();
+        if (settings.metaWhatsAppApiKey === "" || settings.metaWhatsAppApiKey === "null" || settings.metaWhatsAppApiKey === "undefined") {
+          settings.metaWhatsAppApiKey = null;
+        }
+      }
+      if (settings.metaWhatsAppPhoneNumberId && typeof settings.metaWhatsAppPhoneNumberId === 'string') {
+        settings.metaWhatsAppPhoneNumberId = settings.metaWhatsAppPhoneNumberId.trim();
+        if (settings.metaWhatsAppPhoneNumberId === "" || settings.metaWhatsAppPhoneNumberId === "null" || settings.metaWhatsAppPhoneNumberId === "undefined") {
+          settings.metaWhatsAppPhoneNumberId = null;
+        }
+      }
+      if (settings.watiAccessToken && typeof settings.watiAccessToken === 'string') {
+        settings.watiAccessToken = settings.watiAccessToken.trim();
+        if (settings.watiAccessToken === "" || settings.watiAccessToken === "null" || settings.watiAccessToken === "undefined") {
+          settings.watiAccessToken = null;
+        }
+      }
+
       if (
         admin.apps.length &&
         !settings.metaWhatsAppApiKey &&
         !settings.watiAccessToken
       ) {
         try {
-          const db = getAdminDb();
-          if (db) {
-            const settingsDoc = await db
-              .collection("settings")
-              .doc(ownerId)
-              .get();
-            if (settingsDoc.exists) {
-              const dbSettings = settingsDoc.data() as any;
-              if (!settings.metaWhatsAppApiKey)
-                settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-              if (!settings.metaWhatsAppPhoneNumberId)
-                settings.metaWhatsAppPhoneNumberId =
-                  dbSettings.metaWhatsAppPhoneNumberId;
-              if (!settings.watiAccessToken)
-                settings.watiAccessToken = dbSettings.watiAccessToken;
-              if (!settings.watiApiEndpoint)
-                settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-              if (!settings.preferredNotificationMethod)
-                settings.preferredNotificationMethod =
-                  dbSettings.preferredNotificationMethod;
-              if (!settings.metaTemplateBilling)
-                settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
-              if (!settings.metaTemplateReceipt)
-                settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
-              if (!settings.metaTemplateBroadcast)
-                settings.metaTemplateBroadcast =
-                  dbSettings.metaTemplateBroadcast;
-            }
+          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+            await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
+          if (resolvedSettings) {
+            if (!settings.metaWhatsAppApiKey)
+              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId)
+              settings.metaWhatsAppPhoneNumberId =
+                resolvedSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken)
+              settings.watiAccessToken = resolvedSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint)
+              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod)
+              settings.preferredNotificationMethod =
+                resolvedSettings.preferredNotificationMethod;
+            if (!settings.metaTemplateBilling)
+              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt)
+              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast)
+              settings.metaTemplateBroadcast =
+                resolvedSettings.metaTemplateBroadcast;
           }
         } catch (e) {
-          console.warn("Failed to fetch settings from internal DB:", e);
+          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
         }
       }
 
@@ -3395,17 +3635,17 @@ async function startServer() {
           .json({ error: "WhatsApp API not configured in settings" });
       }
 
-      const data = await sendWhatsAppMessage(
+      const data = await sendMessageUtil({
         settings,
         to,
         message,
         mediaBase64,
         mediaName,
-        false,
+        isTestMessage: false,
         templateCategory,
         templateParams,
         customTemplateName,
-      );
+      });
       res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -3661,7 +3901,9 @@ async function startServer() {
         settings?.billTemplateImage,
         lang,
         testCustId,
-        settings?.billingAmount
+        settings?.billingAmount,
+        undefined,
+        settings?.appLogoImage
       );
 
       const message = lang === 'hi' 
@@ -3982,6 +4224,109 @@ async function startServer() {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // Real-Time Meta / Dealer Token & Connection Verifier
+  app.post("/api/wa/verify-token", async (req, res) => {
+    try {
+      const { ownerId, apiKey, phoneId } = req.body;
+      const clean = sanitizeMetaCredentials(apiKey, phoneId);
+      let targetApiKey = clean.apiKey;
+      let targetPhoneId = clean.phoneId;
+
+      // If either is missing, try loading from Firestore settings
+      if ((!targetApiKey || !targetPhoneId) && ownerId) {
+        try {
+          const resolved = await resolveOwnerIdForWebhook(ownerId, targetPhoneId);
+          if (resolved.settings) {
+            const dbClean = sanitizeMetaCredentials(resolved.settings.metaWhatsAppApiKey, resolved.settings.metaWhatsAppPhoneNumberId);
+            if (!targetApiKey) targetApiKey = dbClean.apiKey;
+            if (!targetPhoneId) targetPhoneId = dbClean.phoneId;
+          }
+        } catch (e) {
+          console.warn("[verify-token] Failed to resolve settings from DB:", e);
+        }
+      }
+
+      if (!targetApiKey) {
+        return res.status(400).json({
+          connected: false,
+          error: "Missing Meta Access Token (Dealer / System User Token). Please enter your token in Settings.",
+        });
+      }
+      if (!targetPhoneId) {
+        return res.status(400).json({
+          connected: false,
+          error: "Missing Meta Phone Number ID. Please enter your 15-digit Phone Number ID in Settings.",
+        });
+      }
+
+      // 1. Query Meta Graph API for Phone Number Details
+      const phoneUrl = `https://graph.facebook.com/v21.0/${targetPhoneId}?fields=id,display_phone_number,verified_name,code_verification_status,quality_rating,platform_type,throughput`;
+      console.log(`[verify-token] Querying Meta Graph API for Phone Number ID: ${targetPhoneId}...`);
+
+      const phoneResp = await fetch(phoneUrl, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${targetApiKey}`,
+        },
+      });
+
+      const phoneData = await phoneResp.json();
+      console.log(`[verify-token] Meta Response Status: ${phoneResp.status}`);
+
+      if (!phoneResp.ok) {
+        let errMessage = phoneData.error?.message || "Failed to verify WhatsApp credentials with Meta API";
+        if (phoneData.error?.type === "OAuthException") {
+          errMessage = `OAuth Token Error: ${phoneData.error.message}. Please ensure the token has 'whatsapp_business_messaging' permissions and belongs to this WhatsApp Account.`;
+        }
+        return res.status(phoneResp.status >= 400 && phoneResp.status < 500 ? phoneResp.status : 400).json({
+          connected: false,
+          error: errMessage,
+          metaDetails: phoneData.error,
+        });
+      }
+
+      // 2. Query Token Information / Debug Token
+      let tokenType = "Permanent System User / Dealer Token";
+      let isValidToken = true;
+      let scopes: string[] = ["whatsapp_business_messaging", "whatsapp_business_management"];
+
+      try {
+        const debugResp = await fetch(`https://graph.facebook.com/v21.0/debug_token?input_token=${targetApiKey}&access_token=${targetApiKey}`);
+        if (debugResp.ok) {
+          const debugData = await debugResp.json();
+          if (debugData.data) {
+            tokenType = debugData.data.type || tokenType;
+            isValidToken = debugData.data.is_valid ?? true;
+            if (debugData.data.scopes) {
+              scopes = debugData.data.scopes;
+            }
+          }
+        }
+      } catch (e) {}
+
+      return res.json({
+        connected: true,
+        status: "active",
+        phoneId: phoneData.id || targetPhoneId,
+        displayPhoneNumber: phoneData.display_phone_number || "Registered WhatsApp Number",
+        verifiedName: phoneData.verified_name || "Verified WhatsApp Business Account",
+        codeVerificationStatus: phoneData.code_verification_status || "VERIFIED",
+        qualityRating: phoneData.quality_rating || "GREEN",
+        tokenType,
+        isValidToken,
+        scopes,
+        message: "🟢 WhatsApp Cloud API is Connected & 100% Operational in Real-Time.",
+      });
+    } catch (err: any) {
+      console.error("[verify-token] Unexpected error:", err);
+      return res.status(500).json({
+        connected: false,
+        error: err.message || "Internal server error while verifying WhatsApp token",
+      });
+    }
+  });
+
   // 3. WhatsApp Chatbot Webhooks
 
   // Meta Webhook Verification
@@ -5005,8 +5350,8 @@ async function startServer() {
                     } else if (!handled) {
                       // Guide customer with active menu commands instead of falling silent
                       const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
-                      const cmdList = activeCommands.map((c: any, i: number) => `${i + 1}️⃣ *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
-                      responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏\n\nI could not understand that request. Please reply with the option number:\n\n${cmdList || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Download My Bill*\n4️⃣ *Complaints*"}\n\nType *Menu* to see all services.`;
+                      const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
+                      responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏\n\nI could not understand that request. Please reply with any service below:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* to see all services.`;
                       handled = true;
                     }
 
@@ -5128,8 +5473,8 @@ async function startServer() {
                     try {
                       const chatbotSettings = (await getChatbotSettings(ownerId)) as any;
                       const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
-                      const cmdList = activeCommands.map((c: any, i: number) => `${i + 1}️⃣ *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
-                      const greeting = `Namaste ${matchedCustomer.name || "Resident"}! 🙏\n\nI received your message. Please reply with the service number you need:\n\n${cmdList || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Download My Bill*\n4️⃣ *Complaints*"}\n\nType *Menu* anytime to see all options.`;
+                      const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
+                      const greeting = `Namaste ${matchedCustomer.name || "Resident"}! 🙏\n\nI received your message. Please reply with the service you need:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* anytime to see all options.`;
                       await sendWhatsAppMessage(settings as unknown as AppSettings, fromMobile, greeting);
                     } catch (nonTextErr) {
                       console.error("[Webhook] Failed to send non-text fallback:", nonTextErr);
@@ -5655,8 +6000,8 @@ To link your connection or update your registered number, please contact the Gra
         matchedRule = intentRes.action || "System Intent: " + msgBody;
       } else if (!matched) {
         const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
-        const cmdList = activeCommands.map((c: any, i: number) => `${i + 1}️⃣ *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
-        responseText = `Namaste ${matchedCustomer.name}! 🙏\n\nI could not understand that request. Please reply with the option number:\n\n${cmdList}\n\nType *Menu* to see all services.`;
+        const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
+        responseText = `Namaste ${matchedCustomer.name}! 🙏\n\nI could not understand that request. Please reply with any service below:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* to see all services.`;
         matchedRule = "Fallback Guidance";
       }
 

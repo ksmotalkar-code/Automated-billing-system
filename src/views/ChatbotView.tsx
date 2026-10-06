@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardHeader, CardContent, CardTitle } from "../components/ui/card";
-import { MessageSquare, Save, Settings, Activity, RefreshCw, Plus, Trash2, Bot, Info, Sparkles, MessageCircleCode, CheckCircle2, AlertCircle, Copy, Play, Check } from "lucide-react";
+import { MessageSquare, Save, Settings, Activity, RefreshCw, Plus, Trash2, Bot, Info, Sparkles, MessageCircleCode, CheckCircle2, AlertCircle, Copy, Play, Check, Lightbulb, Tag, Eye, RotateCcw } from "lucide-react";
 import { ChatbotSettings, getChatbotSettings, saveChatbotSettings, ChatbotCommand } from "../lib/db";
 import { motion, AnimatePresence } from "motion/react";
 import { v4 as uuidv4 } from 'uuid';
@@ -8,12 +8,16 @@ import { CommandManagerWrapper } from "../components/CommandManager";
 import { useTranslation } from "react-i18next";
 import { useTenant } from "../contexts/TenantContext";
 import { ChatbotDiagnosticWidget } from "../components/ChatbotDiagnosticWidget";
+import { WhatsAppChatbotConfig } from "../components/WhatsAppChatbotConfig";
 
 export function ChatbotView() {
   const { currentOwnerId } = useTenant();
   const [settings, setSettings] = useState<ChatbotSettings>({
     isActive: false,
-    commands: []
+    commands: [],
+    quickTip: "",
+    welcomeMessage: "",
+    includeQuickTip: false
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -25,7 +29,50 @@ export function ChatbotView() {
   const [simResult, setSimResult] = useState<any>(null);
   const [simulating, setSimulating] = useState(false);
   const [pendingReportSelection, setPendingReportSelection] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   const { t } = useTranslation();
+
+  const insertPlaceholder = (placeholder: string) => {
+    setSettings(prev => {
+      const current = prev.welcomeMessage || "";
+      const updated = current ? `${current} ${placeholder}` : `Hello {name}! 🙏\n\nAvailable Services:\n{commands}\n\n${placeholder}`;
+      return { ...prev, welcomeMessage: updated };
+    });
+  };
+
+  const getRenderedPreview = () => {
+    const activeCmds = (settings.commands || []).filter(c => c.isActive);
+    // Commands without numbers (clean bulleted triggers)
+    const cmdList = activeCmds
+      .map(c => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`)
+      .join("\n") || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*";
+
+    const customTip = (settings.quickTip || "").trim();
+    const formattedTip = customTip ? `💡 *Quick Tip:* ${customTip}` : "";
+
+    if (settings.welcomeMessage && settings.welcomeMessage.trim()) {
+      let templated = settings.welcomeMessage
+        .replace(/\{\{?name\}\}?/gi, "Ramesh Kumar")
+        .replace(/\{\{?(commands|services)\}\}?/gi, cmdList)
+        .replace(/\{\{?(credit|advance)\}\}?/gi, "\n💰 *Your Account Credit:* Rs. 150 in Advance\n")
+        .replace(/\{\{?balance\}\}?/gi, "200");
+
+      if (/\{\{?quick_?tip\}\}?/i.test(templated)) {
+        templated = templated.replace(/\{\{?quick_?tip\}\}?/gi, formattedTip ? `\n\n${formattedTip}` : "");
+      }
+      return templated.trim();
+    }
+
+    let defaultMsg = `Hello Ramesh Kumar! 🙏 I am your Gram Panchayat Smart Billing Assistant.
+
+Available Services (Reply with any command below):
+${cmdList}`;
+
+    if (settings.includeQuickTip && formattedTip) {
+      defaultMsg += `\n\n${formattedTip}`;
+    }
+    return defaultMsg;
+  };
 
   const runDiagnostics = async () => {
     setTestingDiagnostics(true);
@@ -88,6 +135,12 @@ export function ChatbotView() {
         setSettings({
           isActive: data.isActive ?? true,
           commands: data.commands,
+          quickTip: data.quickTip || "",
+          quickTips: Array.isArray(data.quickTips) && data.quickTips.length > 0
+            ? data.quickTips
+            : (data.quickTip ? [data.quickTip] : ["Type any command name directly or upload receipt photo"]),
+          welcomeMessage: data.welcomeMessage || "",
+          includeQuickTip: data.includeQuickTip ?? false,
           hasInitialized: true,
         });
       } else {
@@ -95,6 +148,12 @@ export function ChatbotView() {
         setSettings({
           isActive: data ? (data.isActive ?? true) : true,
           commands: defaultSystemCommands,
+          quickTip: data?.quickTip || "",
+          quickTips: Array.isArray(data?.quickTips) && data.quickTips.length > 0
+            ? data.quickTips
+            : (data?.quickTip ? [data.quickTip] : ["Type any command name directly or upload receipt photo"]),
+          welcomeMessage: data?.welcomeMessage || "",
+          includeQuickTip: data?.includeQuickTip ?? false,
           hasInitialized: true,
         });
       }
@@ -395,6 +454,13 @@ export function ChatbotView() {
 
         {/* Command Configuration */}
         <div className="lg:col-span-8 space-y-6">
+          {/* Custom Dynamic Quick Tips & Greeting Message Card */}
+          <WhatsAppChatbotConfig 
+            settings={settings} 
+            onUpdate={setSettings} 
+            ownerId={currentOwnerId || undefined} 
+          />
+
           <div className="flex items-center justify-between px-2">
             <h2 className="text-[12px] font-black uppercase tracking-[0.2em] text-blue-600/80">Command Registry</h2>
             <p className="text-[10px] neu-text-muted font-bold uppercase">Configure your automated bot responses here.</p>
