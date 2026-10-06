@@ -461,47 +461,50 @@ export function PaymentsView() {
       transition={{ duration: 0.5 }}
       className="space-y-6"
     >
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">{t('Payments')}</h2>
-          <p className="neu-text-muted">Process payments and confirm transactions</p>
+          <h2 className="text-3xl font-black tracking-tight uppercase">{t('Payments')}</h2>
+          <p className="neu-text-muted flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] mt-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            {t('Process Payments & Confirm Transactions')}
+          </p>
         </div>
         {selectedCustomerIds.length > 0 && activeTab === 'list' && (
           <motion.button
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             onClick={() => setIsBulkConfirmModalOpen(true)}
-            className="flex items-center gap-2 px-6 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30"
+            className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 hover:bg-emerald-700 transition-colors"
           >
             <CheckCircle2 className="w-4 h-4" /> Confirm {selectedCustomerIds.length} Payments
           </motion.button>
         )}
       </div>
 
-      <div className="flex bg-[var(--bg-color)] p-1 rounded-xl w-full max-w-md border border-[var(--shadow-light)]">
+      <div className="p-1.5 neu-pressed rounded-2xl flex items-center gap-2 w-full max-w-lg">
         <button
           onClick={() => setActiveTab('pending')}
-          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'pending' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          className={`flex-1 py-2.5 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'pending' ? 'neu-flat bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'neu-text-muted hover:neu-text'
           }`}
         >
           <ImageIcon className="w-4 h-4" /> Pending Approvals 
           {pendingReceipts.length > 0 && (
-            <span className="bg-rose-500 text-white text-[10px] px-2 py-0.5 rounded-full">{pendingReceipts.length}</span>
+            <span className="bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full">{pendingReceipts.length}</span>
           )}
         </button>
         <button
           onClick={() => setActiveTab('list')}
-          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          className={`flex-1 py-2.5 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'list' ? 'neu-flat bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'neu-text-muted hover:neu-text'
           }`}
         >
           <CreditCard className="w-4 h-4" /> Receivables
         </button>
         <button
           onClick={() => setActiveTab('history')}
-          className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-            activeTab === 'history' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          className={`flex-1 py-2.5 px-4 text-xs font-black uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 ${
+            activeTab === 'history' ? 'neu-flat bg-blue-600 text-white shadow-md shadow-blue-500/20' : 'neu-text-muted hover:neu-text'
           }`}
         >
           <Clock className="w-4 h-4" /> Payment History
@@ -509,26 +512,26 @@ export function PaymentsView() {
       </div>
 
       {activeTab === 'history' ? (
-        <Card className="p-4 sm:p-6 bg-slate-950/60 border-slate-800">
+        <div className="space-y-6">
           <PaymentHistory />
-        </Card>
+        </div>
       ) : (
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+      <Card className="neu-flat rounded-[28px] border border-[var(--shadow-light)] shadow-xl overflow-hidden">
+        <CardHeader className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4">
           {activeTab === 'list' && (
-            <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
-              <Search className="w-4 h-4 neu-text-muted" />
+            <div className="flex items-center gap-3 px-4 py-3 neu-pressed rounded-2xl w-full max-w-md group group-focus-within:ring-2 ring-[var(--accent)]/50 transition-all">
+              <Search className="w-5 h-5 neu-text-muted group-focus-within:text-[var(--accent)]" />
               <input 
                 type="text" 
-                placeholder={t('Search')} 
+                placeholder={t('Search Receivables...')} 
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent border-none outline-none text-sm w-full neu-text"
+                className="bg-transparent border-none outline-none text-sm w-full neu-text font-bold placeholder:opacity-50"
               />
             </div>
           )}
           {activeTab === 'pending' && (
-            <CardTitle className="text-sm font-medium neu-text-muted uppercase tracking-widest">
+            <CardTitle className="text-sm font-black neu-text-muted uppercase tracking-[0.2em]">
               Awaiting Verification
             </CardTitle>
           )}
@@ -609,30 +612,32 @@ export function PaymentsView() {
             ) : (
               <>
               <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-              <thead className="text-xs uppercase neu-text-muted border-b border-[var(--shadow-dark)]">
+              <table className="w-full text-sm text-left border-collapse">
+              <thead className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted border-b border-[var(--shadow-dark)] bg-black/5">
                 <tr>
-                  <th className="px-4 py-3 w-10">
-                    <input 
-                      type="checkbox" 
-                      checked={selectedCustomerIds.length === paginatedCustomers.length && paginatedCustomers.length > 0}
-                      onChange={toggleSelectAll}
-                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                    />
+                  <th className="px-4 py-5 text-center w-10">
+                    <div className="flex items-center justify-center">
+                      <input 
+                        type="checkbox" 
+                        checked={selectedCustomerIds.length === paginatedCustomers.length && paginatedCustomers.length > 0}
+                        onChange={toggleSelectAll}
+                        className="w-4 h-4 rounded border-[var(--shadow-dark)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
+                      />
+                    </div>
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('id')}>
-                    Customer ID <SortIcon column="id" />
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('id')}>
+                    ID <SortIcon column="id" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('name')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('name')}>
                     {t('Name')} <SortIcon column="name" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('mobileNumber')}>
-                    Mobile <SortIcon column="mobileNumber" />
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('mobileNumber')}>
+                    {t('Phone')} <SortIcon column="mobileNumber" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('balance')}>
-                    Outstanding Balance <SortIcon column="balance" />
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('balance')}>
+                    {t('Outstanding Balance')} <SortIcon column="balance" />
                   </th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -642,65 +647,68 @@ export function PaymentsView() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.01 }}
-                    whileHover={{ x: 5, backgroundColor: "rgba(255, 255, 255, 0.05)" }}
-                    className={`border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors ${selectedCustomerIds.includes(customer.id) ? 'bg-blue-50/30' : ''}`}
+                    className={`border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors cursor-pointer group ${selectedCustomerIds.includes(customer.id) ? 'bg-blue-50/30' : ''}`}
                   >
-                    <td className="px-4 py-4">
+                    <td className="px-4 py-4 text-center">
                       <input 
                         type="checkbox" 
                         checked={selectedCustomerIds.includes(customer.id)}
                         onChange={() => toggleSelectCustomer(customer.id)}
-                        className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        className="w-4 h-4 rounded border-[var(--shadow-dark)] text-[var(--accent)] focus:ring-[var(--accent)] cursor-pointer"
                       />
                     </td>
-                    <td className="px-4 py-4 font-medium flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-emerald-500" /> {customer.id}
+                    <td className="px-4 py-4 whitespace-nowrap">
+                      <span className="px-2.5 py-1 neu-pressed rounded-lg font-mono font-black text-xs text-blue-600">
+                        #{customer.id}
+                      </span>
                     </td>
-                    <td className="px-4 py-4 font-medium">{customer.name}</td>
-                    <td className="px-4 py-4 text-neu-text-muted">{customer.mobileNumber}</td>
-                    <td className="px-4 py-4 font-bold">
+                    <td className="px-4 py-4 font-black uppercase tracking-tight text-sm whitespace-nowrap">{customer.name}</td>
+                    <td className="px-4 py-4 text-xs font-bold neu-text-muted whitespace-nowrap">{customer.mobileNumber}</td>
+                    <td className="px-4 py-4 whitespace-nowrap font-bold">
                       {customer.balance > 0 ? (
-                        <span className="text-rose-600">{formatCurrency(customer.balance)}</span>
+                        <span className="font-black text-[var(--accent)] text-base">{formatCurrency(customer.balance)}</span>
                       ) : (customer.advanceBalance && customer.advanceBalance > 0) ? (
-                        <div className="flex flex-col items-start gap-0.5">
-                          <span className="text-slate-400 text-xs">₹0 Due</span>
-                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-semibold border border-teal-300">
-                            Adv: {formatCurrency(customer.advanceBalance)}
-                          </span>
+                        <div className="flex flex-col">
+                          <span className="text-xs text-neutral-400 font-bold">₹0 Due</span>
+                          <span className="text-xs font-black text-teal-600">+{formatCurrency(customer.advanceBalance)} Adv</span>
                         </div>
                       ) : (
-                        <span className="text-emerald-600">₹0</span>
+                        <span className="font-black text-emerald-600 text-base">₹0</span>
                       )}
                     </td>
                     <td className="px-4 py-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
+                      <div className="flex items-center justify-end gap-2">
+                        <motion.button
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
                           type="button"
                           onClick={() => setHistoryModalCustomer(customer)}
-                          className="px-2.5 py-1.5 rounded-lg text-xs font-bold neu-flat hover:text-blue-600 transition-colors flex items-center gap-1 text-slate-600 dark:text-slate-300"
+                          className="px-3 py-1.5 rounded-xl text-xs font-bold neu-flat hover:text-blue-600 transition-all flex items-center gap-1.5 neu-text"
                           title="View Payment & Credit Ledger History"
                         >
                           <History className="w-3.5 h-3.5 text-blue-500" />
                           <span className="hidden sm:inline">History</span>
-                        </button>
-                        <button 
+                        </motion.button>
+                        <motion.button 
+                          whileHover={{ scale: 1.05 }}
+                          whileTap={{ scale: 0.95 }}
                           onClick={() => handleOpenPayment(customer)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${
+                          className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 shadow-lg ${
                             customer.balance > 0
-                              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-700'
-                              : 'bg-teal-600 text-white shadow-md shadow-teal-500/20 hover:bg-teal-700'
+                              ? 'bg-emerald-600 text-white shadow-emerald-500/20 hover:bg-emerald-700'
+                              : 'bg-teal-600 text-white shadow-teal-500/20 hover:bg-teal-700'
                           }`}
                         >
-                          <QrCode className="w-3 h-3" /> {customer.balance > 0 ? 'Receive Payment' : '+ Advance Pay'}
-                        </button>
+                          <QrCode className="w-3.5 h-3.5" /> {customer.balance > 0 ? 'Receive Payment' : '+ Advance Pay'}
+                        </motion.button>
                       </div>
                     </td>
                   </motion.tr>
                 ))}
                 {filteredCustomers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center neu-text-muted">
-                      No customers found.
+                    <td colSpan={6} className="px-4 py-12 text-center neu-text-muted">
+                      No matching records found.
                     </td>
                   </tr>
                 )}
@@ -710,25 +718,25 @@ export function PaymentsView() {
             
             {/* Pagination Controls */}
             {activeTab === 'list' && totalPages > 1 && (
-              <div className="flex items-center justify-between px-4 py-4 border-t border-[var(--shadow-dark)]">
-                <span className="text-sm neu-text-muted">
-                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredCustomers.length)} of {filteredCustomers.length} customers
+              <div className="flex items-center justify-between px-4 py-4 border-t border-[var(--shadow-dark)] text-sm neu-text-muted">
+                <span>
+                  Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredCustomers.length)} of {filteredCustomers.length} records
                 </span>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
                   <button 
                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                     disabled={currentPage === 1}
-                    className="px-3 py-1 neu-flat rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+                    className="px-3.5 py-1.5 neu-flat rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
                   >
                     Previous
                   </button>
-                  <div className="px-3 py-1 text-sm font-medium flex items-center">
+                  <div className="px-3 py-1 font-mono font-bold text-xs neu-text">
                     Page {currentPage} of {totalPages}
                   </div>
                   <button 
                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages}
-                    className="px-3 py-1 neu-flat rounded-lg text-sm font-medium disabled:opacity-50 transition-colors"
+                    className="px-3.5 py-1.5 neu-flat rounded-xl text-xs font-bold disabled:opacity-40 transition-colors"
                   >
                     Next
                   </button>
@@ -1368,12 +1376,12 @@ export function PaymentsView() {
       {/* Customer Specific Payment History Modal */}
       <AnimatePresence>
         {historyModalCustomer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-md overflow-y-auto">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="w-full max-w-5xl bg-slate-900 rounded-3xl shadow-2xl border border-white/10 p-4 sm:p-7 max-h-[92vh] overflow-y-auto"
+              className="w-full max-w-5xl neu-flat rounded-[32px] border border-[var(--shadow-light)] p-5 sm:p-8 max-h-[92vh] overflow-y-auto shadow-2xl"
             >
               <PaymentHistory 
                 customerId={historyModalCustomer.id} 

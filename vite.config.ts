@@ -5,7 +5,12 @@ import {defineConfig, loadEnv} from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({mode}) => {
-  const env = loadEnv(mode, '.', '');
+  const env = loadEnv(mode, process.cwd(), '');
+  const geminiApiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY || "";
+  const appUrl = env.APP_URL || process.env.APP_URL || env.VITE_APP_URL || process.env.VITE_APP_URL || "";
+  const whatsappApiKey = env.VITE_WHATSAPP_API_KEY || process.env.VITE_WHATSAPP_API_KEY || env.WHATSAPP_API_KEY || process.env.WHATSAPP_API_KEY || "";
+  const whatsappPhoneId = env.VITE_WHATSAPP_PHONE_NUMBER_ID || process.env.VITE_WHATSAPP_PHONE_NUMBER_ID || env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_NUMBER_ID || "";
+
   return {
     plugins: [
       react(), 
@@ -145,7 +150,12 @@ export default defineConfig(({mode}) => {
       })
     ],
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY || ""),
+      'process.env.GEMINI_API_KEY': JSON.stringify(geminiApiKey),
+      'process.env.APP_URL': JSON.stringify(appUrl),
+      'process.env.NODE_ENV': JSON.stringify(mode || process.env.NODE_ENV || "production"),
+      'import.meta.env.VITE_WHATSAPP_API_KEY': JSON.stringify(whatsappApiKey),
+      'import.meta.env.VITE_WHATSAPP_PHONE_NUMBER_ID': JSON.stringify(whatsappPhoneId),
+      'import.meta.env.VITE_APP_URL': JSON.stringify(appUrl),
     },
     build: {
       outDir: 'dist',

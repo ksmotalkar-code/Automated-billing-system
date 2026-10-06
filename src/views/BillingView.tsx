@@ -691,22 +691,33 @@ export function BillingView() {
       transition={{ duration: 0.5 }}
       className="space-y-6"
     >
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">{t('Invoices')}</h2>
-          <p className="neu-text-muted">{t('Manage Invoices')}</p>
+          <h2 className="text-3xl font-black tracking-tight uppercase">{t('Invoices & Billing')}</h2>
+          <p className="neu-text-muted flex items-center gap-2 text-xs font-bold uppercase tracking-[0.2em] mt-1">
+            <span className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+            {t('Billing Cycle & Monthly Invoices')}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center p-1 bg-gray-100 rounded-xl mr-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="p-1.5 neu-pressed rounded-2xl flex items-center gap-1.5">
             <button
               onClick={() => setActiveTab('Unpaid')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'Unpaid' ? 'bg-white shadow text-blue-800' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                activeTab === 'Unpaid' 
+                  ? 'neu-flat bg-blue-600 text-white shadow-md shadow-blue-500/20' 
+                  : 'neu-text-muted hover:neu-text'
+              }`}
             >
               Unpaid Invoices
             </button>
             <button
               onClick={() => setActiveTab('Paid')}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'Paid' ? 'bg-white shadow text-green-800' : 'text-gray-500 hover:text-gray-800'}`}
+              className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                activeTab === 'Paid' 
+                  ? 'neu-flat bg-emerald-600 text-white shadow-md shadow-emerald-500/20' 
+                  : 'neu-text-muted hover:neu-text'
+              }`}
             >
               Paid & Sent
             </button>
@@ -715,7 +726,7 @@ export function BillingView() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={runBillingCycle}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/30"
+            className="flex items-center gap-2 px-6 py-3 bg-[var(--accent)] text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-[var(--accent)]/30"
           >
             <Play className="w-4 h-4" /> Run Billing Cycle
           </motion.button>
@@ -723,7 +734,7 @@ export function BillingView() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={applyPenalties}
-            className="flex items-center gap-2 px-4 py-2 bg-rose-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-rose-500/30"
+            className="flex items-center gap-2 px-6 py-3 bg-rose-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-rose-500/20"
           >
             <AlertTriangle className="w-4 h-4" /> Apply Penalties
           </motion.button>
@@ -731,16 +742,16 @@ export function BillingView() {
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={() => setIsSettingsModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2 neu-flat rounded-xl text-sm font-bold"
+            className="flex items-center gap-2 px-5 py-3 neu-flat rounded-2xl text-[10px] font-black uppercase tracking-widest neu-text"
           >
-            <Settings className="w-4 h-4" /> Configure UPI QR
+            <Settings className="w-4 h-4 text-blue-600" /> QR Config
           </motion.button>
           <motion.button 
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
             onClick={handleSendMonthlyPaidBills}
             disabled={isSendingBulk || !settings?.automation?.bulkProcessing}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-500/30 disabled:opacity-70"
+            className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-emerald-500/20 disabled:opacity-70"
           >
             {isSendingBulk ? (
               <span className="flex items-center gap-2">
@@ -749,46 +760,46 @@ export function BillingView() {
               </span>
             ) : (
               <>
-                <Send className="w-4 h-4" /> Send Monthly WhatsApp Bill (Paid)
+                <Send className="w-4 h-4" /> Dispatch Monthly Bills
               </>
             )}
           </motion.button>
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <div className="flex items-center gap-2 px-3 py-2 neu-pressed rounded-xl w-full max-w-sm">
-            <Search className="w-4 h-4 neu-text-muted" />
+      <Card className="neu-flat rounded-[28px] border border-[var(--shadow-light)] shadow-xl overflow-hidden">
+        <CardHeader className="flex flex-col md:flex-row items-center justify-between gap-4 pb-4">
+          <div className="flex items-center gap-3 px-4 py-3 neu-pressed rounded-2xl w-full max-w-md group group-focus-within:ring-2 ring-[var(--accent)]/50 transition-all">
+            <Search className="w-5 h-5 neu-text-muted group-focus-within:text-[var(--accent)]" />
             <input 
               type="text" 
-              placeholder={t('Search')} 
+              placeholder={t('Search Invoices...')} 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="bg-transparent border-none outline-none text-sm w-full neu-text"
+              className="bg-transparent border-none outline-none text-sm w-full neu-text font-bold placeholder:opacity-50"
             />
           </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="text-xs uppercase neu-text-muted border-b border-[var(--shadow-dark)]">
+            <table className="w-full text-sm text-left border-collapse">
+              <thead className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted border-b border-[var(--shadow-dark)] bg-black/5">
                 <tr>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('id')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('id')}>
                     Invoice ID <SortIcon column="id" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('name')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('name')}>
                     {t('Name')} <SortIcon column="name" />
                   </th>
-                  <th className="px-4 py-3">Period</th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('balance')}>
+                  <th className="px-4 py-5 whitespace-nowrap">Period</th>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('balance')}>
                     Amount <SortIcon column="balance" />
                   </th>
-                  <th className="px-4 py-3 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => handleSort('status')}>
+                  <th className="px-4 py-5 cursor-pointer hover:text-[var(--accent)] transition-colors whitespace-nowrap" onClick={() => handleSort('status')}>
                     {t('Status')} <SortIcon column="status" />
                   </th>
-                  <th className="px-4 py-3">Due Date</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-4 py-5 whitespace-nowrap">Due Date</th>
+                  <th className="px-4 py-5 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>

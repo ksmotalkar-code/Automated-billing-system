@@ -78,57 +78,45 @@ export function ChatbotView() {
         { id: "sysdlbill", buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
         { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
         { id: "sysdlinvoice", buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Dear {{name}}, your latest invoice has been generated. Please find it attached below.'), isActive: true },
-        { id: "sysmonthly", buttonLabel: `📊 ${t('Reports')}`, triggerWord: t('Reports'), response: t('Here are the present reports available from our Reports section.'), isActive: true },
-        { id: "sysdeepreport", buttonLabel: `📑 ${t('Deep Detail Report')}`, triggerWord: t('Deep Detail Report'), response: t('Hello {{name}}, let me fetch your deep detailed usage report from our systems.'), isActive: true },
+        { id: "sysmonthly", buttonLabel: `📊 ${t('Panchayat Reports')}`, triggerWord: t('Panchayat Reports'), response: t('Here are the direct PDF download links for Gram Panchayat reports.'), isActive: true },
+        { id: "sysdeepreport", buttonLabel: `📑 ${t('Deep Details Report')}`, triggerWord: t('Deep Details Report'), response: t('Here are the detailed itemized expenditure reports and vouchers for Gram Panchayat.'), isActive: true },
         { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true }
       ];
 
-      let mergedCommands = [];
-      if (data && data.commands) {
-        // Keep ONLY the commands that exist in our new default system list, or custom user added ones.
-        // But since user wants to "remove all rest of them", we will filter out old default system commands
-        // that are no longer in our list.
-        mergedCommands = data.commands.filter((c: any) => 
-          !c.id.startsWith('sys') || defaultSystemCommands.some(dsc => dsc.id === c.id)
-        );
+      if (data && Array.isArray(data.commands)) {
+        // User already has saved commands: preserve them strictly and NEVER resurrect deleted ones!
+        setSettings({
+          isActive: data.isActive ?? true,
+          commands: data.commands,
+          hasInitialized: true,
+        });
+      } else {
+        // First-time setup only
+        setSettings({
+          isActive: data ? (data.isActive ?? true) : true,
+          commands: defaultSystemCommands,
+          hasInitialized: true,
+        });
       }
-      
-      for (const sys of defaultSystemCommands) {
-        const existingIndex = mergedCommands.findIndex(c => c.id === sys.id);
-        if (existingIndex !== -1) {
-          // If it's an old system command (technical trigger), update it to the new friendly one
-          // We only update it if it's the specific system ID
-          mergedCommands[existingIndex] = { ...mergedCommands[existingIndex], triggerWord: sys.triggerWord, buttonLabel: sys.buttonLabel };
-        } else {
-          mergedCommands.push(sys);
-        }
-      }
-
-      setSettings({
-        isActive: data ? (data.isActive || false) : false,
-        commands: mergedCommands
-      });
       setLoading(false);
     };
     fetchSettings();
   }, [currentOwnerId]);
 
-  useEffect(() => {
-    if (loading) return;
-    
-    const timer = setTimeout(() => {
-      handleSave();
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [settings, loading, currentOwnerId]);
-
-  const handleSave = () => {
+  const handleSave = (customSettings?: ChatbotSettings) => {
+    const toSave = customSettings || { ...settings, hasInitialized: true };
     setSaving(true);
     setSaveMessage("");
-    saveChatbotSettings(settings, currentOwnerId || undefined).catch(e => console.error("Error saving chatbot to remote:", e));
-    setSaving(false);
-    setSaveMessage("Deployment Successfull");
-    setTimeout(() => setSaveMessage(""), 3000);
+    saveChatbotSettings(toSave, currentOwnerId || undefined)
+      .then(() => {
+        setSaveMessage("Deployment Successful");
+        setTimeout(() => setSaveMessage(""), 3000);
+      })
+      .catch((e) => {
+        console.error("Error saving chatbot to remote:", e);
+        setSaveMessage("Save Failed");
+      })
+      .finally(() => setSaving(false));
   };
 
   const handleToggle = () => {
@@ -147,14 +135,22 @@ export function ChatbotView() {
   };
 
   const handleRemoveCommand = (id: string) => {
-    setSettings(prev => ({ ...prev, commands: prev.commands.filter(c => c.id !== id) }));
+    const updated = {
+      ...settings,
+      commands: settings.commands.filter(c => c.id !== id),
+      hasInitialized: true
+    };
+    setSettings(updated);
+    saveChatbotSettings(updated, currentOwnerId || undefined).catch(e => console.error("Error saving chatbot removal:", e));
   };
 
   const handleUpdateCommand = (id: string, updates: Partial<ChatbotCommand>) => {
-    setSettings(prev => ({
-      ...prev,
-      commands: prev.commands.map(c => c.id === id ? { ...c, ...updates } : c)
-    }));
+    const updated = {
+      ...settings,
+      commands: settings.commands.map(c => c.id === id ? { ...c, ...updates } : c),
+      hasInitialized: true
+    };
+    setSettings(updated);
   };
 
   if (loading) {
@@ -189,7 +185,7 @@ export function ChatbotView() {
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={handleSave}
+            onClick={() => handleSave()}
             disabled={saving}
             className="px-8 py-4 neu-flat bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/20 flex items-center gap-3 disabled:opacity-40"
           >
@@ -363,7 +359,7 @@ export function ChatbotView() {
                 </div>
 
                 <div className="flex flex-wrap gap-1">
-                  {["Hi", "Download My Bill", "Pay Bill", "Check Balance", "Reports", "1", "Complaints"].map((btn) => (
+                  {["Hi", "Panchayat Reports", "Deep Details Report", "Pay Bill", "Download My Bill", "1", "2"].map((btn) => (
                     <button
                       key={btn}
                       onClick={() => {
@@ -409,6 +405,7 @@ export function ChatbotView() {
                settings={settings}
                onUpdate={setSettings}
                isCompact={false}
+               ownerId={currentOwnerId || undefined}
                fallbackUI={
                 <>
                   <div className="flex items-center justify-end px-2 mb-4">

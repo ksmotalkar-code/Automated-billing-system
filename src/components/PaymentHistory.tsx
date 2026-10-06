@@ -2,13 +2,10 @@ import React, { useState, useMemo } from "react";
 import { 
   CreditCard, 
   Search, 
-  Calendar, 
   Download, 
   ArrowUpRight, 
   ArrowDownLeft, 
   Sparkles, 
-  CheckCircle2, 
-  Filter, 
   Banknote, 
   Smartphone, 
   Copy, 
@@ -16,14 +13,12 @@ import {
   Clock, 
   FileText, 
   X,
-  TrendingUp,
   Coins,
-  ShieldCheck,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-import { Transaction, Customer, AppSettings } from "../lib/db";
+import { motion } from "motion/react";
+import { Transaction, Customer } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { generateInvoicePDF } from "../lib/automation";
@@ -149,13 +144,10 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
       }
     });
 
-    const netAdvance = totalAdvanceCredits - totalAdvanceDeductions;
-
     return {
       totalCollected,
       totalAdvanceCredits,
       totalAdvanceDeductions,
-      netAdvance,
       count: filteredTransactions.length
     };
   }, [filteredTransactions]);
@@ -222,50 +214,49 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
   return (
     <div className={`space-y-6 ${className}`}>
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2.5">
-            <div className="p-2.5 bg-blue-600/10 text-blue-500 rounded-xl border border-blue-500/20">
-              <Clock className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-black text-slate-100 uppercase tracking-wide flex items-center gap-2">
-                {customerId ? (
-                  <>
-                    <span>{customerName || targetCustomer?.name || 'Resident'}</span>
-                    <span className="text-xs font-mono font-normal px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                      ID: {customerId}
-                    </span>
-                  </>
-                ) : (
-                  "Transaction & Advance Credit Ledger"
-                )}
-              </h2>
-              <p className="text-xs text-slate-400 font-bold">
-                {customerId 
-                  ? "Track complete payment history, advance deposits, and billing cycle deductions"
-                  : "Authoritative ledger of all water bill collections, advance payments, and automatic credit adjustments"
-                }
-              </p>
-            </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[var(--shadow-dark)]/40 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 neu-flat rounded-2xl text-blue-600">
+            <Clock className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black uppercase tracking-tight neu-text flex items-center gap-2">
+              {customerId ? (
+                <>
+                  <span>{customerName || targetCustomer?.name || 'Resident'}</span>
+                  <span className="px-2.5 py-0.5 rounded-lg neu-pressed text-xs font-mono font-bold text-blue-600 border border-blue-200/50">
+                    ID: {customerId}
+                  </span>
+                </>
+              ) : (
+                <span>Transaction & Advance Credit Ledger</span>
+              )}
+            </h2>
+            <p className="text-xs neu-text-muted font-bold mt-0.5">
+              {customerId 
+                ? "Complete payment timeline, advance deposits, and cycle deductions"
+                : "Authoritative ledger of water bill collections, advance payments, and automatic credit adjustments"
+              }
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             onClick={exportCSV}
             disabled={filteredTransactions.length === 0}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+            className="px-4 py-2.5 neu-flat rounded-2xl text-xs font-black uppercase tracking-wider neu-text hover:text-blue-600 transition-all flex items-center gap-2 border border-white/60 disabled:opacity-50"
             title="Export Ledger to CSV"
           >
-            <Download className="w-3.5 h-3.5 text-blue-400" />
+            <Download className="w-4 h-4 text-blue-600" />
             <span>Export CSV</span>
           </button>
 
           {onClose && (
             <button
               onClick={onClose}
-              className="p-2 text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition-all"
+              className="p-2.5 neu-flat rounded-2xl neu-text-muted hover:text-rose-600 transition-all"
+              title="Close"
             >
               <X className="w-5 h-5" />
             </button>
@@ -275,46 +266,46 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
 
       {/* Target Resident Live Credit Profile (if single customer viewed) */}
       {targetCustomer && (
-        <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-900/20 via-slate-900/40 to-emerald-950/20 border border-blue-500/20 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-sm ${
+        <div className="p-5 neu-pressed rounded-[28px] border border-[var(--shadow-dark)]/10 flex flex-wrap items-center justify-between gap-6">
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-2xl neu-flat flex items-center justify-center font-black text-sm ${
               (targetCustomer.advanceBalance || 0) > 0 
-                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
-                : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                ? 'text-emerald-600' 
+                : 'text-blue-600'
             }`}>
               {targetCustomer.name.slice(0, 2).toUpperCase()}
             </div>
             <div>
-              <p className="text-sm font-black text-slate-100">{targetCustomer.name}</p>
-              <p className="text-[11px] text-slate-400 font-mono">📱 {targetCustomer.mobileNumber || "No phone linked"}</p>
+              <p className="text-base font-black neu-text">{targetCustomer.name}</p>
+              <p className="text-xs neu-text-muted font-bold">📱 {targetCustomer.mobileNumber || "No phone linked"}</p>
             </div>
           </div>
 
           <div className="flex items-center gap-6">
             <div className="text-right">
-              <span className="text-[10px] uppercase font-black tracking-wider text-slate-400 block">Current Outstanding Due</span>
-              <span className={`text-base font-black ${targetCustomer.balance > 0 ? 'text-red-400' : 'text-slate-300'}`}>
+              <span className="text-[10px] uppercase font-black tracking-wider neu-text-muted block">Current Due</span>
+              <span className={`text-lg font-black ${targetCustomer.balance > 0 ? 'text-rose-600' : 'neu-text'}`}>
                 {formatCurrency(targetCustomer.balance)}
               </span>
             </div>
 
-            <div className="text-right pl-6 border-l border-white/10">
-              <span className="text-[10px] uppercase font-black tracking-wider text-emerald-400 block flex items-center justify-end gap-1">
-                <Sparkles className="w-3 h-3 text-emerald-400" /> Active Advance Balance
+            <div className="text-right pl-6 border-l border-[var(--shadow-dark)]/20">
+              <span className="text-[10px] uppercase font-black tracking-wider text-emerald-600 block flex items-center justify-end gap-1">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-600" /> Advance Balance
               </span>
-              <span className="text-base font-black text-emerald-400">
+              <span className="text-lg font-black text-emerald-600">
                 {formatCurrency(targetCustomer.advanceBalance || 0)}
               </span>
             </div>
 
-            <div className="text-right pl-6 border-l border-white/10">
-              <span className="text-[10px] uppercase font-black tracking-wider text-slate-400 block">Account Status</span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+            <div className="text-right pl-6 border-l border-[var(--shadow-dark)]/20">
+              <span className="text-[10px] uppercase font-black tracking-wider neu-text-muted block mb-1">Account Status</span>
+              <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider neu-flat ${
                 targetCustomer.status === 'Advance Paid'
-                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                  ? 'text-emerald-600'
                   : targetCustomer.status === 'Suspended'
-                  ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                  : 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+                  ? 'text-rose-600'
+                  : 'text-blue-600'
               }`}>
                 {targetCustomer.status || 'Active'}
               </span>
@@ -324,97 +315,109 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
       )}
 
       {/* KPI Stats Grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {/* 1. Total Collections */}
-        <div className="p-3.5 neu-pressed rounded-2xl border border-white/5 space-y-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* 1. Direct Collections */}
+        <div className="p-4 neu-flat rounded-[28px] space-y-1 border border-blue-500/10">
+          <span className="text-[10px] font-black uppercase tracking-wider text-blue-600 flex items-center justify-between">
             <span>Direct Collections</span>
-            <Banknote className="w-3.5 h-3.5 text-blue-400" />
+            <Banknote className="w-4 h-4 text-blue-600" />
           </span>
-          <p className="text-lg font-black text-slate-100">
+          <p className="text-2xl font-black neu-text">
             {formatCurrency(stats.totalCollected)}
           </p>
-          <p className="text-[10px] text-slate-400 font-bold">
+          <p className="text-[10px] neu-text-muted font-bold">
             Gross cash & UPI receipts
           </p>
         </div>
 
         {/* 2. Advance Credits Received */}
-        <div className="p-3.5 neu-pressed rounded-2xl border border-emerald-500/10 bg-emerald-500/[0.02] space-y-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 flex items-center justify-between">
+        <div className="p-4 neu-flat rounded-[28px] space-y-1 border border-emerald-500/10">
+          <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 flex items-center justify-between">
             <span>Advance Credits</span>
-            <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-400" />
+            <ArrowDownLeft className="w-4 h-4 text-emerald-600" />
           </span>
-          <p className="text-lg font-black text-emerald-400">
+          <p className="text-2xl font-black text-emerald-600">
             {formatCurrency(stats.totalAdvanceCredits)}
           </p>
-          <p className="text-[10px] text-emerald-300/70 font-bold">
+          <p className="text-[10px] neu-text-muted font-bold">
             Pre-payments deposited
           </p>
         </div>
 
-        {/* 3. Advance Billing Deductions */}
-        <div className="p-3.5 neu-pressed rounded-2xl border border-purple-500/10 bg-purple-500/[0.02] space-y-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-purple-400 flex items-center justify-between">
+        {/* 3. Cycle Deductions */}
+        <div className="p-4 neu-flat rounded-[28px] space-y-1 border border-purple-500/10">
+          <span className="text-[10px] font-black uppercase tracking-wider text-purple-600 flex items-center justify-between">
             <span>Cycle Deductions</span>
-            <ArrowUpRight className="w-3.5 h-3.5 text-purple-400" />
+            <ArrowUpRight className="w-4 h-4 text-purple-600" />
           </span>
-          <p className="text-lg font-black text-purple-400">
+          <p className="text-2xl font-black text-purple-600">
             {formatCurrency(stats.totalAdvanceDeductions)}
           </p>
-          <p className="text-[10px] text-purple-300/70 font-bold">
+          <p className="text-[10px] neu-text-muted font-bold">
             Applied to reduce bills
           </p>
         </div>
 
-        {/* 4. Net Advance Reserve */}
-        <div className="p-3.5 neu-pressed rounded-2xl border border-white/5 space-y-1">
-          <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center justify-between">
+        {/* 4. Total Entries */}
+        <div className="p-4 neu-flat rounded-[28px] space-y-1 border border-amber-500/10">
+          <span className="text-[10px] font-black uppercase tracking-wider text-amber-600 flex items-center justify-between">
             <span>Total Entries</span>
-            <Coins className="w-3.5 h-3.5 text-amber-400" />
+            <Coins className="w-4 h-4 text-amber-600" />
           </span>
-          <p className="text-lg font-black text-slate-100">
+          <p className="text-2xl font-black neu-text">
             {stats.count}
           </p>
-          <p className="text-[10px] text-slate-400 font-bold">
+          <p className="text-[10px] neu-text-muted font-bold">
             Filtered ledger records
           </p>
         </div>
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col md:flex-row gap-3 items-center justify-between p-3.5 bg-slate-900/40 rounded-2xl border border-white/5">
-        <div className="relative w-full md:w-80">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <div className="p-4 neu-flat rounded-[28px] border border-[var(--shadow-light)] shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
+        <div className="flex items-center gap-3 px-4 py-3 neu-pressed rounded-2xl w-full max-w-md group group-focus-within:ring-2 ring-[var(--accent)]/50 transition-all">
+          <Search className="w-5 h-5 neu-text-muted group-focus-within:text-[var(--accent)]" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search by ID, Resident, Receipt #..."
-            className="w-full pl-9 pr-4 py-2 bg-slate-950/60 border border-slate-700/60 rounded-xl text-xs text-slate-200 outline-none focus:border-blue-500/60 transition-all font-medium"
+            className="w-full bg-transparent border-none outline-none text-sm neu-text font-bold placeholder:opacity-50"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto justify-end">
           {/* Type Filter */}
-          <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="p-1 neu-pressed rounded-2xl flex items-center gap-1 text-xs">
             <button
               onClick={() => setTypeFilter('all')}
-              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all ${typeFilter === 'all' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+              className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all ${
+                typeFilter === 'all' 
+                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20' 
+                  : 'neu-text-muted hover:neu-text'
+              }`}
             >
               All Types
             </button>
             <button
               onClick={() => setTypeFilter('advance_credit')}
-              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all flex items-center gap-1 ${typeFilter === 'advance_credit' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-emerald-400'}`}
+              className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1 ${
+                typeFilter === 'advance_credit' 
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20' 
+                  : 'neu-text-muted hover:text-emerald-600'
+              }`}
             >
-              <Sparkles className="w-3 h-3" /> Advance Deposits
+              <Sparkles className="w-3.5 h-3.5" /> Advance Deposits
             </button>
             <button
               onClick={() => setTypeFilter('advance_adjustment')}
-              className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-all flex items-center gap-1 ${typeFilter === 'advance_adjustment' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-purple-400'}`}
+              className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all flex items-center gap-1 ${
+                typeFilter === 'advance_adjustment' 
+                  ? 'bg-purple-600 text-white shadow-md shadow-purple-500/20' 
+                  : 'neu-text-muted hover:text-purple-600'
+              }`}
             >
-              <ArrowUpRight className="w-3 h-3" /> Cycle Deductions
+              <ArrowUpRight className="w-3.5 h-3.5" /> Cycle Deductions
             </button>
           </div>
 
@@ -422,10 +425,10 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
           <select
             value={modeFilter}
             onChange={(e: any) => setModeFilter(e.target.value)}
-            className="px-3 py-1.5 bg-slate-950/60 border border-slate-800 rounded-xl text-xs text-slate-300 font-bold outline-none"
+            className="px-4 py-2.5 neu-pressed rounded-2xl text-xs neu-text font-black outline-none border-none bg-transparent cursor-pointer"
           >
             <option value="all">All Modes</option>
-            <option value="cash">Cash at Counter</option>
+            <option value="cash">Cash Counter</option>
             <option value="upi">UPI / Online</option>
             <option value="advance_credit">Advance Deduction</option>
           </select>
@@ -433,31 +436,31 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
       </div>
 
       {/* Transactions Ledger Table */}
-      <div className="overflow-hidden rounded-2xl border border-white/5 bg-slate-900/20 shadow-xl">
+      <div className="neu-flat rounded-[28px] border border-[var(--shadow-light)] shadow-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-white/5 bg-slate-900/60 text-[10px] font-black uppercase tracking-wider text-slate-400">
-                <th className="py-3.5 px-4">Date & Time</th>
-                <th className="py-3.5 px-4">Transaction / Receipt ID</th>
-                {!customerId && <th className="py-3.5 px-4">Resident</th>}
-                <th className="py-3.5 px-4">Mode / Channel</th>
-                <th className="py-3.5 px-4 text-right">Amount Paid</th>
-                <th className="py-3.5 px-4 text-center">Advance Payment Adjustment</th>
-                <th className="py-3.5 px-4 text-right">Balance Result</th>
-                <th className="py-3.5 px-4 text-center">Receipt</th>
+              <tr className="border-b border-[var(--shadow-dark)] bg-black/5 text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">
+                <th className="py-5 px-4">Date & Time</th>
+                <th className="py-5 px-4">Transaction / Receipt ID</th>
+                {!customerId && <th className="py-5 px-4">Resident</th>}
+                <th className="py-5 px-4">Mode / Channel</th>
+                <th className="py-5 px-4 text-right">Amount Paid</th>
+                <th className="py-5 px-4 text-center">Advance Adjustment</th>
+                <th className="py-5 px-4 text-right">Balance Result</th>
+                <th className="py-5 px-4 text-center">Receipt</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5 text-xs">
+            <tbody className="divide-y divide-[var(--shadow-dark)] text-xs">
               {paginatedTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={customerId ? 7 : 8} className="py-12 text-center text-slate-400">
-                    <div className="flex flex-col items-center justify-center gap-2">
-                      <Clock className="w-8 h-8 text-slate-600" />
-                      <p className="font-bold text-sm text-slate-300">No transaction records found</p>
-                      <p className="text-[11px] text-slate-500 max-w-sm">
+                  <td colSpan={customerId ? 7 : 8} className="py-16 text-center neu-text-muted">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <Clock className="w-10 h-10 neu-text-muted opacity-40" />
+                      <p className="font-black text-base neu-text">No transaction records found</p>
+                      <p className="text-xs neu-text-muted font-bold max-w-sm">
                         {searchQuery || typeFilter !== 'all' || modeFilter !== 'all' 
-                          ? "Try clearing your filters or search terms to view all transactions."
+                          ? "Try clearing your search terms or filters to view all transactions."
                           : "Payments and automated advance deductions will appear here once recorded."}
                       </p>
                     </div>
@@ -474,40 +477,40 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
                   return (
                     <motion.tr 
                       key={txn.id || idx}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: Math.min(idx * 0.02, 0.3) }}
-                      className="hover:bg-slate-800/30 transition-colors group"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: Math.min(idx * 0.01, 0.5) }}
+                      className="border-b border-[var(--shadow-dark)] last:border-0 hover:bg-black/5 transition-colors cursor-pointer group"
                     >
                       {/* 1. Date */}
-                      <td className="py-3.5 px-4 font-mono text-[11px] text-slate-300 whitespace-nowrap">
+                      <td className="py-4 px-4 font-mono text-xs font-bold neu-text whitespace-nowrap">
                         {formatDate(txn.date)}
                       </td>
 
                       {/* 2. Transaction ID */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-slate-200 text-xs">
-                            {txn.transactionId || txn.id}
+                      <td className="py-4 px-4 whitespace-nowrap">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2.5 py-1 neu-pressed rounded-lg font-mono font-black text-xs text-blue-600">
+                            #{txn.transactionId || txn.id}
                           </span>
                           <button
                             onClick={() => copyToClipboard(txn.transactionId || txn.id, txn.id)}
-                            className="text-slate-500 hover:text-slate-300 transition-colors p-1"
+                            className="p-1.5 neu-flat hover:text-blue-600 text-neutral-400 transition-colors rounded-lg"
                             title="Copy ID"
                           >
-                            {copiedId === txn.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            {copiedId === txn.id ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
                           </button>
                         </div>
                       </td>
 
                       {/* 3. Customer (if global view) */}
                       {!customerId && (
-                        <td className="py-3.5 px-4">
+                        <td className="py-4 px-4 whitespace-nowrap">
                           <div>
-                            <span className="font-bold text-slate-100 block truncate max-w-[160px]">
+                            <span className="font-black uppercase tracking-tight text-sm neu-text block truncate max-w-[180px]">
                               {txn.customerName || cust?.name || `Consumer #${txn.customerId}`}
                             </span>
-                            <span className="text-[10px] font-mono text-slate-400">
+                            <span className="text-xs font-bold neu-text-muted">
                               ID: {txn.customerId}
                             </span>
                           </div>
@@ -515,79 +518,81 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
                       )}
 
                       {/* 4. Payment Mode */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
+                      <td className="py-4 px-4 whitespace-nowrap">
                         {isAdvDeduction ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                            <Sparkles className="w-3 h-3" /> Auto Deduction
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 bg-purple-500/10 text-purple-600 border border-purple-500/20">
+                            <Sparkles className="w-3 h-3 text-purple-500" /> Auto Deduction
                           </span>
                         ) : isCash ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                            <Banknote className="w-3 h-3" /> Cash Counter
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                            <Banknote className="w-3 h-3 text-amber-500" /> Cash Counter
                           </span>
                         ) : isUpi ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                            <Smartphone className="w-3 h-3" /> UPI Online
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 bg-blue-500/10 text-blue-600 border border-blue-500/20">
+                            <Smartphone className="w-3 h-3 text-blue-500" /> UPI Online
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
-                            <CreditCard className="w-3 h-3" /> Direct
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1.5 bg-slate-500/10 text-slate-600 border border-slate-500/20">
+                            <CreditCard className="w-3 h-3 text-slate-500" /> Direct
                           </span>
                         )}
                       </td>
 
                       {/* 5. Amount Paid */}
-                      <td className="py-3.5 px-4 text-right font-mono font-bold whitespace-nowrap">
-                        <span className={isAdvDeduction ? 'text-purple-400' : 'text-slate-100 text-sm'}>
+                      <td className="py-4 px-4 text-right font-mono font-black text-sm whitespace-nowrap">
+                        <span className={isAdvDeduction ? 'text-purple-600' : 'text-[var(--accent)]'}>
                           {formatCurrency(txn.amount)}
                         </span>
                       </td>
 
                       {/* 6. Advance Payment Adjustment */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                      <td className="py-4 px-4 text-center whitespace-nowrap">
                         {isAdvCredit ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
-                            <ArrowDownLeft className="w-3.5 h-3.5" />
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1 bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 font-mono">
+                            <ArrowDownLeft className="w-3 h-3 text-emerald-500" />
                             +{formatCurrency(txn.advanceAdjustment || txn.amount)} Credit
                           </span>
                         ) : isAdvDeduction ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-[11px] font-black bg-purple-500/10 text-purple-400 border border-purple-500/20 font-mono">
-                            <ArrowUpRight className="w-3.5 h-3.5" />
+                          <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest inline-flex items-center gap-1 bg-purple-500/10 text-purple-600 border border-purple-500/20 font-mono">
+                            <ArrowUpRight className="w-3 h-3 text-purple-500" />
                             -{formatCurrency(Math.abs(txn.advanceAdjustment || txn.amount))} Adjusted
                           </span>
                         ) : (
-                          <span className="text-[11px] font-mono text-slate-500 font-bold">
+                          <span className="text-xs font-mono neu-text-muted font-bold">
                             ₹0 (Standard)
                           </span>
                         )}
                       </td>
 
                       {/* 7. Balance Result */}
-                      <td className="py-3.5 px-4 text-right whitespace-nowrap font-mono text-[11px]">
+                      <td className="py-4 px-4 text-right whitespace-nowrap font-mono text-xs">
                         {txn.newBalance !== undefined || txn.newAdvance !== undefined ? (
                           <div className="space-y-0.5">
-                            <div className="text-slate-300 font-bold">
-                              Due: <span className={txn.newBalance ? 'text-red-400' : 'text-emerald-400'}>{formatCurrency(txn.newBalance || 0)}</span>
+                            <div className="neu-text font-black">
+                              Due: <span className={txn.newBalance ? 'text-rose-600' : 'text-emerald-600'}>{formatCurrency(txn.newBalance || 0)}</span>
                             </div>
                             {(txn.newAdvance && txn.newAdvance > 0) ? (
-                              <div className="text-emerald-400 font-bold text-[10px]">
+                              <div className="text-teal-600 font-black text-[10px]">
                                 Adv: {formatCurrency(txn.newAdvance)}
                               </div>
                             ) : null}
                           </div>
                         ) : (
-                          <span className="text-slate-500">-</span>
+                          <span className="neu-text-muted font-bold">-</span>
                         )}
                       </td>
 
                       {/* 8. Receipt Download */}
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <button
+                      <td className="py-4 px-4 text-center whitespace-nowrap">
+                        <motion.button
+                          whileHover={{ scale: 1.1, backgroundColor: 'rgba(59, 130, 246, 0.1)' }}
+                          whileTap={{ scale: 0.9 }}
                           onClick={() => handleDownloadReceipt(txn)}
-                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-all border border-slate-700/60 group-hover:border-blue-500/30"
+                          className="p-2 neu-flat text-blue-600 rounded-xl transition-all"
                           title="Download Official Receipt PDF"
                         >
-                          <FileText className="w-3.5 h-3.5 text-blue-400" />
-                        </button>
+                          <FileText className="w-4 h-4" />
+                        </motion.button>
                       </td>
                     </motion.tr>
                   );
@@ -599,25 +604,25 @@ export function PaymentHistory({ customerId, customerName, onClose, className = 
 
         {/* Pagination Bar */}
         {totalPages > 1 && (
-          <div className="p-3.5 border-t border-white/5 flex items-center justify-between text-xs text-slate-400 bg-slate-900/40">
-            <span>
+          <div className="p-4 border-t border-[var(--shadow-dark)] flex items-center justify-between text-xs neu-text-muted bg-black/5">
+            <span className="font-bold">
               Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredTransactions.length)} of {filteredTransactions.length} records
             </span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                 disabled={currentPage === 1}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 border border-slate-700"
+                className="p-2 rounded-xl neu-flat hover:text-blue-600 disabled:opacity-40 transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <span className="px-2 font-mono font-bold text-slate-200">
+              <span className="px-3 font-mono font-black neu-text">
                 {currentPage} / {totalPages}
               </span>
               <button
                 onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                 disabled={currentPage === totalPages}
-                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 disabled:opacity-40 border border-slate-700"
+                className="p-2 rounded-xl neu-flat hover:text-blue-600 disabled:opacity-40 transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>

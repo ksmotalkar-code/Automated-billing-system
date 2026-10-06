@@ -172,6 +172,21 @@ export interface ReportFolder {
   createdAt: string;
 }
 
+export type ReportTag = 'panchayat_report' | 'deep_details_report';
+
+export const REPORT_TAG_LABELS: Record<ReportTag, { label: string; badge: string; description: string }> = {
+  panchayat_report: {
+    label: "a. Panchayat Reports",
+    badge: "Panchayat Reports",
+    description: "Official monthly, periodic, or general Gram Panchayat public reports"
+  },
+  deep_details_report: {
+    label: "b. Deep Details Report",
+    badge: "Deep Details Report",
+    description: "Itemized expenditures, voucher specifics, and technical repair reports"
+  }
+};
+
 export interface Report {
   id: string;
   title: string;
@@ -181,6 +196,8 @@ export interface Report {
   ownerId?: string;
   files?: ReportFile[];
   assetLink?: string;
+  tags?: string[];
+  reportType?: 'panchayat_report' | 'deep_details_report' | 'both';
 }
 
 export interface Transaction {
@@ -1573,6 +1590,25 @@ export const deleteReport = async (id: string, explicitOwnerId?: string) => {
   }
 };
 
+export const updateReportTags = async (id: string, tags: string[], explicitOwnerId?: string) => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  try {
+    const reportRef = doc(db, 'reports', id);
+    await updateDoc(reportRef, { 
+      tags,
+      reportType: tags.includes('panchayat_report') && tags.includes('deep_details_report')
+        ? 'both'
+        : tags.includes('deep_details_report')
+        ? 'deep_details_report'
+        : 'panchayat_report'
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `reports/${id}`);
+    throw error;
+  }
+};
+
 export const deleteComplaint = async (complaintId: string, explicitOwnerId?: string) => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) throw new Error("Not authenticated");
@@ -1620,6 +1656,8 @@ export interface ChatbotCommand {
 export interface ChatbotSettings {
   isActive: boolean;
   commands: ChatbotCommand[];
+  hasInitialized?: boolean;
+  ownerId?: string;
 }
 
 export const getChatbotSettings = async (explicitOwnerId?: string): Promise<ChatbotSettings | null> => {

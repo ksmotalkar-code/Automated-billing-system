@@ -9,6 +9,7 @@ interface CommandManagerProps {
   settings: ChatbotSettings;
   onUpdate: (newSettings: ChatbotSettings) => void;
   isCompact?: boolean;
+  ownerId?: string;
 }
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode, fallback: React.ReactNode }, { hasError: boolean }> {
@@ -27,7 +28,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode, fallbac
   }
 }
 
-export function CommandManagerWrapper({ settings, onUpdate, isCompact, fallbackUI }: CommandManagerProps & { fallbackUI: React.ReactNode }) {
+export function CommandManagerWrapper({ settings, onUpdate, isCompact, ownerId, fallbackUI }: CommandManagerProps & { fallbackUI: React.ReactNode }) {
   const [forceLegacy, setForceLegacy] = useState(false);
 
   if (forceLegacy) {
@@ -50,13 +51,13 @@ export function CommandManagerWrapper({ settings, onUpdate, isCompact, fallbackU
           {fallbackUI}
         </div>
       }>
-        <CommandManager settings={settings} onUpdate={onUpdate} isCompact={isCompact} />
+        <CommandManager settings={settings} onUpdate={onUpdate} isCompact={isCompact} ownerId={ownerId} />
       </ErrorBoundary>
     </div>
   );
 }
 
-function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) {
+function CommandManager({ settings, onUpdate, isCompact, ownerId }: CommandManagerProps) {
   const [commands, setCommands] = useState<ChatbotCommand[]>(settings?.commands || []);
   const [saving, setSaving] = useState(false);
   const { t } = useTranslation();
@@ -69,10 +70,10 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
   }, [settings?.commands]);
 
   const commitChanges = async (newCommands: ChatbotCommand[]) => {
-    const updatedSettings = { ...settings, commands: newCommands };
+    const updatedSettings = { ...settings, commands: newCommands, hasInitialized: true };
     setSaving(true);
     try {
-      await saveChatbotSettings(updatedSettings);
+      await saveChatbotSettings(updatedSettings, ownerId);
       onUpdate(updatedSettings);
     } catch (e) {
       console.error(e);
@@ -119,28 +120,19 @@ function CommandManager({ settings, onUpdate, isCompact }: CommandManagerProps) 
 
   const handleAddDefaults = () => {
     const defaults: ChatbotCommand[] = [
-      { id: 'sysdlbill', buttonLabel: `📄 ${t('Download Bill')}`, triggerWord: t('Download Bill'), response: t('Here is your PDF bill.'), isActive: true },
-      { id: 'sysqrpay', buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Scan this UPI QR code to make your payment.'), isActive: true },
-      { id: 'sysbill', buttonLabel: `📄 ${t('My Bill')}`, triggerWord: t('My Bill'), response: t('Your current bill status is computed live.'), isActive: true },
-      { id: 'sysbalance', buttonLabel: `💳 ${t('Check Balance')}`, triggerWord: t('Check Balance'), response: t('Your total remaining balance is Rs. {{balance}}.'), isActive: true },
-      { id: 'syscomplaint', buttonLabel: `🛠️ ${t('Complaint')}`, triggerWord: t('Complaint'), response: t('Please describe your complaint in the next message.'), isActive: true },
-      { id: 'sysreport', buttonLabel: `📊 ${t('Deep Report')}`, triggerWord: t('Deep Report'), response: t('Let me find your deep detail report.'), isActive: true },
-      { id: 'syswater', buttonLabel: `💧 ${t('Water Quality')}`, triggerWord: t('Water Quality'), response: t('Our water quality currently meets all regulatory standards. Safe for drinking!'), isActive: true },
-      { id: 'syssupply', buttonLabel: `🕒 ${t('Supply Timings')}`, triggerWord: t('Supply Timings'), response: t('Water supply timings are: Morning 6:00 AM - 8:00 AM, Evening 6:00 PM - 8:00 PM.'), isActive: true },
-      { id: 'syscontact', buttonLabel: `📞 ${t('Contact')}`, triggerWord: t('Contact'), response: t('You can contact the Panchayat office at 1800-123-4567.'), isActive: true },
-      { id: 'sysnotify', buttonLabel: `🔔 ${t('Notifications')}`, triggerWord: t('Notifications'), response: t('Your recent notifications are available in the portal dashboard.'), isActive: true },
-      { id: 'sysusage', buttonLabel: `📝 ${t('Usage')}`, triggerWord: t('Usage'), response: t('Your usage history is currently being computed.'), isActive: true },
-      { id: 'sysmaint', buttonLabel: `⚠️ ${t('Maintenance')}`, triggerWord: t('Maintenance'), response: t('No scheduled maintenance for your zone currently.'), isActive: true },
-      { id: 'syslink', buttonLabel: '🔗 Portal Link', triggerWord: 'Link', response: 'Here is your portal link.', isActive: true },
+      { id: 'sysdlbill', buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Here is your requested PDF bill.'), isActive: true },
+      { id: 'syspaybill', buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Scan this UPI QR code to make your payment.'), isActive: true },
+      { id: 'sysdlinvoice', buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Here is your latest official invoice.'), isActive: true },
+      { id: 'sysmonthly', buttonLabel: `📊 ${t('Panchayat Reports')}`, triggerWord: t('Panchayat Reports'), response: t('Here are the direct PDF download links for Gram Panchayat reports.'), isActive: true },
+      { id: 'sysdeepreport', buttonLabel: `📑 ${t('Deep Details Report')}`, triggerWord: t('Deep Details Report'), response: t('Here are the deep detailed itemized expenditure reports and vouchers.'), isActive: true },
+      { id: 'syscomplaint', buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('Please describe your complaint in the next message.'), isActive: true },
     ];
     
-    // Update existing system commands by ID, add others
+    // Replace or merge defaults
     let newCommands = [...commands];
     defaults.forEach(defCmd => {
        const existingIndex = newCommands.findIndex(c => c.id === defCmd.id);
        if (existingIndex !== -1) {
-           // Update only if it hasn't been significantly customized? 
-           // For simplicity, we update the triggers/labels of system commands to match new defaults
            newCommands[existingIndex] = { ...newCommands[existingIndex], ...defCmd };
        } else {
            newCommands.push(defCmd);

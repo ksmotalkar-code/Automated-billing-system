@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
 import express from "express";
 import path from "path";
@@ -303,7 +306,10 @@ export async function resolveOwnerIdForWebhook(
   return { ownerId: targetOwnerId, settings: s || masterSettings };
 }
 
-export async function getReportsForOwner(ownerId: string): Promise<any[]> {
+export async function getReportsForOwner(
+  ownerId: string,
+  allowedTags?: ('a. panchayat reports' | 'b. deep details report')[] | ('panchayat_report' | 'deep_details_report')[]
+): Promise<any[]> {
   const adminDb = getAdminDb();
   let reports: any[] = [];
 
@@ -334,7 +340,99 @@ export async function getReportsForOwner(ownerId: string): Promise<any[]> {
     return 0;
   });
 
+  // If allowedTags is provided, conditionally filter so only reports marked with the specified tags are returned
+  if (allowedTags && allowedTags.length > 0) {
+    return reports.filter((r: any) => isReportMarkedWithTag(r, allowedTags));
+  }
+
   return reports;
+}
+
+export function isReportMarkedWithTag(
+  report: any,
+  allowedTags?: ('a. panchayat reports' | 'b. deep details report')[] | ('panchayat_report' | 'deep_details_report')[]
+): boolean {
+  if (!report) return false;
+  
+  const tags: string[] = [];
+  if (Array.isArray(report.tags)) {
+    report.tags.forEach((t: any) => {
+      if (typeof t === 'string' && t.trim()) {
+        tags.push(t.trim().toLowerCase());
+      }
+    });
+  }
+  if (typeof report.tag === 'string' && report.tag.trim()) {
+    tags.push(report.tag.trim().toLowerCase());
+  }
+  if (report.reportType) {
+    tags.push(String(report.reportType).trim().toLowerCase());
+  }
+
+  const isPanchayatTag = tags.some((t) => 
+    t === 'a. panchayat reports' ||
+    t === 'panchayat reports' ||
+    t === 'panchayat report' ||
+    t === 'panchayat_report' ||
+    t === 'a. panchayat report' ||
+    t.includes('panchayat')
+  );
+
+  const isDeepTag = tags.some((t) => 
+    t === 'b. deep details report' ||
+    t === 'deep details report' ||
+    t === 'deep detail report' ||
+    t === 'deep report' ||
+    t === 'deep_details_report' ||
+    t === 'b. deep details' ||
+    t.includes('deep')
+  );
+
+  if (!allowedTags || allowedTags.length === 0) {
+    return isPanchayatTag || isDeepTag;
+  }
+
+  const checkPanchayat = allowedTags.some(at => 
+    at === 'a. panchayat reports' || at === 'panchayat_report'
+  );
+  const checkDeep = allowedTags.some(at => 
+    at === 'b. deep details report' || at === 'deep_details_report'
+  );
+
+  if (checkPanchayat && checkDeep) {
+    return isPanchayatTag || isDeepTag;
+  }
+  if (checkPanchayat) return isPanchayatTag;
+  if (checkDeep) return isDeepTag;
+
+  return false;
+}
+
+export function filterReportsByConditionalTags(
+  reports: any[],
+  filterMode: 'panchayat_or_deep' | 'panchayat_only' | 'deep_only' = 'panchayat_or_deep'
+): any[] {
+  if (!Array.isArray(reports)) return [];
+  return reports.filter((r: any) => {
+    if (filterMode === 'panchayat_only') {
+      return isReportMarkedWithTag(r, ['a. panchayat reports']);
+    }
+    if (filterMode === 'deep_only') {
+      return isReportMarkedWithTag(r, ['b. deep details report']);
+    }
+    // 'panchayat_or_deep': fetches only reports marked with tags 'a. panchayat reports' or 'b. deep details report'
+    return isReportMarkedWithTag(r, ['a. panchayat reports', 'b. deep details report']);
+  });
+}
+
+export function filterReportsByTag(reports: any[], targetTag: 'panchayat_report' | 'deep_details_report' | 'panchayat_or_deep'): any[] {
+  if (targetTag === 'panchayat_or_deep') {
+    return filterReportsByConditionalTags(reports, 'panchayat_or_deep');
+  }
+  return filterReportsByConditionalTags(
+    reports,
+    targetTag === 'panchayat_report' ? 'panchayat_only' : 'deep_only'
+  );
 }
 
 // We'll import node-cron when the user sets up their Firebase Admin
@@ -1150,27 +1248,45 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
     msgLower === "all reports" ||
     msgLower === "panchayat report" ||
     msgLower === "panchayat reports" ||
+    msgLower === "gram panchayat report" ||
+    msgLower === "gram panchayat reports" ||
     msgLower === "monthly report" ||
+    msgLower === "monthly reports" ||
+    msgLower === "annual report" ||
+    msgLower === "audit report" ||
+    msgLower === "water report" ||
+    msgLower === "panchayat pdf" ||
+    msgLower === "report pdf" ||
+    msgLower === "pdf report" ||
     msgLower === "sysreports" ||
     msgLower === "sysmonthly" ||
+    msgLower.includes("panchayat report") ||
+    msgLower.includes("panchayat reports") ||
+    msgLower.includes("monthly report") ||
+    msgLower.includes("audit report") ||
+    msgLower.includes("annual report") ||
     msgLower.startsWith("report ") ||
     msgLower.startsWith("get report ") ||
     msgLower.startsWith("view report ") ||
     msgLower.startsWith("download report ") ||
-    msgLower.includes("monthly report")
+    msgLower === "ਰਿਪੋਰਟ" ||
+    msgLower === "ਪੰਚਾਇਤ ਰਿਪੋਰਟ" ||
+    msgLower === "ਮਹੀਨਾਵਾਰ ਰਿਪੋਰਟ" ||
+    msgLower === "रिपोर्ट" ||
+    msgLower === "पंचायत रिपोर्ट" ||
+    msgLower === "मासिक रिपोर्ट"
   ) {
-    const availableReports = await getReportsForOwner(ownerId);
+    // Conditional filtering: fetch ONLY reports marked with tags 'a. panchayat reports' or 'b. deep details report', rather than returning the full list
+    const availableReports = await getReportsForOwner(ownerId, ['a. panchayat reports', 'b. deep details report']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
-    // Check if user is specifying/selecting a report
+    // Check if user is specifying/selecting a particular report
     let selectedReport: any = null;
     const cleanDigits = msgLower.replace(/[^\d]/g, "");
     const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
     const isDirectNumber = numericChoice !== null && numericChoice >= 1 && numericChoice <= availableReports.length;
 
-    const isSelecting =
-      custData?.pendingReportSelection ||
-      custData?.pendingMonthlyReport ||
+    const isSelectingSpecific =
       isDirectNumber ||
       msgLower.startsWith("report ") ||
       msgLower.startsWith("get report ") ||
@@ -1178,7 +1294,7 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
       msgLower.startsWith("download report ") ||
       (msgLower.includes("monthly report") && msgLower.replace("monthly report", "").replace("for", "").trim().length > 2);
 
-    if (isSelecting && availableReports.length > 0) {
+    if (isSelectingSpecific && availableReports.length > 0) {
       if (isDirectNumber) {
         selectedReport = availableReports[numericChoice - 1];
       } else {
@@ -1191,68 +1307,167 @@ ${cmdListText || "1️⃣ *Pay Bill*\n2️⃣ *Monthly Report*\n3️⃣ *Downloa
           );
         }
       }
-
-      if (selectedReport) {
-        const reportDownloadUrl = `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
-        const hasSeparateAsset = selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://"));
-        const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
-        const fileName = firstFile?.name || (hasSeparateAsset ? "Google Drive Document" : "");
-
-        replyText = `📄 *Gram Panchayat Report Delivery*\n\n*${selectedReport.title}*${selectedReport.content ? `\n\n📝 *Details:* ${selectedReport.content}` : ""}\n\n🔗 *Direct Report Download Link:*\n${reportDownloadUrl}${hasSeparateAsset ? `\n\n🌐 *Cloud / Google Drive Link:*\n${selectedReport.assetLink}` : ""}${fileName ? `\n\n📎 *Document File:* ${fileName}` : ""}\n\nTap the link above to view or download the report immediately. If you need any other report, reply *Reports* anytime! 🙏`;
-
-        if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
-          const base64Data = firstFile.data.split(",")[1] || firstFile.data;
-          attachments.push({
-            type: "file",
-            name: fileName || `${selectedReport.title}.pdf`,
-            data: base64Data,
-          });
-        }
-        action = "report_selected";
-        matched = true;
-      } else if (custData?.pendingReportSelection || custData?.pendingMonthlyReport) {
-        replyText = `⚠️ Sorry, I could not find a report matching "${rawMsgLower}".\n\nPlease reply with the report option number (1 to ${availableReports.length}) or type *Reports* to view the available list again.`;
-        action = "pending_report_selection";
-        matched = true;
-      }
     }
 
-    if (!matched) {
-      if (availableReports.length === 0) {
-        replyText = `📋 *Gram Panchayat Reports Directory*\n\nCurrently, there are no public reports uploaded in the system records. Please check back later or visit the Panchayat office for assistance.`;
-        action = "reports_none";
-        matched = true;
-      } else {
-        const reportListText = availableReports
-          .map((r: any, i: number) => {
-            const emoji = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][i] || `🔹 [${i + 1}]`;
-            const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : "";
-            return `${emoji} *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}`;
-          })
-          .join("\n\n");
+    if (selectedReport) {
+      const isPanchayat = isReportMarkedWithTag(selectedReport, ['a. panchayat reports']);
+      const isDeep = isReportMarkedWithTag(selectedReport, ['b. deep details report']);
+      const tagBadge = isPanchayat && isDeep
+        ? "🏷️ [a. Panchayat Reports & b. Deep Details Report]"
+        : isDeep
+        ? "🏷️ [b. Deep Details Report]"
+        : "🏷️ [a. Panchayat Reports]";
 
-        replyText = `📊 *Gram Panchayat - Available Reports (${availableReports.length})*\n\nHere are the present reports available from our Reports section:\n\n${reportListText}\n\n👉 *Reply with the Option Number (e.g. 1 or 2) or Report Name* to receive the direct download link.`;
-        action = "pending_report_selection";
-        matched = true;
+      const reportDownloadUrl = (selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://")))
+        ? selectedReport.assetLink
+        : `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
+      const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
+      const fileName = firstFile?.name || `${selectedReport.title || "Panchayat_Report"}.pdf`;
+
+      replyText = `📄 *Gram Panchayat Report PDF Link*\n\n📌 *${selectedReport.title}*\n${tagBadge}\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: fileName,
+          data: base64Data,
+        });
       }
+      action = "report_selected";
+      matched = true;
+    } else if (availableReports.length > 0) {
+      // Directly deliver all conditionally filtered reports with valid tags and PDF links
+      const reportsPdfLinks = availableReports
+        .map((r: any, i: number) => {
+          const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
+            ? r.assetLink
+            : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
+          const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
+          const isPanchayat = isReportMarkedWithTag(r, ['a. panchayat reports']);
+          const isDeep = isReportMarkedWithTag(r, ['b. deep details report']);
+          const tagBadge = isPanchayat && isDeep
+            ? "🏷️ [a. Panchayat Reports & b. Deep Details]"
+            : isDeep
+            ? "🏷️ [b. Deep Details Report]"
+            : "🏷️ [a. Panchayat Reports]";
+          return `${i + 1}️⃣ *${r.title}* ${tagBadge}${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+        })
+        .join("\n\n");
+
+      replyText = `📄 *Gram Panchayat Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+
+      // Also attach the first/latest report's PDF if available as an attached file
+      const latestReport = availableReports[0];
+      const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: firstFile.name || `${latestReport.title || "Panchayat_Report"}.pdf`,
+          data: base64Data,
+        });
+      }
+
+      action = "report_selected";
+      matched = true;
+    } else {
+      replyText = `📋 *Gram Panchayat Reports Section:*\n\nCurrently, no reports are tagged under "a. Panchayat Reports" or "b. Deep Details Report" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      action = "reports_none";
+      matched = true;
     }
   } else if (
     msgLower === "deep report" ||
+    msgLower === "deep reports" ||
+    msgLower === "deep detail report" ||
+    msgLower === "deep details report" ||
+    msgLower === "b. deep details report" ||
+    msgLower === "b. deep details" ||
+    msgLower === "b. deep report" ||
+    msgLower === "deep detail" ||
+    msgLower === "deep details" ||
+    msgLower === "sysdeepreport" ||
+    msgLower === "sysreport" ||
     msgLower === "system_report" ||
-    msgLower.includes("deep detail report")
+    msgLower.includes("deep detail report") ||
+    msgLower.includes("deep details report") ||
+    msgLower.includes("b. deep details report") ||
+    msgLower.includes("deep detail") ||
+    msgLower.includes("deep report")
   ) {
-    replyText =
-      replyText ||
-      `Thank you for asking for a Deep Detail Report. Please specify the month and the corresponding bill or voucher number you are inquiring about.
+    const availableDeepReports = await getReportsForOwner(ownerId, ['b. deep details report']);
+    const protocol = reqHost.includes("localhost") ? "http" : "https";
 
-For Example - 
-1. January me Sekhupuria Gurdwara ke paas Jo pipe leak repair ki hai uska d joint kha se purchase Kiya or kitne ka aaya
-2. Feburary me Bleaching powder kitne rupay ka lekar aaye
-3. November me jo motor repair karvai thi usme jo new wire lagi. Motor khol kr dikhao ki lagi hai ya nhi.
+    // Check if user is specifying/selecting a particular deep detail report
+    let selectedReport: any = null;
+    const cleanDigits = msgLower.replace(/[^\d]/g, "");
+    const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
+    const isDirectNumber = numericChoice !== null && numericChoice >= 1 && numericChoice <= availableDeepReports.length;
 
-After submitting your inquiry, please wait for a response. We will inform you of the next steps within 24 working hours. Thank you.`;
-    matched = true;
-    action = "deep_report";
+    if (isDirectNumber && availableDeepReports.length > 0) {
+      selectedReport = availableDeepReports[numericChoice - 1];
+    } else {
+      const cleanTerm = msgLower
+        .replace(/^(deep report|deep details report|deep detail report|deep detail|deep details|report|get|view|download)\s+/gi, "")
+        .trim();
+      if (cleanTerm.length > 1 && availableDeepReports.length > 0) {
+        selectedReport = availableDeepReports.find((r: any) =>
+          r.title && (r.title.toLowerCase().includes(cleanTerm) || cleanTerm.includes(r.title.toLowerCase()))
+        );
+      }
+    }
+
+    if (selectedReport) {
+      const reportDownloadUrl = (selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://")))
+        ? selectedReport.assetLink
+        : `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
+      const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
+      const fileName = firstFile?.name || `${selectedReport.title || "Deep_Details_Report"}.pdf`;
+
+      replyText = `📑 *Deep Details Report PDF Link*\n\n📌 *${selectedReport.title}*\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Note:* If you need further specific voucher investigation, reply with your voucher details.`;
+
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: fileName,
+          data: base64Data,
+        });
+      }
+      action = "deep_report_selected";
+      matched = true;
+    } else if (availableDeepReports.length > 0) {
+      // Deliver all available tagged Deep Details reports PDF links
+      const reportsPdfLinks = availableDeepReports
+        .map((r: any, i: number) => {
+          const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
+            ? r.assetLink
+            : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
+          const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
+          return `${i + 1}️⃣ *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+        })
+        .join("\n\n");
+
+      replyText = `📑 *Deep Details Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Need itemized voucher investigation?* Reply with your inquiry (e.g. Month, voucher number, or repair work item) and our team will review within 24 working hours.`;
+
+      const latestReport = availableDeepReports[0];
+      const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: firstFile.name || `${latestReport.title || "Deep_Report"}.pdf`,
+          data: base64Data,
+        });
+      }
+
+      action = "deep_report";
+      matched = true;
+    } else {
+      replyText = `📑 *Deep Details Report Section:*\n\nCurrently, no specific Deep Details Report is uploaded under the "Deep Details Report" tag in the system records.\n\nTo inquire about specific expenditures, vouchers, or repair records, please reply with the month and the item you are inquiring about:\n1. Month / Year of expenditure or repair\n2. Bill or voucher number\n3. Description (e.g. pipe repair D-joint purchase, bleaching powder cost, motor repair wire check)\n\nWe will review and provide records within 24 working hours. Thank you.`;
+      action = "deep_report";
+      matched = true;
+    }
   } else if (
     msgLower === "water quality" ||
     msgLower === "system_water_quality" ||
@@ -5936,28 +6151,49 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Vite middleware for development (Serves the App)
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    // Production serving with multi-directory fallback
+  // Serve production build if dist/index.html exists or NODE_ENV is production
+  const hasDist =
+    fs.existsSync(path.join(process.cwd(), "dist", "index.html")) ||
+    fs.existsSync(path.resolve(currentDir, "dist", "index.html")) ||
+    fs.existsSync(path.resolve(currentDir, "../dist", "index.html"));
+
+  const isProduction = process.env.NODE_ENV === "production" || hasDist || process.env.DISABLE_HMR === "true";
+
+  if (hasDist && isProduction) {
     let distPath = path.join(process.cwd(), "dist");
     if (!fs.existsSync(path.join(distPath, "index.html"))) {
-      if (fs.existsSync(path.resolve(currentDir, "index.html"))) {
-        distPath = path.resolve(currentDir);
-      } else if (fs.existsSync(path.resolve(currentDir, "../dist/index.html"))) {
+      if (fs.existsSync(path.resolve(currentDir, "dist", "index.html"))) {
+        distPath = path.resolve(currentDir, "dist");
+      } else if (fs.existsSync(path.resolve(currentDir, "../dist", "index.html"))) {
         distPath = path.resolve(currentDir, "../dist");
       }
     }
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    console.log(`[Production] Serving static files from: ${distPath}`);
+    app.use(express.static(distPath, { maxAge: "1d" }));
+    app.get("*", (req, res, next) => {
+      if (req.path.startsWith("/api/") || req.path === "/health") {
+        return next();
+      }
       res.sendFile(path.join(distPath, "index.html"));
     });
+  } else {
+    try {
+      const { createServer: createViteServer } = await import("vite");
+      const vite = await createViteServer({
+        server: { middlewareMode: true, hmr: false },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+    } catch (viteErr: any) {
+      console.warn("[Server] Vite middleware initialization note:", viteErr?.message || viteErr);
+      if (hasDist) {
+        const distPath = path.join(process.cwd(), "dist");
+        app.use(express.static(distPath));
+        app.get("*", (req, res) => {
+          res.sendFile(path.join(distPath, "index.html"));
+        });
+      }
+    }
   }
 
   app.listen(PORT, "0.0.0.0", () => {
@@ -5988,15 +6224,15 @@ To link your connection or update your registered number, please contact the Gra
 
         const botRef = db.collection("chatbotSettings").doc(targetUid);
         const botSnap = await botRef.get();
-        const botData = botSnap.data() as any;
-        if (!botData || !botData.isActive || !Array.isArray(botData.commands) || botData.commands.length === 0) {
+        if (!botSnap.exists) {
           const dpoBotSnap = await db.collection("chatbotSettings").doc("DpoIU4s6W1TenQVGc1RqNEHefdv2").get();
           if (dpoBotSnap.exists) {
             await botRef.set({
               ...dpoBotSnap.data(),
+              hasInitialized: true,
               ownerId: targetUid
             }, { merge: true });
-            console.log("[Self-Healing] Chatbot settings restored successfully.");
+            console.log("[Self-Healing] Chatbot settings initialized on first setup.");
           }
         }
       } catch (selfHealingErr) {
