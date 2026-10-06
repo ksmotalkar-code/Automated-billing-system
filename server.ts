@@ -2320,6 +2320,69 @@ async function startServer() {
     }
   }
 
+  const AUDIT_LOG_DIR = path.join(process.cwd(), "logs");
+  const AUDIT_LOG_FILE = path.join(AUDIT_LOG_DIR, "whatsapp_audit.log");
+  const AUDIT_JSONL_FILE = path.join(AUDIT_LOG_DIR, "whatsapp_audit.jsonl");
+
+  try {
+    if (!fs.existsSync(AUDIT_LOG_DIR)) {
+      fs.mkdirSync(AUDIT_LOG_DIR, { recursive: true });
+    }
+  } catch (e) {
+    console.warn("[AuditLogger] Failed to initialize audit log directory:", e);
+  }
+
+  /**
+   * Dedicated server-side audit logging utility that intercepts and writes
+   * full outgoing request objects (including headers & serialized JSON body)
+   * and live response details to a persistent audit file.
+   */
+  function writeWhatsAppAuditLog(entry: {
+    stage: "INITIATED" | "OUTGOING_REQUEST" | "RETRY_REQUEST" | "RESPONSE_SUCCESS" | "RESPONSE_ERROR" | "EXECUTION_FAILURE";
+    to: string;
+    method?: string;
+    url?: string;
+    headers?: Record<string, any>;
+    requestPayload?: any;
+    responseStatus?: number | string;
+    responseHeaders?: Record<string, any>;
+    responseBody?: any;
+    durationMs?: number;
+    error?: string;
+    metadata?: Record<string, any>;
+  }) {
+    const timestamp = new Date().toISOString();
+    const jsonRecord = JSON.stringify({ timestamp, ...entry });
+
+    // 1. Append structured JSONL
+    try {
+      fs.appendFileSync(AUDIT_JSONL_FILE, jsonRecord + "\n", "utf8");
+    } catch (err) {
+      console.error("[AuditLogger] Error writing JSONL audit record:", err);
+    }
+
+    // 2. Append Human-Readable Formatted Audit Block
+    const formattedBlock = [
+      `\n==================== [WHATSAPP API AUDIT: ${entry.stage}] ====================`,
+      `Timestamp: ${timestamp}`,
+      `Recipient (To): ${entry.to}`,
+      entry.url ? `Target Endpoint: ${entry.method || "POST"} ${entry.url}` : null,
+      entry.headers ? `Headers:\n${JSON.stringify(entry.headers, null, 2)}` : null,
+      entry.requestPayload ? `Serialized JSON Payload:\n${typeof entry.requestPayload === "string" ? entry.requestPayload : JSON.stringify(entry.requestPayload, null, 2)}` : null,
+      entry.responseStatus ? `Response Status: ${entry.responseStatus}` : null,
+      entry.responseBody ? `Response Body:\n${typeof entry.responseBody === "string" ? entry.responseBody : JSON.stringify(entry.responseBody, null, 2)}` : null,
+      entry.durationMs !== undefined ? `Duration: ${entry.durationMs}ms` : null,
+      entry.error ? `Error / Failure: ${entry.error}` : null,
+      `==============================================================================\n`
+    ].filter(Boolean).join("\n");
+
+    try {
+      fs.appendFileSync(AUDIT_LOG_FILE, formattedBlock + "\n", "utf8");
+    } catch (err) {
+      console.error("[AuditLogger] Error writing formatted audit log:", err);
+    }
+  }
+
   // Helper for Meta WhatsApp API
   async function sendMetaWhatsApp(
     settings: any,
@@ -2599,6 +2662,24 @@ async function startServer() {
     console.log(`Request Body (JSON Payload):`, JSON.stringify(bodyPayload, null, 2));
     console.log(`======================================================\n`);
 
+    const metaReqStartTime = Date.now();
+    writeWhatsAppAuditLog({
+      stage: "OUTGOING_REQUEST",
+      to: formattedTo,
+      method: "POST",
+      url: metaMessagesEndpoint,
+      headers: {
+        Authorization: `Bearer ${metaApiKey.substring(0, 10)}...${metaApiKey.slice(-4)} (len: ${metaApiKey.length})`,
+        "Content-Type": "application/json"
+      },
+      requestPayload: bodyPayload,
+      metadata: {
+        templateCategory: templateCategory || null,
+        customTemplateName: customTemplateName || null,
+        isTestMessage
+      }
+    });
+
     const response = await fetchWithRetry(
       metaMessagesEndpoint,
       {
@@ -2609,6 +2690,7 @@ async function startServer() {
     );
 
     let latestData = await response.json();
+    const metaReqDuration = Date.now() - metaReqStartTime;
 
     console.log(`\n======================================================`);
     console.log(`[sendMessageUtil / Meta API Response]`);
@@ -2618,6 +2700,18 @@ async function startServer() {
     } catch (e) {}
     console.log(`Response Body:`, JSON.stringify(latestData, null, 2));
     console.log(`======================================================\n`);
+
+    writeWhatsAppAuditLog({
+      stage: response.ok ? "RESPONSE_SUCCESS" : "RESPONSE_ERROR",
+      to: formattedTo,
+      method: "POST",
+      url: metaMessagesEndpoint,
+      responseStatus: `${response.status} ${response.statusText}`,
+      responseBody: latestData,
+      durationMs: metaReqDuration,
+      error: response.ok ? undefined : (latestData.error?.message || `HTTP ${response.status}`)
+    });
+
     if (!response.ok) {
       let isRecovered = false;
       let lastStatus = response.status;
@@ -2740,6 +2834,20 @@ async function startServer() {
           });
           console.log(`Adjusted Request Body:`, JSON.stringify(bodyPayload, null, 2));
 
+          const retryStartTime = Date.now();
+          writeWhatsAppAuditLog({
+            stage: "RETRY_REQUEST",
+            to: formattedTo,
+            method: "POST",
+            url: retryEndpoint,
+            headers: {
+              Authorization: `Bearer ${metaApiKey.substring(0, 10)}...${metaApiKey.slice(-4)}`,
+              "Content-Type": "application/json"
+            },
+            requestPayload: bodyPayload,
+            metadata: { attempt: attempt + 1 }
+          });
+
           const retryResponse = await fetchWithRetry(
             retryEndpoint,
             {
@@ -2753,9 +2861,22 @@ async function startServer() {
           );
           lastStatus = retryResponse.status;
           latestData = await retryResponse.json();
+          const retryDuration = Date.now() - retryStartTime;
 
           console.log(`[sendMessageUtil / Meta API Retry Response] Status: ${retryResponse.status} ${retryResponse.statusText}`);
           console.log(`[sendMessageUtil / Meta API Retry Response] Body:`, JSON.stringify(latestData, null, 2));
+
+          writeWhatsAppAuditLog({
+            stage: retryResponse.ok ? "RESPONSE_SUCCESS" : "RESPONSE_ERROR",
+            to: formattedTo,
+            method: "POST",
+            url: retryEndpoint,
+            responseStatus: `${retryResponse.status} ${retryResponse.statusText}`,
+            responseBody: latestData,
+            durationMs: retryDuration,
+            metadata: { attempt: attempt + 1 },
+            error: retryResponse.ok ? undefined : (latestData.error?.message || `Retry HTTP ${retryResponse.status}`)
+          });
 
           if (retryResponse.ok) {
             isRecovered = true;
@@ -2970,6 +3091,27 @@ async function startServer() {
     }
     params.settings = params.settings || {};
 
+    const utilStartTime = Date.now();
+    writeWhatsAppAuditLog({
+      stage: "INITIATED",
+      to: params.to,
+      requestPayload: {
+        messagePreview: params.message ? params.message.substring(0, 150) : "",
+        templateCategory: params.templateCategory || null,
+        customTemplateName: params.customTemplateName || null,
+        templateParams: params.templateParams || [],
+        hasMedia: Boolean(params.mediaBase64),
+        mediaName: params.mediaName || null,
+        isTestMessage: params.isTestMessage || false
+      },
+      metadata: {
+        hasMetaApiKey: Boolean(params.settings?.metaWhatsAppApiKey),
+        metaPhoneNumberId: params.settings?.metaWhatsAppPhoneNumberId || null,
+        hasWatiToken: Boolean(params.settings?.watiAccessToken),
+        preferredNotificationMethod: params.settings?.preferredNotificationMethod || null
+      }
+    });
+
     console.log(`\n======================================================`);
     console.log(`[sendMessageUtil] Invocation Triggered`);
     console.log(`[sendMessageUtil] Target (To): "${params.to}"`);
@@ -3003,10 +3145,34 @@ async function startServer() {
         params.customTemplateName,
         params.contextData
       );
-      console.log(`[sendMessageUtil] Execution SUCCESS for ${params.to}. Response ID:`, result?.messages?.[0]?.id || result?.id || "OK");
+      const durationMs = Date.now() - utilStartTime;
+      console.log(`[sendMessageUtil] Execution SUCCESS for ${params.to} in ${durationMs}ms. Response ID:`, result?.messages?.[0]?.id || result?.id || "OK");
+
+      writeWhatsAppAuditLog({
+        stage: "RESPONSE_SUCCESS",
+        to: params.to,
+        responseBody: result,
+        durationMs,
+        metadata: {
+          messageId: result?.messages?.[0]?.id || result?.id || null
+        }
+      });
+
       return result;
     } catch (err: any) {
-      console.error(`[sendMessageUtil] Execution FAILED for ${params.to}:`, err.message);
+      const durationMs = Date.now() - utilStartTime;
+      console.error(`[sendMessageUtil] Execution FAILED for ${params.to} in ${durationMs}ms:`, err.message);
+
+      writeWhatsAppAuditLog({
+        stage: "EXECUTION_FAILURE",
+        to: params.to,
+        error: err.message,
+        durationMs,
+        metadata: {
+          stack: err.stack
+        }
+      });
+
       throw err;
     }
   }
@@ -4324,6 +4490,52 @@ async function startServer() {
         connected: false,
         error: err.message || "Internal server error while verifying WhatsApp token",
       });
+    }
+  });
+
+  // Dedicated Server-Side WhatsApp API Audit Trail Endpoint
+  app.get("/api/wa/audit-logs", async (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string, 10) || 50;
+      const format = (req.query.format as string) || "json";
+
+      if (format === "raw") {
+        if (!fs.existsSync(AUDIT_LOG_FILE)) {
+          return res.send("No audit logs recorded yet.");
+        }
+        const rawContent = fs.readFileSync(AUDIT_LOG_FILE, "utf8");
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+        return res.send(rawContent);
+      }
+
+      if (!fs.existsSync(AUDIT_JSONL_FILE)) {
+        return res.json({ success: true, count: 0, entries: [] });
+      }
+
+      const fileContent = fs.readFileSync(AUDIT_JSONL_FILE, "utf8");
+      const lines = fileContent.trim().split("\n").filter(Boolean);
+      const parsed = lines
+        .slice(-limit)
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return { raw: l };
+          }
+        })
+        .reverse();
+
+      return res.json({
+        success: true,
+        count: parsed.length,
+        totalLogged: lines.length,
+        logFile: AUDIT_LOG_FILE,
+        jsonlFile: AUDIT_JSONL_FILE,
+        entries: parsed,
+      });
+    } catch (err: any) {
+      console.error("[audit-logs] Error reading audit logs:", err);
+      return res.status(500).json({ error: err.message || "Failed to read audit logs" });
     }
   });
 

@@ -85,6 +85,10 @@ export function SettingsView() {
   const [showLogsModal, setShowLogsModal] = useState(false);
   const [logsList, setLogsList] = useState<LogEntry[]>([]);
   const [logsPage, setLogsPage] = useState(1);
+  const [showAuditModal, setShowAuditModal] = useState(false);
+  const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
+  const [auditRawText, setAuditRawText] = useState<string>('');
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
   const [providers, setProviders] = useState<WhatsAppProvider[]>([]);
   const [botSettings, setBotSettings] = useState<ChatbotSettings | null>(null);
   const [legacyMode, setLegacyMode] = useState(false);
@@ -110,6 +114,27 @@ export function SettingsView() {
     onConfirm: () => {},
     showCancel: true
   });
+
+  const handleFetchAuditLogs = async () => {
+    setIsLoadingAudit(true);
+    setShowAuditModal(true);
+    try {
+      const resp = await fetch('/api/wa/audit-logs?limit=50');
+      const data = await resp.json();
+      if (resp.ok && data.entries) {
+        setAuditLogsList(data.entries);
+      }
+      const rawResp = await fetch('/api/wa/audit-logs?format=raw');
+      if (rawResp.ok) {
+        const text = await rawResp.text();
+        setAuditRawText(text);
+      }
+    } catch (e) {
+      console.error("Failed to load audit logs:", e);
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
 
   const [tokenVerifyStatus, setTokenVerifyStatus] = useState<{
     isLoading: boolean;
@@ -957,16 +982,28 @@ export function SettingsView() {
                         </select>
                       </div>
                    </div>
-                   <motion.button
-                     whileHover={{ scale: 1.01 }}
-                     whileTap={{ scale: 0.99 }}
-                     onClick={handleTestWhatsApp}
-                     disabled={isTestLoading || (settings.preferredNotificationMethod === 'manual_link')}
-                     className="w-full py-5 neu-flat bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 disabled:opacity-40"
-                   >
-                     {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-5 h-5" />}
-                     {isTestLoading ? "Testing Connection..." : "Fire Connectivity Test"}
-                   </motion.button>
+                   <div className="flex flex-col sm:flex-row gap-3">
+                     <motion.button
+                       whileHover={{ scale: 1.01 }}
+                       whileTap={{ scale: 0.99 }}
+                       onClick={handleTestWhatsApp}
+                       disabled={isTestLoading || (settings.preferredNotificationMethod === 'manual_link')}
+                       className="flex-1 py-5 neu-flat bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 disabled:opacity-40"
+                     >
+                       {isTestLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-5 h-5" />}
+                       {isTestLoading ? "Testing Connection..." : "Fire Connectivity Test"}
+                     </motion.button>
+
+                     <button
+                       type="button"
+                       onClick={handleFetchAuditLogs}
+                       className="px-6 py-5 neu-flat bg-slate-800 text-slate-200 hover:text-white rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-md shadow-slate-900/20"
+                       title="View Full Outgoing Request Object & Header Audit Logs"
+                     >
+                       <List className="w-4 h-4 text-emerald-400" />
+                       View Request Audit Log
+                     </button>
+                   </div>
                 </div>
 
                 {/* Portal Link Overrides */}
@@ -2220,6 +2257,180 @@ export function SettingsView() {
                 </button>
               </div>
             )}
+          </motion.div>
+        </div>
+      )}
+
+      {/* WhatsApp Outgoing Request Audit Trail Modal */}
+      {showAuditModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="neu-panel bg-slate-950 text-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col rounded-3xl overflow-hidden shadow-2xl relative border border-slate-800"
+          >
+            {/* Modal Header */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-5 border-b border-slate-800 bg-slate-900/80 gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400">
+                  <Zap className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-black uppercase tracking-wider text-white flex items-center gap-2">
+                    WhatsApp API Live Audit Trail
+                  </h2>
+                  <p className="text-[10px] text-slate-400 font-bold">
+                    Intercepted Outgoing Request Objects (Headers, Serialized JSON Body) & Meta API Responses
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleFetchAuditLogs}
+                  disabled={isLoadingAudit}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+                  title="Refresh Audit Logs"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${isLoadingAudit ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+                <button
+                  onClick={() => {
+                    const textToCopy = auditRawText || JSON.stringify(auditLogsList, null, 2);
+                    navigator.clipboard.writeText(textToCopy);
+                    showAlert('Copied', 'Full WhatsApp API audit log copied to clipboard.');
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded-xl text-xs font-bold transition-colors flex items-center gap-1.5"
+                  title="Copy Full Audit Log"
+                >
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy Log
+                </button>
+                <button
+                  onClick={() => setShowAuditModal(false)}
+                  className="p-2 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-5 bg-slate-950 font-mono text-xs space-y-4">
+              {isLoadingAudit ? (
+                <div className="flex flex-col items-center justify-center p-12 text-slate-400 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+                  <p className="text-xs uppercase tracking-widest font-bold">Reading Server-Side Audit Logs...</p>
+                </div>
+              ) : auditLogsList.length === 0 ? (
+                <div className="text-center p-12 text-slate-500 space-y-2">
+                  <p className="text-sm font-bold">No WhatsApp outgoing requests intercepted yet.</p>
+                  <p className="text-xs">Dispatch a message or run a test connection to inspect the full outgoing payload & headers.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {auditLogsList.map((entry: any, index: number) => {
+                    const isError = entry.stage === 'RESPONSE_ERROR' || entry.stage === 'EXECUTION_FAILURE';
+                    const isSuccess = entry.stage === 'RESPONSE_SUCCESS';
+                    const isOutgoing = entry.stage === 'OUTGOING_REQUEST' || entry.stage === 'RETRY_REQUEST';
+
+                    return (
+                      <div
+                        key={index}
+                        className={`p-4 rounded-2xl border ${
+                          isError
+                            ? 'bg-red-950/20 border-red-800/40 text-red-200'
+                            : isSuccess
+                            ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-200'
+                            : isOutgoing
+                            ? 'bg-blue-950/20 border-blue-800/40 text-blue-200'
+                            : 'bg-slate-900 border-slate-800 text-slate-300'
+                        } space-y-3`}
+                      >
+                        {/* Event Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/60 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                                isError
+                                  ? 'bg-red-500 text-white'
+                                  : isSuccess
+                                  ? 'bg-emerald-500 text-white'
+                                  : isOutgoing
+                                  ? 'bg-blue-500 text-white'
+                                  : 'bg-slate-700 text-slate-300'
+                              }`}
+                            >
+                              {entry.stage}
+                            </span>
+                            <span className="text-xs font-bold text-slate-300">To: {entry.to}</span>
+                            {entry.durationMs !== undefined && (
+                              <span className="text-[10px] text-slate-400 bg-slate-800 px-2 py-0.5 rounded-md">
+                                {entry.durationMs}ms
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400">
+                            {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : ''}
+                          </span>
+                        </div>
+
+                        {/* Endpoint & Method */}
+                        {entry.url && (
+                          <div className="text-[11px] text-slate-300 break-all bg-slate-900/80 p-2 rounded-xl">
+                            <span className="text-emerald-400 font-bold uppercase">{entry.method || 'POST'}</span> {entry.url}
+                          </div>
+                        )}
+
+                        {/* Outgoing Headers */}
+                        {entry.headers && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">HTTP Headers:</span>
+                            <pre className="p-2.5 rounded-xl bg-slate-900 text-[11px] text-slate-300 overflow-x-auto border border-slate-800/60">
+                              {JSON.stringify(entry.headers, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Serialized Request Payload */}
+                        {entry.requestPayload && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Serialized JSON Request Payload:</span>
+                            <pre className="p-2.5 rounded-xl bg-slate-900 text-[11px] text-emerald-300 overflow-x-auto border border-slate-800/60">
+                              {typeof entry.requestPayload === 'string'
+                                ? entry.requestPayload
+                                : JSON.stringify(entry.requestPayload, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Response Body / Details */}
+                        {entry.responseBody && (
+                          <div className="space-y-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                              Response Body ({entry.responseStatus || '200 OK'}):
+                            </span>
+                            <pre className="p-2.5 rounded-xl bg-slate-900 text-[11px] text-cyan-300 overflow-x-auto border border-slate-800/60">
+                              {typeof entry.responseBody === 'string'
+                                ? entry.responseBody
+                                : JSON.stringify(entry.responseBody, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+
+                        {/* Error Message if Any */}
+                        {entry.error && (
+                          <div className="p-2.5 rounded-xl bg-red-900/30 border border-red-700/50 text-red-300 text-xs font-bold leading-relaxed">
+                            ⚠️ Error: {entry.error}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </motion.div>
         </div>
       )}
