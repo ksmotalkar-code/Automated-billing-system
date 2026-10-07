@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw, History, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId } from "../lib/db";
@@ -7,6 +7,7 @@ import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { PaymentHistory } from "../components/PaymentHistory";
 import { sendWhatsAppNotification } from "../lib/automation";
 import { createPortalLink } from "../lib/portal";
 import * as XLSX from 'xlsx';
@@ -21,7 +22,8 @@ const CustomerTableRow = React.memo(({
   onToggleSelect, 
   onRowClick, 
   onShareLink, 
-  onMessage, 
+  onMessage,
+  onViewHistory,
   formatCurrency 
 }: { 
   customer: Customer; 
@@ -31,6 +33,7 @@ const CustomerTableRow = React.memo(({
   onRowClick: (c: Customer) => void;
   onShareLink: (e: React.MouseEvent, c: Customer) => void;
   onMessage: (e: React.MouseEvent, c: Customer) => void;
+  onViewHistory: (e: React.MouseEvent, c: Customer) => void;
   formatCurrency: (amount: number) => string;
 }) => {
   return (
@@ -104,6 +107,15 @@ const CustomerTableRow = React.memo(({
             whileHover={{ scale: 1.1, backgroundColor: 'rgba(59, 130, 246, 0.1)' }}
             whileTap={{ scale: 0.9 }}
             className="p-2 neu-flat-sm text-blue-600 rounded-xl transition-all"
+            onClick={(e) => onViewHistory(e, customer)}
+            title="View Payment & Credit Ledger History"
+          >
+            <History className="w-4 h-4" />
+          </motion.button>
+          <motion.button 
+            whileHover={{ scale: 1.1, backgroundColor: 'rgba(59, 130, 246, 0.1)' }}
+            whileTap={{ scale: 0.9 }}
+            className="p-2 neu-flat-sm text-blue-600 rounded-xl transition-all"
             onClick={(e) => onShareLink(e, customer)}
             title="Generate & Share Link"
           >
@@ -143,6 +155,7 @@ const CustomerMobileCard = React.memo(({
   onRowClick, 
   onShareLink, 
   onMessage, 
+  onViewHistory,
   formatCurrency,
   t 
 }: { 
@@ -153,6 +166,7 @@ const CustomerMobileCard = React.memo(({
   onRowClick: (c: Customer) => void;
   onShareLink: (e: React.MouseEvent, c: Customer) => void;
   onMessage: (e: React.MouseEvent, c: Customer) => void;
+  onViewHistory: (e: React.MouseEvent, c: Customer) => void;
   formatCurrency: (amount: number) => string;
   t: any;
 }) => {
@@ -219,6 +233,14 @@ const CustomerMobileCard = React.memo(({
       <div className="flex justify-end gap-2 mt-2">
          <motion.button
            whileTap={{ scale: 0.95 }}
+           onClick={(e) => onViewHistory(e, customer)}
+           className="p-3 neu-flat rounded-xl text-blue-600 hover:text-blue-700 flex items-center justify-center"
+           title="View Payment History"
+         >
+           <History className="w-4 h-4" />
+         </motion.button>
+         <motion.button
+           whileTap={{ scale: 0.95 }}
            onClick={(e) => onShareLink(e, customer)}
            className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20"
          >
@@ -253,6 +275,7 @@ export function CustomersView() {
   const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
   const [isIndividualNotifyOpen, setIsIndividualNotifyOpen] = useState(false);
   const [individualNotifyCustomer, setIndividualNotifyCustomer] = useState<Customer | null>(null);
+  const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
   const [notifyMessage, setNotifyMessage] = useState("");
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
@@ -1507,6 +1530,10 @@ export function CustomersView() {
                     onRowClick={handleRowClick}
                     onShareLink={handleShareLink}
                     onMessage={handleOpenIndividualNotify}
+                    onViewHistory={(e, cust) => {
+                      e.stopPropagation();
+                      setHistoryCustomer(cust);
+                    }}
                     formatCurrency={formatCurrency}
                   />
                 ))}
@@ -1547,6 +1574,10 @@ export function CustomersView() {
                 onRowClick={handleRowClick}
                 onShareLink={handleShareLink}
                 onMessage={handleOpenIndividualNotify}
+                onViewHistory={(e, cust) => {
+                  e.stopPropagation();
+                  setHistoryCustomer(cust);
+                }}
                 formatCurrency={formatCurrency}
                 t={t}
               />
@@ -1861,13 +1892,24 @@ export function CustomersView() {
                 </div>
 
                 <div className="pt-4 flex justify-between gap-3">
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button 
                       type="button"
                       onClick={() => handleDeleteSingle(editingCustomer.id)}
                       className="px-4 py-2 bg-red-100 text-red-700 rounded-xl text-sm font-bold hover:bg-red-200 transition-colors"
                     >
                       Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHistoryCustomer(editingCustomer);
+                      }}
+                      className="px-3.5 py-2 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl text-sm font-bold flex items-center gap-1.5 transition-colors"
+                      title="View Payment & Credit Ledger History"
+                    >
+                      <History className="w-4 h-4" />
+                      <span>History</span>
                     </button>
                     {editingCustomer.paymentNotified && (
                       <button
@@ -2202,6 +2244,26 @@ export function CustomersView() {
                   </div>
                 </div>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Customer Specific Payment History Modal */}
+      <AnimatePresence>
+        {historyCustomer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/50 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-5xl neu-flat rounded-[32px] border border-[var(--shadow-light)] p-5 sm:p-8 max-h-[92vh] overflow-y-auto shadow-2xl"
+            >
+              <PaymentHistory 
+                customerId={historyCustomer.id} 
+                customerName={historyCustomer.name} 
+                onClose={() => setHistoryCustomer(null)} 
+              />
             </motion.div>
           </div>
         )}

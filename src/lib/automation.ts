@@ -11,7 +11,7 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
   
   const paymentReceived = paymentAmount || 0;
-  const isPaid = isReceiptMode || customer.balance <= 0;
+  const isPaid = isReceiptMode || customer.balance <= 0 || paymentReceived > 0;
   
   // 0. Full Page Yellow Background
   doc.setFillColor(254, 240, 138); // rich clean yellow
@@ -53,126 +53,185 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
   doc.setFont("helvetica", "bold");
   doc.setFontSize(16);
   doc.setTextColor(0, 0, 0);
+  
   const docTitle = isPaid ? "RECEIPT" : "WATER BILL";
-  doc.text(docTitle, 105, 50, { align: 'center' });
+  doc.text(docTitle, 105, 48, { align: 'center' });
 
   // 3. Metadata Key-Value Block (All bold, dark black text)
-  const currentDate = new Date().toLocaleDateString();
+  const currentDate = new Date().toLocaleDateString('en-IN');
   const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
   doc.setFontSize(10.5);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(0, 0, 0);
 
-  // Row 1: Date
-  doc.text("Date:", 20, 60);
-  doc.text(currentDate, 65, 60);
+  let startY = 92;
 
-  // Row 2: Account No.
-  doc.text("Account No.:", 20, 68);
-  const acctDisplay = customer.id ? String(customer.id).trim() : "N/A";
-  doc.text(acctDisplay, 65, 68);
+  if (isPaid) {
+    // ---- RECEIPT METADATA ----
+    doc.text("DATE :", 20, 58);
+    doc.text(currentDate, 65, 58);
 
-  // Row 3: Consumer Name
-  const nameLabel = isPaid ? "Received From (Consumer's Name) :" : "Consumer's Name :";
-  doc.text(nameLabel, 20, 76);
-  const nameX = isPaid ? 90 : 65;
+    doc.text("RECEIPT NUMBER :", 20, 66);
+    const receiptNum = `REC-${Date.now().toString().slice(-6)}`;
+    doc.text(receiptNum, 65, 66);
 
-  let displayName = customer.name || "";
-  if (doc.getTextWidth(displayName) > (190 - nameX)) {
-    while (doc.getTextWidth(displayName + "...") > (190 - nameX) && displayName.length > 5) {
-      displayName = displayName.slice(0, -1);
-    }
-    displayName += "...";
+    doc.text("ACCOUNT NUMBER :", 20, 74);
+    const acctDisplay = customer.id ? String(customer.id).trim() : "N/A";
+    doc.text(acctDisplay, 65, 74);
+
+    doc.text("NAME :", 20, 82);
+    let displayName = customer.name || "";
+    doc.text(displayName, 65, 82);
+  } else {
+    // ---- WATER BILL METADATA ----
+    doc.text("Date:", 20, 58);
+    doc.text(currentDate, 65, 58);
+
+    doc.text("Account No.:", 20, 66);
+    const acctDisplay = customer.id ? String(customer.id).trim() : "N/A";
+    doc.text(acctDisplay, 65, 66);
+
+    doc.text("Consumer's Name :", 20, 74);
+    let displayName = customer.name || "";
+    doc.text(displayName, 65, 74);
   }
-  doc.text(displayName, nameX, 76);
 
-  // Row 4: Water Bill For Month
-  doc.text("Water Bill For Month :", 20, 84);
-  doc.text(currentMonth, 65, 84);
-
-  // 4. Financial Calculation
-  const currentCharges = settings.billingAmount || 200;
-  // Pending amount (if any)
-  const pendingAmount = customer.balance > currentCharges 
-    ? customer.balance - currentCharges 
-    : 0;
-
-  // Surcharges (if late fee / arrears exist)
-  const surcharge = pendingAmount > 0 
-    ? (pendingAmount * 0.20)
-    : 0;
-
-  // 5. 4-Row Table Layout Geometry (Exact user requirement)
-  // 1. Water consumption charges for last two months
-  // 2. Pending amount ( if any )
-  // 3. Surcharges
-  // 4. Total Payable
-  const startY = 94;
+  // 4. Table Settings & Drawing
   const rowHeight = 11;
   const colLeft = 20;
   const colRight = 190; // Spans full content width 170mm (20mm to 190mm)
   const verticalLineX = 130; // Description width 110mm, Amount width 60mm
-  const totalRows = 5; // 1 header + 4 data rows
 
-  // Note: Hallmark of PAID / UNPAID watermark has been removed as requested
+  const tableRowsUsed = isPaid ? 4 : 5;
+  const tableBottomY = startY + (rowHeight * tableRowsUsed);
 
-  // Draw Table Outer Rectangle (sharp black border)
-  doc.setDrawColor(0, 0, 0);
-  doc.setLineWidth(0.6);
-  doc.rect(colLeft, startY, colRight - colLeft, rowHeight * totalRows);
+  if (isPaid) {
+    // ---- RECEIPT TABLE ROW DATA ----
+    // 3 Rows: Header + 3 data rows
+    
+    // Draw Table Outer Rectangle (sharp black border)
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.6);
+    doc.rect(colLeft, startY, colRight - colLeft, rowHeight * tableRowsUsed);
 
-  // Horizontal row dividers
-  for (let i = 1; i < totalRows; i++) {
-    doc.line(colLeft, startY + (rowHeight * i), colRight, startY + (rowHeight * i));
-  }
-  // Vertical column divider
-  doc.line(verticalLineX, startY, verticalLineX, startY + (rowHeight * totalRows));
+    // Horizontal row dividers
+    for (let i = 1; i < tableRowsUsed; i++) {
+      doc.line(colLeft, startY + (rowHeight * i), colRight, startY + (rowHeight * i));
+    }
+    // Vertical column divider
+    doc.line(verticalLineX, startY, verticalLineX, startY + (rowHeight * tableRowsUsed));
 
-  // Table Headers (Bold, dark black)
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(10.5);
-  doc.setTextColor(0, 0, 0);
-  doc.text("Description", colLeft + 4, startY + 7.5);
-  doc.text("Amount (Rs)", verticalLineX + 4, startY + 7.5);
-
-  // Row 1: Water consumption charges for last two months
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(0, 0, 0);
-  doc.text("1. Water consumption charges for last two months", colLeft + 4, startY + rowHeight + 7.5);
-  doc.text(String(Math.round(currentCharges)), verticalLineX + 4, startY + rowHeight + 7.5);
-
-  // Row 2: Pending amount ( if any )
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(0, 0, 0);
-  doc.text("2. Pending amount ( if any )", colLeft + 4, startY + (rowHeight * 2) + 7.5);
-  doc.text(pendingAmount > 0 ? pendingAmount.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 2) + 7.5);
-
-  // Row 3: Surcharges
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(0, 0, 0);
-  doc.text("3. Surcharges", colLeft + 4, startY + (rowHeight * 3) + 7.5);
-  doc.text(surcharge > 0 ? surcharge.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 3) + 7.5);
-
-  // Row 4: Total Payable
-  doc.setFont("helvetica", "bold");
-  doc.setTextColor(0, 0, 0);
-  doc.text("4. Total Payable", colLeft + 4, startY + (rowHeight * 4) + 7.5);
-  const totalPayableStr = (customer.balance <= 0 && isPaid) ? "0.00" : customer.balance.toFixed(2);
-  doc.text(totalPayableStr, verticalLineX + 4, startY + (rowHeight * 4) + 7.5);
-
-  // Advance Credit Balance Notice
-  if (customer.advanceBalance && customer.advanceBalance > 0) {
+    // Headers
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(0, 0, 0);
-    doc.text(`* Pre-paid Advance Credit Balance: Rs. ${customer.advanceBalance.toFixed(2)} (Will automatically apply to future bills)`, 20, startY + (rowHeight * totalRows) + 8);
+    doc.setFontSize(10.5);
+    doc.text("DESCRIPTION", colLeft + 4, startY + 7.5);
+    doc.text("AMOUNT ( RS )", verticalLineX + 4, startY + 7.5);
+
+    // Row 1: Payment Received -
+    doc.text("Payment Received -", colLeft + 4, startY + rowHeight + 7.5);
+    doc.text(paymentReceived > 0 ? paymentReceived.toFixed(2) : (settings.billingAmount || 200).toFixed(2), verticalLineX + 4, startY + rowHeight + 7.5);
+
+    // Row 2: Pending amount ( If any ) -
+    const pendingBalance = customer.balance;
+    doc.text("Pending amount ( If any ) -", colLeft + 4, startY + (rowHeight * 2) + 7.5);
+    doc.text(pendingBalance > 0 ? pendingBalance.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 2) + 7.5);
+
+    // Row 3: TOTAL PENDING AMOUNT -
+    doc.text("TOTAL PENDING AMOUNT -", colLeft + 4, startY + (rowHeight * 3) + 7.5);
+    doc.text(pendingBalance > 0 ? pendingBalance.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 3) + 7.5);
+
+    // Advance Credit Balance Notice
+    if (customer.advanceBalance && customer.advanceBalance > 0) {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text(`* Pre-paid Advance Credit Balance: Rs. ${customer.advanceBalance.toFixed(2)} (Will automatically apply to future bills)`, 20, tableBottomY + 6);
+    }
+
+  } else {
+    // ---- WATER BILL TABLE ROW DATA ----
+    // 4 Rows: Header + 4 data rows
+    
+    // Draw Table Outer Rectangle (sharp black border)
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.6);
+    doc.rect(colLeft, startY, colRight - colLeft, rowHeight * tableRowsUsed);
+
+    // Horizontal row dividers
+    for (let i = 1; i < tableRowsUsed; i++) {
+      doc.line(colLeft, startY + (rowHeight * i), colRight, startY + (rowHeight * i));
+    }
+    // Vertical column divider
+    doc.line(verticalLineX, startY, verticalLineX, startY + (rowHeight * tableRowsUsed));
+
+    // Headers
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.text("DESCRIPTION", colLeft + 4, startY + 7.5);
+    doc.text("AMOUNT ( RS )", verticalLineX + 4, startY + 7.5);
+
+    // Dynamic charges calculation
+    const currentCharges = settings.billingAmount || 200;
+    const arrears = customer.balance > currentCharges ? customer.balance - currentCharges : 0;
+    const surcharge = arrears > 0 ? arrears * 0.10 : 0; // 10% surcharge
+    const totalPayable = arrears + currentCharges + surcharge;
+
+    // Row 1: Previous month's arrears, if any
+    doc.text("Previous month's arrears, if any", colLeft + 4, startY + rowHeight + 7.5);
+    doc.text(arrears > 0 ? arrears.toFixed(2) : "0.00", verticalLineX + 4, startY + rowHeight + 7.5);
+
+    // Row 2: Water Consumption charges for last two months
+    doc.text("Water Consumption charges for last two months", colLeft + 4, startY + (rowHeight * 2) + 7.5);
+    doc.text(currentCharges.toFixed(2), verticalLineX + 4, startY + (rowHeight * 2) + 7.5);
+
+    // Row 3: Surcharges ( if any )
+    doc.text("Surcharges ( if any )", colLeft + 4, startY + (rowHeight * 3) + 7.5);
+    doc.text(surcharge > 0 ? surcharge.toFixed(2) : "0.00", verticalLineX + 4, startY + (rowHeight * 3) + 7.5);
+
+    // Row 4: TOTAL PAYABLE
+    doc.text("TOTAL PAYABLE", colLeft + 4, startY + (rowHeight * 4) + 7.5);
+    doc.text(totalPayable.toFixed(2), verticalLineX + 4, startY + (rowHeight * 4) + 7.5);
   }
 
-  // 6. Bottom Solid Horizontal Divider Line (edge to edge)
+  // Draw divider line before Important Instructions for both receipts and bills
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.8);
-  doc.line(14, startY + (rowHeight * totalRows) + 16, 196, startY + (rowHeight * totalRows) + 16);
+  doc.line(14, tableBottomY + (isPaid && customer.advanceBalance && customer.advanceBalance > 0 ? 10 : 4), 196, tableBottomY + (isPaid && customer.advanceBalance && customer.advanceBalance > 0 ? 10 : 4));
+
+  // ---- IMPORTANT INSTRUCTIONS ----
+  const instructionsY = tableBottomY + (isPaid && customer.advanceBalance && customer.advanceBalance > 0 ? 16 : 10);
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(11);
+  doc.text("Important Instructions", 105, instructionsY, { align: 'center' });
+
+  doc.setFontSize(9);
+  doc.setFont("helvetica", "normal");
+  
+  const instructions = [
+    "Present this bill at the time of payment.",
+    "Despite any disputes or errors found in the bill, it is mandatory to pay this bill every month by the due date. In case an error is found, the adjustment for the difference in the amount will be made in the subsequent month's bill sent to the consumer by the department after resolving the discrepancy.",
+    "The fee for disconnecting a connection is Rs. 200/- and for reconnecting is Rs. 500/-.",
+    "If this bill is not paid by the due date, a 10% surcharge will be levied, and if payment is not made within 10 days after the due date, the connection will be disconnected without any notice.",
+    "The bill can be paid at the Gram Panchayat office on any working day from 8:00 AM to 5:00 PM until the due date.",
+    "Households whose previous bills remain pending as arrears are informed by the Chairman and all members of the Nagar Panchayat to deposit their pending bills by the last date; otherwise, their connections will be disconnected."
+  ];
+
+  let currentY = instructionsY + 5;
+  instructions.forEach((inst, index) => {
+    const idxText = `${index + 1}. `;
+    doc.setFont("helvetica", "bold");
+    doc.text(idxText, 20, currentY);
+    
+    doc.setFont("helvetica", "normal");
+    const lines = doc.splitTextToSize(inst, 166);
+    doc.text(lines, 24, currentY);
+    currentY += (lines.length * 4.2) + 1; // Increment spacing dynamically
+  });
+
+  // Draw final horizontal line
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.8);
+  doc.line(14, currentY + 2, 196, currentY + 2);
 
   return doc.output('blob');
 };

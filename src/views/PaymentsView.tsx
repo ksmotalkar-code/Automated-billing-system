@@ -226,18 +226,34 @@ export function PaymentsView() {
       // Automatically send invoice or receipt if enabled
       if (settings?.automation?.smartNotifications) {
         let message = "";
+        let pdfBlob: Blob;
+        let pdfName = "";
+        let templateCat: 'receipt' | 'billing' = 'receipt';
+
         if (isDirectAdvanceDeposit) {
           message = `Dear ${updatedCustomer.name}, your advance payment of ${formatCurrency(amount)} has been received and credited to your Advance Balance (Total Advance Balance: ${formatCurrency(newAdvance)}). Future billing cycles will deduct automatically. Attached is your official receipt.`;
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
+          pdfName = `Receipt_${updatedCustomer.id}.pdf`;
+          templateCat = 'receipt';
         } else if (isAdvanceCreditAdded) {
           message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received. Your current bill is fully SETTLED, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Thank you! Attached is your official receipt.`;
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
+          pdfName = `Receipt_${updatedCustomer.id}.pdf`;
+          templateCat = 'receipt';
         } else if (newBalance === 0) {
           message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received and fully SETTLED. Thank you! Attached is your official receipt.`;
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
+          pdfName = `Receipt_${updatedCustomer.id}.pdf`;
+          templateCat = 'receipt';
         } else {
-          message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining balance is ${formatCurrency(newBalance)}. Attached is your updated receipt.`;
+          message = `Dear ${updatedCustomer.name}, we have received your payment of ${formatCurrency(amount)}. Your remaining outstanding balance is ${formatCurrency(newBalance)}. Attached is your updated formal invoice.`;
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, false, 0);
+          pdfName = `Invoice_${updatedCustomer.id}.pdf`;
+          templateCat = 'billing';
         }
-        const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
+
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
       } else if (newBalance === 0) {
         await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false }, false, undefined, currentOwnerId);
       }
@@ -401,16 +417,30 @@ export function PaymentsView() {
       showAlert("Approved", alertMsg);
 
       let message = "";
-      if (isAdvanceCredit) {
-        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Attached is your official receipt.`;
-      } else if (updatedCustomer.balance === 0) {
-        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
+      let pdfBlob: Blob;
+      let pdfName = "";
+      let templateCat: 'receipt' | 'billing' = 'receipt';
+
+      if (updatedCustomer.balance === 0 || isAdvanceCredit) {
+        // Fully Paid
+        if (isAdvanceCredit) {
+          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Attached is your official receipt.`;
+        } else {
+          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
+        }
+        pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, effectiveAmount);
+        pdfName = `Receipt_${updatedCustomer.id}.pdf`;
+        templateCat = 'receipt';
       } else {
-        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(effectiveAmount)}. Your remaining balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated receipt.`;
+        // Pending Outstanding Balance
+        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(effectiveAmount)}. Your remaining outstanding balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated formal invoice.`;
+        pdfBlob = generateInvoicePDF(updatedCustomer, settings, false, 0);
+        pdfName = `Invoice_${updatedCustomer.id}.pdf`;
+        templateCat = 'billing';
       }
-      const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, effectiveAmount);
+
       await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
-      sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, `Receipt_${updatedCustomer.id}.pdf`, false, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+      sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
     } catch (error) {
       console.error("Error approving receipt:", error);
       showAlert("Error", "Failed to approve receipt.");
@@ -419,12 +449,21 @@ export function PaymentsView() {
     }
   };
 
-  const handleRejectReceipt = async (receiptId: string) => {
-    setIsActioningReceipt(`${receiptId}-reject`);
+  const handleRejectReceipt = async (receipt: PaymentReceipt) => {
+    setIsActioningReceipt(`${receipt.id}-reject`);
     try {
-      await updateReceiptStatus(receiptId, 'Rejected', currentOwnerId);
+      await updateReceiptStatus(receipt.id, 'Rejected', currentOwnerId);
+      
+      const customer = customers.find(c => c.id === receipt.customerId);
+      if (customer) {
+        const message = `Dear ${customer.name}, your uploaded payment screenshot for ₹${receipt.amount || 200} could not be verified by the Panchayat Admin. Please ensure your screenshot clearly shows the transaction date, bank reference/UTR number, and successful payment status, and then re-upload it via your customer portal. Thank you.`;
+        sendWhatsAppNotification(customer, message, settings, undefined, undefined, false, true, 'receipt')
+          .catch(err => console.error("Auto notify rejection error:", err));
+      }
+
       setIsReceiptModalOpen(false);
       setSelectedReceipt(null);
+      showAlert("Receipt Rejected", `Receipt for ${receipt.customerName} has been rejected and the customer was notified over WhatsApp.`);
     } catch (error) {
       console.error("Error rejecting receipt:", error);
       showAlert("Error", "Failed to reject receipt.");
@@ -586,7 +625,7 @@ export function PaymentsView() {
                       </div>
                       <div className="flex gap-2 mt-auto">
                         <button 
-                          onClick={() => handleRejectReceipt(receipt.id)}
+                          onClick={() => handleRejectReceipt(receipt)}
                           disabled={isActioningReceipt !== null}
                           className="flex-1 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-sm font-bold transition-colors flex justify-center items-center gap-1 disabled:opacity-50"
                         >
@@ -1350,7 +1389,7 @@ export function PaymentsView() {
 
                   <div className="flex items-center justify-end gap-3 pt-1">
                     <button 
-                      onClick={() => handleRejectReceipt(selectedReceipt.id)}
+                      onClick={() => handleRejectReceipt(selectedReceipt)}
                       disabled={isActioningReceipt !== null}
                       className="px-5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 disabled:opacity-50"
                     >

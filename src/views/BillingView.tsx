@@ -87,7 +87,7 @@ export function BillingView() {
     setSortConfig({ key, direction });
   };
 
-  const getMockStatus = (customer: Customer) => {
+  const getRealBillingStatus = (customer: Customer) => {
     if ((customer.advanceBalance && customer.advanceBalance > 0) || customer.status === 'Advance Paid') {
       return "Advance Paid";
     }
@@ -105,7 +105,7 @@ export function BillingView() {
     
     if (!matchesSearch) return false;
 
-    const status = getMockStatus(c);
+    const status = getRealBillingStatus(c);
     if (activeTab === 'Unpaid') {
       if (status === "Paid" || status === "Paid & Sent" || status === "Advance Paid") return false;
     } else {
@@ -122,8 +122,8 @@ export function BillingView() {
     let valB: any = b[key as keyof Customer];
 
     if (key === 'status') {
-      valA = getMockStatus(a);
-      valB = getMockStatus(b);
+      valA = getRealBillingStatus(a);
+      valB = getRealBillingStatus(b);
     }
 
     if (valA < valB) return direction === 'asc' ? -1 : 1;
@@ -181,7 +181,7 @@ export function BillingView() {
       showAlert("Cannot Send", "This customer is suspended. Please make them active first to send messages.");
       return;
     }
-    const status = getMockStatus(customer);
+    const status = getRealBillingStatus(customer);
     let message = "";
     if (status === "Advance Paid") {
       message = `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit balance. Your remaining advance balance is ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`;
@@ -215,7 +215,7 @@ export function BillingView() {
     e.stopPropagation();
     setIndividualNotifyCustomer(customer);
     
-    const status = getMockStatus(customer);
+    const status = getRealBillingStatus(customer);
     let defaultMsg = "";
     if (status === "Pending" || status === "Overdue") {
       defaultMsg = `Hi ${customer.name},\nYour current balance is ₹${customer.balance}. Please make the payment at your earliest convenience to avoid any service interruption.`;
@@ -346,7 +346,7 @@ export function BillingView() {
   const handleSendMonthlyPaidBills = () => {
     const paidCustomers = customers.filter(c => 
       (c.status === 'Active' || c.status === 'Advance Paid') && 
-      (getMockStatus(c) === "Paid" || getMockStatus(c) === "Advance Paid") && 
+      (getRealBillingStatus(c) === "Paid" || getRealBillingStatus(c) === "Advance Paid") && 
       c.mobileNumber && 
       c.mobileNumber.replace(/\D/g, '').length >= 10
     );
@@ -415,7 +415,7 @@ export function BillingView() {
 
         for (let i = 0; i < paidCustomers.length; i++) {
           const customer = paidCustomers[i];
-          const isAdv = getMockStatus(customer) === "Advance Paid" || (customer.advanceBalance && customer.advanceBalance > 0);
+          const isAdv = getRealBillingStatus(customer) === "Advance Paid" || (customer.advanceBalance && customer.advanceBalance > 0);
           const message = isAdv
             ? `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit. Remaining advance balance: ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`
             : `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
@@ -804,7 +804,7 @@ export function BillingView() {
               </thead>
               <tbody>
                 {paginatedCustomers.map((customer, i) => {
-                  const status = getMockStatus(customer);
+                  const status = getRealBillingStatus(customer);
                   return (
                     <motion.tr 
                       key={customer.id}
