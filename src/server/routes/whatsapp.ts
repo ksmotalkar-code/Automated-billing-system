@@ -49,10 +49,17 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     }
   });
 
+  function cleanMetaCreds(apiKey?: string, phoneId?: string) {
+    const cleanKey = apiKey ? String(apiKey).trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+    const cleanPhone = phoneId ? String(phoneId).trim().replace(/[\s\-\+]/g, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+    return { apiKey: cleanKey, phoneId: cleanPhone };
+  }
+
   // Diagnostic Endpoint
   router.get("/chatbot/diagnostics", async (req, res) => {
     try {
       const ownerId = (req.query.ownerId as string) || "system";
+      let effectiveOwnerId = ownerId;
       let settings = await deps.getSettings(ownerId);
       if (deps.resolveOwnerIdForWebhook && (!settings?.metaWhatsAppApiKey || ownerId === "system")) {
         try {
@@ -60,14 +67,18 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
           if (resolved?.settings) {
             settings = resolved.settings;
           }
+          if (resolved?.ownerId) {
+            effectiveOwnerId = resolved.ownerId;
+          }
         } catch (resErr) {
           console.warn("[WhatsAppRouter] resolveOwnerIdForWebhook error:", resErr);
         }
       }
-      const chatbotSettings = await deps.getChatbotSettings(ownerId);
+      const chatbotSettings = await deps.getChatbotSettings(effectiveOwnerId);
 
-      const hasMetaApiKey = Boolean(settings?.metaWhatsAppApiKey);
-      const hasPhoneId = Boolean(settings?.metaWhatsAppPhoneNumberId);
+      const clean = cleanMetaCreds(settings?.metaWhatsAppApiKey, settings?.metaWhatsAppPhoneNumberId);
+      const hasMetaApiKey = Boolean(clean.apiKey);
+      const hasPhoneId = Boolean(clean.phoneId);
       const verifyToken = settings?.metaWhatsAppVerifyToken || "Not Set";
       const botActive = Boolean(chatbotSettings?.isActive);
       const activeRules = Array.isArray(chatbotSettings?.commands)
@@ -76,19 +87,30 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
 
       let metaApiReachable = false;
       let metaDetails = "Not checked";
+      let isDataUseCheckup = false;
+      let verifiedName = "";
+      let displayPhone = "";
+      let qualityRating = "UNKNOWN";
+
       if (hasMetaApiKey && hasPhoneId) {
         try {
-          const checkRes = await fetch(`https://graph.facebook.com/v21.0/${settings.metaWhatsAppPhoneNumberId}`, {
+          const checkRes = await fetch(`https://graph.facebook.com/v21.0/${clean.phoneId}?fields=verified_name,display_phone_number,quality_rating,code_verification_status,status`, {
             headers: {
-              Authorization: `Bearer ${settings.metaWhatsAppApiKey}`,
+              Authorization: `Bearer ${clean.apiKey}`,
             },
           });
           const checkData = await checkRes.json();
           if (checkRes.ok) {
             metaApiReachable = true;
-            metaDetails = `Connected (${checkData.verified_name || checkData.display_phone_number || "Active"})`;
+            verifiedName = checkData.verified_name || "";
+            displayPhone = checkData.display_phone_number || "";
+            qualityRating = checkData.quality_rating || "GREEN";
+            metaDetails = `Connected (${verifiedName || displayPhone || "Active"})`;
           } else {
             metaDetails = checkData.error?.message || "Invalid credentials";
+            if (metaDetails.toLowerCase().includes("data use checkup")) {
+              isDataUseCheckup = true;
+            }
           }
         } catch (apiErr: any) {
           metaDetails = apiErr.message || "Connection failed";
@@ -104,10 +126,55 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
         activeRules,
         hasMetaApiKey,
         hasPhoneId,
+        isDataUseCheckup,
+        dataUseCheckupGuide: isDataUseCheckup
+          ? "Your token is valid in Meta debugger, but Meta has temporarily paused live API calls until you complete the required Data Use Checkup. Open https://developers.facebook.com/apps/ -> Select your App -> Click the 'Complete Data Use Checkup' banner."
+          : null,
         metaApiReachable,
         metaDetails,
+        metaApi: {
+          reachable: metaApiReachable,
+          verifiedName,
+          displayPhone,
+          qualityRating,
+          details: metaDetails,
+          isDataUseCheckup,
+        },
         timestamp: new Date().toISOString(),
       });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Toggle Bot Active Status
+  router.post("/chatbot/toggle-active", async (req, res) => {
+    try {
+      const ownerId = (req.body.ownerId as string) || "system";
+      const { active } = req.body;
+      let effectiveOwnerId = ownerId;
+      if (deps.resolveOwnerIdForWebhook && ownerId === "system") {
+        try {
+          const resolved = await deps.resolveOwnerIdForWebhook("system");
+          if (resolved?.ownerId) effectiveOwnerId = resolved.ownerId;
+        } catch (e) {}
+      }
+
+      const current = await deps.getChatbotSettings(effectiveOwnerId) || {};
+      const newActive = active !== undefined ? Boolean(active) : !Boolean(current?.isActive);
+      
+      const admin = (globalThis as any).admin;
+      if (admin && admin.apps && admin.apps.length) {
+        const db = admin.firestore();
+        await db.collection("chatbotSettings").doc(effectiveOwnerId).set({
+          ...current,
+          ownerId: effectiveOwnerId,
+          isActive: newActive,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+      }
+
+      return res.json({ ok: true, botActive: newActive, ownerId: effectiveOwnerId });
     } catch (e: any) {
       return res.status(500).json({ ok: false, error: e.message });
     }

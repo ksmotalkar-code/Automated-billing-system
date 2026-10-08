@@ -5886,8 +5886,9 @@ To link your connection or update your registered number, please contact the Gra
       const settings = resolvedSettings || (await getSettings(effectiveOwnerId));
       const chatbotSettings = await getChatbotSettings(effectiveOwnerId);
 
-      const hasMetaApiKey = Boolean(settings?.metaWhatsAppApiKey);
-      const hasPhoneId = Boolean(settings?.metaWhatsAppPhoneNumberId);
+      const cleanCreds = sanitizeMetaCredentials(settings?.metaWhatsAppApiKey, settings?.metaWhatsAppPhoneNumberId);
+      const hasMetaApiKey = Boolean(cleanCreds.apiKey);
+      const hasPhoneId = Boolean(cleanCreds.phoneId);
       const verifyToken = settings?.metaWhatsAppVerifyToken || "Not Set";
       const botActive = Boolean(chatbotSettings?.isActive);
       const activeCommands = Array.isArray(chatbotSettings?.commands) 
@@ -5902,14 +5903,15 @@ To link your connection or update your registered number, please contact the Gra
       let metaVerifiedName = "";
       let metaDisplayPhone = "";
       let metaCodeStatus = "";
+      let isDataUseCheckup = false;
 
       if (hasMetaApiKey && hasPhoneId) {
         try {
           const checkRes = await fetch(
-            `https://graph.facebook.com/v21.0/${settings!.metaWhatsAppPhoneNumberId}?fields=verified_name,display_phone_number,quality_rating,code_verification_status,status`,
+            `https://graph.facebook.com/v21.0/${cleanCreds.phoneId}?fields=verified_name,display_phone_number,quality_rating,code_verification_status,status`,
             {
               headers: {
-                Authorization: `Bearer ${settings!.metaWhatsAppApiKey}`,
+                Authorization: `Bearer ${cleanCreds.apiKey}`,
               },
             }
           );
@@ -5923,6 +5925,9 @@ To link your connection or update your registered number, please contact the Gra
             metaDetails = `Connected (${metaVerifiedName || metaDisplayPhone || "Active"})`;
           } else {
             metaDetails = checkData.error?.message || "Invalid credentials";
+            if (metaDetails.toLowerCase().includes("data use checkup")) {
+              isDataUseCheckup = true;
+            }
           }
         } catch (apiErr: any) {
           metaDetails = apiErr.message || "Connection failed";
@@ -6019,13 +6024,18 @@ To link your connection or update your registered number, please contact the Gra
         })),
         hasMetaApiKey,
         hasPhoneId,
+        isDataUseCheckup,
+        dataUseCheckupGuide: isDataUseCheckup 
+          ? "Your token is valid in Meta debugger, but Meta has temporarily paused live API calls until you complete the required Data Use Checkup. Open https://developers.facebook.com/apps/ -> Select your App -> Click the 'Complete Data Use Checkup' banner."
+          : null,
         metaApi: {
           reachable: metaApiReachable,
           verifiedName: metaVerifiedName,
           displayPhone: metaDisplayPhone,
           qualityRating: metaQualityRating,
           codeStatus: metaCodeStatus,
-          details: metaDetails
+          details: metaDetails,
+          isDataUseCheckup
         },
         metaApiReachable,
         metaDetails,
@@ -6036,6 +6046,34 @@ To link your connection or update your registered number, please contact the Gra
       });
     } catch (e: any) {
       res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Toggle Chatbot Active Status
+  app.post("/api/chatbot/toggle-active", async (req, res) => {
+    try {
+      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const { ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(requestedOwnerId);
+      const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
+      const { active } = req.body;
+
+      if (admin.apps.length) {
+        const db = getRequiredAdminDb();
+        const docRef = db.collection("chatbotSettings").doc(effectiveOwnerId);
+        const snap = await docRef.get();
+        const current = snap.exists ? (snap.data() || {}) : {};
+        const newActive = active !== undefined ? Boolean(active) : !Boolean(current.isActive);
+        await docRef.set({
+          ...current,
+          ownerId: effectiveOwnerId,
+          isActive: newActive,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+        return res.json({ ok: true, botActive: newActive, ownerId: effectiveOwnerId });
+      }
+      return res.status(500).json({ ok: false, error: "Database not available" });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
     }
   });
 
