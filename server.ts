@@ -2521,12 +2521,13 @@ async function startServer() {
 
           const buffer = Buffer.from(base64Data, "base64");
           const formData = new FormData();
-          const blob = new Blob([buffer], { type: mimeType });
-          formData.append(
-            "file",
-            blob,
-            mediaName || (isImage ? "image.png" : "document.pdf"),
-          );
+          const filename = mediaName || (isImage ? "image.png" : "document.pdf");
+          const file = new File([buffer], filename, { type: mimeType });
+          
+          formData.append("file", file);
+          formData.append("messaging_product", "whatsapp");
+          formData.append("type", mimeType);
+          
           const uploadEndpoint = `https://graph.facebook.com/v21.0/${metaPhoneId}/media`;
           console.log(`\n======================================================`);
           console.log(`[sendMessageUtil / Meta Media Upload Request]`);
