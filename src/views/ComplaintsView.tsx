@@ -3,8 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Complaint, resolveComplaint, deleteComplaint, updateComplaint } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
-import { motion } from "motion/react";
-import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { AlertTriangle, CheckCircle, Clock, MessageCircle, Info, Trash2, Search, X, Image as ImageIcon } from "lucide-react";
 import { ConfirmModal } from "../components/ConfirmModal";
 
 export function ComplaintsView() {
@@ -12,6 +12,7 @@ export function ComplaintsView() {
   const { currentOwnerId } = useTenant();
   const [filter, setFilter] = useState<'All' | 'Pending' | 'Resolved'>('All');
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedComplaintImage, setSelectedComplaintImage] = useState<string | null>(null);
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -205,6 +206,18 @@ export function ComplaintsView() {
                     {c.description && <span className="block font-bold mb-1">{c.message}</span>}
                     {c.description || c.message}
                   </p>
+
+                  {c.imageUrl && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <button 
+                        onClick={() => setSelectedComplaintImage(c.imageUrl || null)}
+                        className="flex items-center gap-2 p-1.5 pr-3 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-xl text-xs font-bold transition border border-amber-200/40"
+                      >
+                        <ImageIcon className="w-4 h-4 text-amber-600" />
+                        <span>View Complaint Screenshot</span>
+                      </button>
+                    </div>
+                  )}
                   
                   {c.status === 'Pending' ? (
                     <div className="flex justify-end gap-2 pt-1">
@@ -256,6 +269,34 @@ export function ComplaintsView() {
         message={confirmConfig.message}
         isDestructive={confirmConfig.isDestructive}
       />
+
+      <AnimatePresence>
+        {selectedComplaintImage && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-4xl bg-slate-900 rounded-2xl overflow-hidden relative flex flex-col items-center max-h-[95vh] border border-white/10 shadow-2xl"
+            >
+              <button 
+                onClick={() => setSelectedComplaintImage(null)}
+                className="absolute top-4 right-4 p-2 bg-black/50 text-white rounded-full hover:bg-black/80 transition-colors z-10"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              
+              <div className="w-full flex-1 min-h-0 p-4 flex items-center justify-center overflow-hidden bg-black/40">
+                <img 
+                  src={selectedComplaintImage} 
+                  alt="Complaint Screenshot" 
+                  className="max-w-full max-h-[80vh] object-contain rounded-xl shadow-lg border border-white/10"
+                />
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </Card>
   );
 }

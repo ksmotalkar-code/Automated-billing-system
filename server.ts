@@ -2522,9 +2522,9 @@ async function startServer() {
           const buffer = Buffer.from(base64Data, "base64");
           const formData = new FormData();
           const filename = mediaName || (isImage ? "image.png" : "document.pdf");
-          const file = new File([buffer], filename, { type: mimeType });
+          const file = new Blob([buffer], { type: mimeType });
           
-          formData.append("file", file);
+          formData.append("file", file, filename);
           formData.append("messaging_product", "whatsapp");
           formData.append("type", mimeType);
           
@@ -3834,34 +3834,20 @@ async function startServer() {
         }
       }
 
-      if (
-        admin.apps.length &&
-        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
-        !settings.watiAccessToken
-      ) {
+      if (admin.apps.length) {
         try {
           const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
             await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
           if (resolvedSettings) {
-            if (!settings.metaWhatsAppApiKey)
-              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
-            if (!settings.metaWhatsAppPhoneNumberId)
-              settings.metaWhatsAppPhoneNumberId =
-                resolvedSettings.metaWhatsAppPhoneNumberId;
-            if (!settings.watiAccessToken)
-              settings.watiAccessToken = resolvedSettings.watiAccessToken;
-            if (!settings.watiApiEndpoint)
-              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
-            if (!settings.preferredNotificationMethod)
-              settings.preferredNotificationMethod =
-                resolvedSettings.preferredNotificationMethod;
-            if (!settings.metaTemplateBilling)
-              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
-            if (!settings.metaTemplateReceipt)
-              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
-            if (!settings.metaTemplateBroadcast)
-              settings.metaTemplateBroadcast =
-                resolvedSettings.metaTemplateBroadcast;
+            settings = {
+              ...resolvedSettings,
+              ...settings
+            };
+            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
+            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
+            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
+            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
+            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
@@ -3916,34 +3902,24 @@ async function startServer() {
         preferredNotificationMethod: method,
       };
 
-      if (
-        admin.apps.length &&
-        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
-        !settings.watiAccessToken
-      ) {
+      let effectiveOwnerId = ownerId || "system";
+      if (admin.apps.length) {
         try {
-          const { settings: resolvedSettings } =
+          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
             await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
           if (resolvedSettings) {
-            if (!settings.metaWhatsAppApiKey)
-              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
-            if (!settings.metaWhatsAppPhoneNumberId)
-              settings.metaWhatsAppPhoneNumberId =
-                resolvedSettings.metaWhatsAppPhoneNumberId;
-            if (!settings.watiAccessToken)
-              settings.watiAccessToken = resolvedSettings.watiAccessToken;
-            if (!settings.watiApiEndpoint)
-              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
-            if (!settings.preferredNotificationMethod)
-              settings.preferredNotificationMethod =
-                resolvedSettings.preferredNotificationMethod;
-            if (!settings.metaTemplateBilling)
-              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
-            if (!settings.metaTemplateReceipt)
-              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
-            if (!settings.metaTemplateBroadcast)
-              settings.metaTemplateBroadcast =
-                resolvedSettings.metaTemplateBroadcast;
+            settings = {
+              ...resolvedSettings,
+              ...settings
+            };
+            if (resolvedOwnerId) {
+              effectiveOwnerId = resolvedOwnerId;
+            }
+            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
+            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
+            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
+            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
+            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn(
@@ -3965,7 +3941,7 @@ async function startServer() {
           );
         const customersSnap = await db
           .collection("customers")
-          .where("ownerId", "==", ownerId)
+          .where("ownerId", "==", effectiveOwnerId)
           .where("status", "==", "Active")
           .get();
         customers = customersSnap.docs.map((d) => d.data());
@@ -4065,34 +4041,20 @@ async function startServer() {
         preferredNotificationMethod: method,
       };
 
-      if (
-        admin.apps.length &&
-        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
-        !settings.watiAccessToken
-      ) {
+      if (admin.apps.length) {
         try {
           const { settings: resolvedSettings } =
             await resolveOwnerIdForWebhook(effectiveOwnerId, phoneId);
           if (resolvedSettings) {
-            if (!settings.metaWhatsAppApiKey)
-              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
-            if (!settings.metaWhatsAppPhoneNumberId)
-              settings.metaWhatsAppPhoneNumberId =
-                resolvedSettings.metaWhatsAppPhoneNumberId;
-            if (!settings.watiAccessToken)
-              settings.watiAccessToken = resolvedSettings.watiAccessToken;
-            if (!settings.watiApiEndpoint)
-              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
-            if (!settings.preferredNotificationMethod)
-              settings.preferredNotificationMethod =
-                resolvedSettings.preferredNotificationMethod;
-            if (!settings.metaTemplateBilling)
-              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
-            if (!settings.metaTemplateReceipt)
-              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
-            if (!settings.metaTemplateBroadcast)
-              settings.metaTemplateBroadcast =
-                resolvedSettings.metaTemplateBroadcast;
+            settings = {
+              ...resolvedSettings,
+              ...settings
+            };
+            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
+            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
+            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
+            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
+            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/test:", e);
@@ -5104,6 +5066,7 @@ async function startServer() {
 
                   if (msgType === "image") {
                     const imageId = messageObj.image?.id;
+                    const caption = messageObj.image?.caption || "";
                     if (imageId && settings && settings.metaWhatsAppApiKey) {
                       try {
                         // Fetch media URL
@@ -5157,38 +5120,93 @@ async function startServer() {
                               imageUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
                             }
 
-                            await dbInstance
-                              .collection("payment_receipts")
-                              .doc(receiptId)
-                              .set({
-                                id: receiptId,
+                            const captionLower = caption.toLowerCase().trim();
+                            const isComplaintScreenshot = 
+                              matchedCustomer.pendingComplaint || 
+                              captionLower.includes("complaint") || 
+                              captionLower.includes("issue") || 
+                              captionLower.includes("leak") || 
+                              captionLower.includes("kharab") || 
+                              captionLower.includes("damage") || 
+                              captionLower.includes("broken") || 
+                              captionLower.includes("pipe") || 
+                              captionLower.includes("repair") || 
+                              captionLower.includes("gand") || 
+                              captionLower.includes("problem");
+
+                            if (isComplaintScreenshot) {
+                              const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+                              await saveComplaintData(complaintId, {
+                                id: complaintId,
                                 customerId: matchedCustomer.id,
-                                customerName: matchedCustomer.name,
                                 ownerId: ownerId,
-                                amount: (matchedCustomer.balance && matchedCustomer.balance > 0) ? matchedCustomer.balance : (settings?.billingAmount || 200),
-                                base64Image: imageUrl,
+                                customerName: matchedCustomer.name,
+                                mobileNumber: matchedCustomer.mobileNumber || "",
+                                category: "Service Request",
+                                message: caption || "WhatsApp Image Complaint",
+                                description: caption || "Complaint with screenshot uploaded via WhatsApp.",
+                                billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
                                 status: "Pending",
-                                submittedAt: new Date().toISOString(),
+                                priority: "Medium",
+                                createdAt: new Date().toISOString(),
+                                expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+                                imageUrl: imageUrl,
                               });
 
-                            // Send Acknowledgment
-                            await sendWhatsAppMessage(
-                              settings as unknown as AppSettings,
-                              fromMobile,
-                              "Thank you! We have received your payment screenshot. It is currently under verification. We will notify you once your payment is approved.",
-                            );
-
-                            // Log in chat history
-                            await dbInstance
-                              .collection("customers")
-                              .doc(matchedCustomer.id)
-                              .collection("chat_history")
-                              .add({
-                                role: "user",
-                                content: "Uploaded payment screenshot.",
-                                source: "whatsapp",
-                                timestamp: FieldValue.serverTimestamp(),
+                              await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                                pendingComplaint: false
                               });
+
+                              await sendWhatsAppMessage(
+                                settings as unknown as AppSettings,
+                                fromMobile,
+                                `Thank you! We have received your complaint screenshot and registered your issue (#${complaintId}). Our team will review the screenshot and resolve it promptly.`,
+                              );
+
+                              await dbInstance
+                                .collection("customers")
+                                .doc(matchedCustomer.id)
+                                .collection("chat_history")
+                                .add({
+                                  role: "user",
+                                  content: "Uploaded a complaint screenshot.",
+                                  source: "whatsapp",
+                                  timestamp: FieldValue.serverTimestamp(),
+                                });
+                            } else {
+                              await dbInstance
+                                .collection("payment_receipts")
+                                .doc(receiptId)
+                                .set({
+                                  id: receiptId,
+                                  customerId: matchedCustomer.id,
+                                  customerName: matchedCustomer.name,
+                                  ownerId: ownerId,
+                                  amount: (matchedCustomer.balance && matchedCustomer.balance > 0) ? matchedCustomer.balance : (settings?.billingAmount || 200),
+                                  base64Image: imageUrl,
+                                  status: "Pending",
+                                  submittedAt: new Date().toISOString(),
+                                });
+
+                              // Send Acknowledgment
+                              await sendWhatsAppMessage(
+                                settings as unknown as AppSettings,
+                                fromMobile,
+                                "Thank you! We have received your payment screenshot. It is currently under verification. We will notify you once your payment is approved.",
+                              );
+
+                              // Log in chat history
+                              await dbInstance
+                                .collection("customers")
+                                .doc(matchedCustomer.id)
+                                .collection("chat_history")
+                                .add({
+                                  role: "user",
+                                  content: "Uploaded payment screenshot.",
+                                  source: "whatsapp",
+                                  timestamp: FieldValue.serverTimestamp(),
+                                });
+                            }
                           }
                         }
                       } catch (e) {
@@ -5787,40 +5805,167 @@ async function startServer() {
                       unregSettings.metaWhatsAppPhoneNumberId) ||
                       unregSettings.watiAccessToken)
                   ) {
-                    const msgLower = (msgBody || "").toLowerCase().trim();
-                    let unregReply = "";
-                    if (
-                      msgLower.startsWith("complaint") ||
-                      msgLower.startsWith("issue")
-                    ) {
-                      const complaintId =
-                        "COMP-" +
-                        Math.random().toString(36).substr(2, 8).toUpperCase();
-                      const compDesc =
-                        msgBody.replace(/^(complaint|issue)[:\s]*/i, "").trim() ||
-                        "Public grievance reported via WhatsApp";
-                      await saveComplaintData(complaintId, {
-                        id: complaintId,
-                        customerId: "unregistered",
-                        ownerId: effectiveOwnerId,
-                        customerName: senderDisplayName
-                          ? `${senderDisplayName} (+${fromMobile})`
-                          : `Resident (+${fromMobile})`,
-                        mobileNumber: fromMobile,
-                        category: "Public Grievance",
-                        message: "WhatsApp Complaint",
-                        description: compDesc,
-                        billStatus: "Unregistered",
-                        status: "Pending",
-                        priority: "Medium",
-                        createdAt: new Date().toISOString(),
-                        expiresAt: new Date(
-                          Date.now() + 180 * 24 * 60 * 60 * 1000,
-                        ).toISOString(),
-                      });
-                      unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our maintenance team will review and resolve it promptly.`;
+                    if (msgType === "image") {
+                      const imageId = messageObj.image?.id;
+                      const caption = messageObj.image?.caption || "";
+                      if (imageId && unregSettings.metaWhatsAppApiKey) {
+                        try {
+                          // Fetch media URL
+                          const mediaRes = await fetch(
+                            `https://graph.facebook.com/v21.0/${imageId}`,
+                            {
+                              headers: {
+                                Authorization: `Bearer ${unregSettings.metaWhatsAppApiKey}`,
+                              },
+                            },
+                          );
+                          const mediaData = await mediaRes.json();
+
+                          if (mediaData.url) {
+                            // Fetch image binary
+                            const imgRes = await fetch(mediaData.url, {
+                              headers: {
+                                Authorization: `Bearer ${unregSettings.metaWhatsAppApiKey}`,
+                              },
+                            });
+                            const contentType =
+                              imgRes.headers.get("content-type") || "image/jpeg";
+                            const arrayBuf = await imgRes.arrayBuffer();
+                            const buffer = Buffer.from(arrayBuf);
+
+                            const dbInstance = admin.apps.length
+                              ? getRequiredAdminDb()
+                              : null;
+                            if (dbInstance) {
+                              const receiptId = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+                              let imageUrl = "";
+
+                              try {
+                                const bucket = admin.storage().bucket();
+                                const file = bucket.file(
+                                  `receipts/${effectiveOwnerId}/${receiptId}`,
+                                );
+                                await file.save(buffer, {
+                                  metadata: { contentType },
+                                });
+                                const signedUrls = await file.getSignedUrl({
+                                  action: "read",
+                                  expires: "01-01-2499",
+                                });
+                                imageUrl = signedUrls[0];
+                              } catch (e: any) {
+                                console.error(
+                                  "Storage upload failed, fallback to base64",
+                                  e,
+                                );
+                                imageUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+                              }
+
+                              const captionLower = caption.toLowerCase().trim();
+                              const isComplaintScreenshot = 
+                                captionLower.includes("complaint") || 
+                                captionLower.includes("issue") || 
+                                captionLower.includes("leak") || 
+                                captionLower.includes("kharab") || 
+                                captionLower.includes("damage") || 
+                                captionLower.includes("broken") || 
+                                captionLower.includes("pipe") || 
+                                captionLower.includes("repair") || 
+                                captionLower.includes("gand") || 
+                                captionLower.includes("problem");
+
+                              if (isComplaintScreenshot) {
+                                const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+                                await saveComplaintData(complaintId, {
+                                  id: complaintId,
+                                  customerId: "unregistered",
+                                  ownerId: effectiveOwnerId,
+                                  customerName: senderDisplayName
+                                    ? `${senderDisplayName} (+${fromMobile})`
+                                    : `Resident (+${fromMobile})`,
+                                  mobileNumber: fromMobile,
+                                  category: "Public Grievance",
+                                  message: caption || "WhatsApp Image Complaint",
+                                  description: caption || "Public grievance screenshot reported via WhatsApp.",
+                                  billStatus: "Unregistered",
+                                  status: "Pending",
+                                  priority: "Medium",
+                                  createdAt: new Date().toISOString(),
+                                  expiresAt: new Date(
+                                    Date.now() + 180 * 24 * 60 * 60 * 1000,
+                                  ).toISOString(),
+                                  imageUrl: imageUrl,
+                                });
+
+                                await sendWhatsAppMessage(
+                                  unregSettings as unknown as AppSettings,
+                                  fromMobile,
+                                  `Thank you! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our maintenance team will review the screenshot and resolve it promptly.`,
+                                );
+                              } else {
+                                await dbInstance
+                                  .collection("payment_receipts")
+                                  .doc(receiptId)
+                                  .set({
+                                    id: receiptId,
+                                    customerId: "unregistered",
+                                    customerName: senderDisplayName
+                                      ? `${senderDisplayName} (+${fromMobile})`
+                                      : `Unregistered resident (+${fromMobile})`,
+                                    ownerId: effectiveOwnerId,
+                                    amount: unregSettings?.billingAmount || 200,
+                                    base64Image: imageUrl,
+                                    status: "Pending",
+                                    submittedAt: new Date().toISOString(),
+                                  });
+
+                                await sendWhatsAppMessage(
+                                  unregSettings as unknown as AppSettings,
+                                  fromMobile,
+                                  "Thank you! We have received your payment screenshot. Since your number is not registered, please contact Gram Panchayat or Sarpanch with your connection details to get this payment reconciled and linked to your customer ID.",
+                                );
+                              }
+                            }
+                          }
+                        } catch (e) {
+                          console.error("Failed to process image receipt for unregistered user:", e);
+                        }
+                      }
                     } else {
-                      unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Citizen Services.
+                      const msgLower = (msgBody || "").toLowerCase().trim();
+                      let unregReply = "";
+                      if (
+                        msgLower.startsWith("complaint") ||
+                        msgLower.startsWith("issue")
+                      ) {
+                        const complaintId =
+                          "COMP-" +
+                          Math.random().toString(36).substr(2, 8).toUpperCase();
+                        const compDesc =
+                          msgBody.replace(/^(complaint|issue)[:\s]*/i, "").trim() ||
+                          "Public grievance reported via WhatsApp";
+                        await saveComplaintData(complaintId, {
+                          id: complaintId,
+                          customerId: "unregistered",
+                          ownerId: effectiveOwnerId,
+                          customerName: senderDisplayName
+                            ? `${senderDisplayName} (+${fromMobile})`
+                            : `Resident (+${fromMobile})`,
+                          mobileNumber: fromMobile,
+                          category: "Public Grievance",
+                          message: "WhatsApp Complaint",
+                          description: compDesc,
+                          billStatus: "Unregistered",
+                          status: "Pending",
+                          priority: "Medium",
+                          createdAt: new Date().toISOString(),
+                          expiresAt: new Date(
+                            Date.now() + 180 * 24 * 60 * 60 * 1000,
+                          ).toISOString(),
+                        });
+                        unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our maintenance team will review and resolve it promptly.`;
+                      } else {
+                        unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Citizen Services.
 
 Your mobile number (+${fromMobile}) is not currently linked in our consumer records.
 
@@ -5831,32 +5976,33 @@ Your mobile number (+${fromMobile}) is not currently linked in our consumer reco
 📍 *Office:* Gram Panchayat Jhanda Khurd, Dist. Mansa, Punjab.
 
 To link your connection or update your registered number, please contact the Gram Panchayat office or Sarpanch.`;
-                    }
+                      }
 
-                    try {
-                      await sendWhatsAppMessage(
-                        unregSettings as unknown as AppSettings,
-                        fromMobile,
-                        unregReply,
-                      );
-                      await logWhatsAppEvent({
-                        ownerId: effectiveOwnerId,
-                        direction: "outbound",
-                        mobile: fromMobile,
-                        senderName: senderDisplayName || "Unregistered Citizen",
-                        messageType: "text",
-                        replyText: unregReply,
-                        intentMatched: "unregistered_assistance",
-                        status: "success",
-                      });
-                      console.log(
-                        `[Webhook] Sent assistance message to unregistered user ${fromMobile}`,
-                      );
-                    } catch (errUnreg) {
-                      console.error(
-                        "[Webhook] Failed to send message to unregistered user:",
-                        errUnreg,
-                      );
+                      try {
+                        await sendWhatsAppMessage(
+                          unregSettings as unknown as AppSettings,
+                          fromMobile,
+                          unregReply,
+                        );
+                        await logWhatsAppEvent({
+                          ownerId: effectiveOwnerId,
+                          direction: "outbound",
+                          mobile: fromMobile,
+                          senderName: senderDisplayName || "Unregistered Citizen",
+                          messageType: "text",
+                          replyText: unregReply,
+                          intentMatched: "unregistered_assistance",
+                          status: "success",
+                        });
+                        console.log(
+                          `[Webhook] Sent assistance message to unregistered user ${fromMobile}`,
+                        );
+                      } catch (errUnreg) {
+                        console.error(
+                          "[Webhook] Failed to send message to unregistered user:",
+                          errUnreg,
+                        );
+                      }
                     }
                   }
                 }

@@ -137,6 +137,7 @@ export interface Complaint {
   billStatus?: string;
   description?: string;
   mobileNumber?: string;
+  imageUrl?: string;
 }
 
 export interface BillingAuditLog {

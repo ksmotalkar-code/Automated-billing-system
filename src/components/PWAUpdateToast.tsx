@@ -7,6 +7,13 @@ export function PWAUpdateToast() {
   const [isUpdating, setIsUpdating] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
   const [showOfflineNotice, setShowOfflineNotice] = useState(false);
+  const [isDismissedPermanently, setIsDismissedPermanently] = useState(() => {
+    try {
+      return sessionStorage.getItem('pwa_update_dismissed_permanently') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
 
   const {
     needRefresh: [needRefresh, setNeedRefresh],
@@ -65,6 +72,7 @@ export function PWAUpdateToast() {
     const handleTestUpdate = () => {
       setNeedRefresh(true);
       setIsDismissed(false);
+      setIsDismissedPermanently(false);
     };
     window.addEventListener('pwa-show-update', handleTestUpdate);
     return () => window.removeEventListener('pwa-show-update', handleTestUpdate);
@@ -100,9 +108,22 @@ export function PWAUpdateToast() {
     setIsDismissed(true);
   };
 
+  const handleDismissPermanently = () => {
+    setIsDismissedPermanently(true);
+    try {
+      sessionStorage.setItem('pwa_update_dismissed_permanently', 'true');
+    } catch (e) {
+      // Ignore
+    }
+  };
+
   const handleReopen = () => {
     setIsDismissed(false);
   };
+
+  if (isDismissedPermanently) {
+    return null;
+  }
 
   return (
     <>
@@ -133,8 +154,17 @@ export function PWAUpdateToast() {
             transition={{ type: 'spring', stiffness: 350, damping: 25 }}
             className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-[999999] pointer-events-auto max-w-sm sm:max-w-md w-[calc(100vw-2.5rem)]"
           >
-            <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/95 dark:bg-slate-900/95 text-white shadow-2xl shadow-black/50 border border-slate-700/80 backdrop-blur-xl ring-1 ring-white/10">
-              <div className="flex items-start justify-between gap-3">
+            <div className="p-4 sm:p-5 rounded-2xl bg-slate-900/95 dark:bg-slate-900/95 text-white shadow-2xl shadow-black/50 border border-slate-700/80 backdrop-blur-xl ring-1 ring-white/10 relative">
+              <button
+                type="button"
+                onClick={handleDismissPermanently}
+                className="absolute top-3 right-3 p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex-shrink-0"
+                title="Dismiss completely"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="flex items-start justify-between gap-3 pr-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white shadow-lg shadow-emerald-500/30 flex-shrink-0 animate-pulse">
                     <Sparkles className="w-5 h-5" />
@@ -153,14 +183,6 @@ export function PWAUpdateToast() {
                     </p>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleDismiss}
-                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors flex-shrink-0"
-                  title="Dismiss for now"
-                >
-                  <X className="w-4 h-4" />
-                </button>
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-800 flex items-center justify-end gap-2.5">
@@ -193,18 +215,28 @@ export function PWAUpdateToast() {
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="fixed bottom-5 right-5 z-[999999] pointer-events-auto"
+            className="fixed bottom-5 right-5 z-[999999] pointer-events-auto flex items-center gap-2"
           >
-            <button
-              type="button"
-              onClick={handleReopen}
-              className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-slate-900/95 text-white text-xs font-bold shadow-xl border border-emerald-500/50 hover:border-emerald-400 hover:bg-slate-800 transition-all group backdrop-blur-md"
-              title="Click to view update"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <ArrowUpCircle className="w-4 h-4 text-emerald-400 group-hover:rotate-45 transition-transform" />
-              <span>Update Ready</span>
-            </button>
+            <div className="flex items-center rounded-full bg-slate-900/95 text-white shadow-xl border border-emerald-500/50 backdrop-blur-md overflow-hidden">
+              <button
+                type="button"
+                onClick={handleReopen}
+                className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold hover:bg-slate-800 transition-all group"
+                title="Click to view update"
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <ArrowUpCircle className="w-4 h-4 text-emerald-400 group-hover:rotate-45 transition-transform" />
+                <span>Update Ready</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleDismissPermanently}
+                className="p-2 border-l border-emerald-500/30 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                title="Close permanently"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
