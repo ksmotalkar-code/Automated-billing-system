@@ -270,7 +270,9 @@ export const sendWhatsAppNotification = async (
   // Modify logic based on preferred notification method
   if (settings.preferredNotificationMethod === 'manual_link') {
     usePortalLink = true;
-  } else if (settings.preferredNotificationMethod === 'api' && !whatsappService.isConfigured()) {
+  } else if (whatsappService.isConfigured()) {
+    usePortalLink = false; // Send direct PDF document attachment via API
+  } else {
     usePortalLink = true;
   }
 

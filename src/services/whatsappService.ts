@@ -60,8 +60,7 @@ class WhatsAppService {
   public isConfigured(): boolean {
     const hasMeta = !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
     const hasWati = !!(this.watiAccessToken && this.watiAccessToken.trim());
-    const isPreferred = this.preferredMethod === 'api' || this.preferredMethod === 'wati';
-    return hasMeta || hasWati || isPreferred;
+    return (hasMeta || hasWati) && this.preferredMethod !== 'manual_link';
   }
 
   /**
@@ -72,11 +71,7 @@ class WhatsAppService {
     // We now use our backend proxy to send messages safely (avoiding CORS and keeping keys server-side)
     try {
       const { auth } = await import('../firebase');
-      const ownerId = params.ownerId || auth.currentUser?.uid;
-      
-      if (!ownerId) {
-        return { success: false, error: 'USER_NOT_AUTHENTICATED' };
-      }
+      const ownerId = params.ownerId || auth.currentUser?.uid || 'system';
 
       let mediaBase64: string | undefined = undefined;
       let mediaName: string | undefined = undefined;

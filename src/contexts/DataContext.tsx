@@ -78,6 +78,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubs.push(subscribeToSettings(activeUid, (freshSettings) => {
         if (freshSettings) {
           setSettings(freshSettings);
+          import('../services/whatsappService').then(({ whatsappService }) => {
+            whatsappService.updateConfig(
+              freshSettings.metaWhatsAppApiKey || null,
+              freshSettings.metaWhatsAppPhoneNumberId || null,
+              freshSettings.watiAccessToken || null,
+              freshSettings.watiApiEndpoint || null,
+              freshSettings.preferredNotificationMethod || null
+            );
+          });
         }
       }));
 

@@ -3835,7 +3835,7 @@ async function startServer() {
 
       if (
         admin.apps.length &&
-        !settings.metaWhatsAppApiKey &&
+        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
         !settings.watiAccessToken
       ) {
         try {
@@ -3917,42 +3917,36 @@ async function startServer() {
 
       if (
         admin.apps.length &&
-        !settings.metaWhatsAppApiKey &&
+        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
         !settings.watiAccessToken
       ) {
         try {
-          const db = getAdminDb();
-          if (db) {
-            const settingsDoc = await db
-              .collection("settings")
-              .doc(ownerId)
-              .get();
-            if (settingsDoc.exists) {
-              const dbSettings = settingsDoc.data() as any;
-              if (!settings.metaWhatsAppApiKey)
-                settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-              if (!settings.metaWhatsAppPhoneNumberId)
-                settings.metaWhatsAppPhoneNumberId =
-                  dbSettings.metaWhatsAppPhoneNumberId;
-              if (!settings.watiAccessToken)
-                settings.watiAccessToken = dbSettings.watiAccessToken;
-              if (!settings.watiApiEndpoint)
-                settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-              if (!settings.preferredNotificationMethod)
-                settings.preferredNotificationMethod =
-                  dbSettings.preferredNotificationMethod;
-              if (!settings.metaTemplateBilling)
-                settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
-              if (!settings.metaTemplateReceipt)
-                settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
-              if (!settings.metaTemplateBroadcast)
-                settings.metaTemplateBroadcast =
-                  dbSettings.metaTemplateBroadcast;
-            }
+          const { settings: resolvedSettings } =
+            await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
+          if (resolvedSettings) {
+            if (!settings.metaWhatsAppApiKey)
+              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId)
+              settings.metaWhatsAppPhoneNumberId =
+                resolvedSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken)
+              settings.watiAccessToken = resolvedSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint)
+              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod)
+              settings.preferredNotificationMethod =
+                resolvedSettings.preferredNotificationMethod;
+            if (!settings.metaTemplateBilling)
+              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt)
+              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast)
+              settings.metaTemplateBroadcast =
+                resolvedSettings.metaTemplateBroadcast;
           }
         } catch (e) {
           console.warn(
-            "Failed to fetch settings from internal DB for broadcast:",
+            "Failed to fetch settings from resolveOwnerIdForWebhook for broadcast:",
             e,
           );
         }
@@ -4060,9 +4054,7 @@ async function startServer() {
         method,
         templateToTest,
       } = req.body;
-      if (!ownerId) {
-        return res.status(400).json({ error: "No user authenticated." });
-      }
+      const effectiveOwnerId = ownerId || "system";
 
       let settings: any = {
         metaWhatsAppApiKey: apiKey,
@@ -4072,34 +4064,37 @@ async function startServer() {
         preferredNotificationMethod: method,
       };
 
-      if (admin.apps.length) {
-        const db = getAdminDb();
-        if (!db)
-          throw new Error(
-            "Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.",
-          );
-        const settingsDoc = await db.collection("settings").doc(ownerId).get();
-        if (settingsDoc.exists) {
-          const dbSettings = settingsDoc.data() as any;
-          if (!settings.metaWhatsAppApiKey)
-            settings.metaWhatsAppApiKey = dbSettings.metaWhatsAppApiKey;
-          if (!settings.metaWhatsAppPhoneNumberId)
-            settings.metaWhatsAppPhoneNumberId =
-              dbSettings.metaWhatsAppPhoneNumberId;
-          if (!settings.watiAccessToken)
-            settings.watiAccessToken = dbSettings.watiAccessToken;
-          if (!settings.watiApiEndpoint)
-            settings.watiApiEndpoint = dbSettings.watiApiEndpoint;
-          if (!settings.preferredNotificationMethod)
-            settings.preferredNotificationMethod =
-              dbSettings.preferredNotificationMethod;
-          // Also fetch template names for convenience if not provided
-          if (!settings.metaTemplateBilling)
-            settings.metaTemplateBilling = dbSettings.metaTemplateBilling;
-          if (!settings.metaTemplateReceipt)
-            settings.metaTemplateReceipt = dbSettings.metaTemplateReceipt;
-          if (!settings.metaTemplateBroadcast)
-            settings.metaTemplateBroadcast = dbSettings.metaTemplateBroadcast;
+      if (
+        admin.apps.length &&
+        (!settings.metaWhatsAppApiKey || !settings.metaWhatsAppPhoneNumberId) &&
+        !settings.watiAccessToken
+      ) {
+        try {
+          const { settings: resolvedSettings } =
+            await resolveOwnerIdForWebhook(effectiveOwnerId, phoneId);
+          if (resolvedSettings) {
+            if (!settings.metaWhatsAppApiKey)
+              settings.metaWhatsAppApiKey = resolvedSettings.metaWhatsAppApiKey;
+            if (!settings.metaWhatsAppPhoneNumberId)
+              settings.metaWhatsAppPhoneNumberId =
+                resolvedSettings.metaWhatsAppPhoneNumberId;
+            if (!settings.watiAccessToken)
+              settings.watiAccessToken = resolvedSettings.watiAccessToken;
+            if (!settings.watiApiEndpoint)
+              settings.watiApiEndpoint = resolvedSettings.watiApiEndpoint;
+            if (!settings.preferredNotificationMethod)
+              settings.preferredNotificationMethod =
+                resolvedSettings.preferredNotificationMethod;
+            if (!settings.metaTemplateBilling)
+              settings.metaTemplateBilling = resolvedSettings.metaTemplateBilling;
+            if (!settings.metaTemplateReceipt)
+              settings.metaTemplateReceipt = resolvedSettings.metaTemplateReceipt;
+            if (!settings.metaTemplateBroadcast)
+              settings.metaTemplateBroadcast =
+                resolvedSettings.metaTemplateBroadcast;
+          }
+        } catch (e) {
+          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/test:", e);
         }
       }
 
@@ -4867,7 +4862,13 @@ async function startServer() {
           "Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.",
         );
       const settingsSnap = await db.collection("settings").doc(ownerId).get();
-      const settings = settingsSnap.exists ? settingsSnap.data() : null;
+      let settings = settingsSnap.exists ? (settingsSnap.data() as any) : null;
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
+        const { settings: resolvedSettings } = await resolveOwnerIdForWebhook(ownerId || "system");
+        if (resolvedSettings) {
+          settings = { ...(resolvedSettings || {}), ...(settings || {}) };
+        }
+      }
 
       const customerDoc = await db
         .collection("customers")
