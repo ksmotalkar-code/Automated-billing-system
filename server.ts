@@ -308,13 +308,13 @@ export async function resolveOwnerIdForWebhook(
       metaWhatsAppPhoneNumberId: masterSettings.metaWhatsAppPhoneNumberId || phoneNumberId,
       metaWhatsAppVerifyToken: masterSettings.metaWhatsAppVerifyToken || s?.metaWhatsAppVerifyToken || "random_123",
       preferredNotificationMethod: masterSettings.preferredNotificationMethod || s?.preferredNotificationMethod || "api",
-      metaTemplateBilling: masterSettings.metaTemplateBilling || s?.metaTemplateBilling || "payment_due_reminder",
-      metaTemplateReceipt: masterSettings.metaTemplateReceipt || s?.metaTemplateReceipt || "invoice_bill",
-      metaTemplateBroadcast: masterSettings.metaTemplateBroadcast || s?.metaTemplateBroadcast || "operation_disruption_2",
-      metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome",
-      metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "payment_overdue_1",
-      metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "autopay",
-      metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "general_notification",
+      metaTemplateBilling: masterSettings.metaTemplateBilling || s?.metaTemplateBilling || "bill_reminder_v1",
+      metaTemplateReceipt: masterSettings.metaTemplateReceipt || s?.metaTemplateReceipt || "payment_ack_v3",
+      metaTemplateBroadcast: masterSettings.metaTemplateBroadcast || s?.metaTemplateBroadcast || "mass_broadcast_generic",
+      metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome_customer_v1",
+      metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "penalty_alert_v1",
+      metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "service_suspended",
+      metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "custom_alert",
       metaCustomTemplates: masterSettings.metaCustomTemplates || s?.metaCustomTemplates,
       appLogoImage: masterSettings.appLogoImage || s?.appLogoImage,
       upiQrCodeImage: masterSettings.upiQrCodeImage || s?.upiQrCodeImage,
@@ -476,6 +476,7 @@ interface AppSettings {
   billingCycleMonths: number;
   penaltyAmount: number;
   penaltyDays: number;
+  lateFee?: boolean;
   publicPortalBaseUrl?: string;
   escalationDays?: number;
   autoSuspend?: boolean;
@@ -717,6 +718,9 @@ async function generateInvoicePdf(
   let templateImage: string | null = null;
   let lang = "en";
   let custId = "N/A";
+  let penaltyAmount = 0;
+  let penaltyDays = 10;
+  let lateFee = false;
   let billingAmount = 200;
   let advanceBalance = 0;
   let appLogoImage: string | null = null;
@@ -726,22 +730,25 @@ async function generateInvoicePdf(
     const customer = nameOrCustomer;
     const settings = balanceOrSettings || {};
     name = customer.name || "Customer";
-    balance = typeof customer.balance === "number" ? customer.balance : 0;
+    balance = typeof customer.balance === "number" ? customer.balance : (Number(customer.balance) || 0);
     templateImage = amountPaidOrTemplateImage || settings.billTemplateImage || null;
     lang = settings.preferredLanguage || "en";
     custId = customer.id || "N/A";
-    billingAmount = typeof settings.billingAmount === "number" ? settings.billingAmount : 200;
-    advanceBalance = typeof customer.advanceBalance === "number" ? customer.advanceBalance : 0;
+    billingAmount = typeof settings.billingAmount === "number" ? settings.billingAmount : (settings.billingAmount !== undefined && settings.billingAmount !== null && !isNaN(Number(settings.billingAmount)) ? Number(settings.billingAmount) : 200);
+    advanceBalance = typeof customer.advanceBalance === "number" ? customer.advanceBalance : (Number(customer.advanceBalance) || 0);
     appLogoImage = settings.appLogoImage || null;
+    penaltyAmount = typeof settings.penaltyAmount === "number" ? settings.penaltyAmount : (settings.penaltyAmount !== undefined && settings.penaltyAmount !== null && !isNaN(Number(settings.penaltyAmount)) ? Number(settings.penaltyAmount) : 0);
+    penaltyDays = typeof settings.penaltyDays === "number" ? settings.penaltyDays : (Number(settings.penaltyDays) || 10);
+    lateFee = settings.lateFee !== false && (settings.lateFee === true || settings.lateFee === "true" || settings.automation?.lateFee === true);
   } else {
     name = typeof nameOrCustomer === "string" ? nameOrCustomer : "Customer";
-    balance = typeof balanceOrSettings === "number" ? balanceOrSettings : 0;
+    balance = typeof balanceOrSettings === "number" ? balanceOrSettings : (Number(balanceOrSettings) || 0);
     amountPaid = typeof amountPaidOrTemplateImage === "number" ? amountPaidOrTemplateImage : undefined;
     templateImage = typeof templateImageOrIsSuspended === "string" ? templateImageOrIsSuspended : null;
     lang = typeof langOrBillingAmount === "string" ? langOrBillingAmount : "en";
     custId = customerId || "N/A";
-    billingAmount = typeof billingAmountParam === "number" ? billingAmountParam : 200;
-    advanceBalance = typeof advanceBalanceParam === "number" ? advanceBalanceParam : 0;
+    billingAmount = typeof billingAmountParam === "number" ? billingAmountParam : (billingAmountParam !== undefined && billingAmountParam !== null && !isNaN(Number(billingAmountParam)) ? Number(billingAmountParam) : 200);
+    advanceBalance = typeof advanceBalanceParam === "number" ? advanceBalanceParam : (Number(advanceBalanceParam) || 0);
     appLogoImage = appLogoImageParam || null;
   }
 
@@ -1014,9 +1021,9 @@ async function generateInvoicePdf(
       page.drawText(currentMonth, { x: 180, y: pgHeight - 234, size: 10.5, font: fontBold, color: rgb(0, 0, 0) });
 
       // ---- WATER BILL TABLE DRAWING ----
-      const currentCharges = billingAmount || 200;
+      const currentCharges = typeof billingAmount === 'number' ? billingAmount : 200;
       const arrears = balance > currentCharges ? balance - currentCharges : 0;
-      const surcharge = arrears > 0 ? arrears * 0.10 : 0; // 10% surcharge
+      const surcharge = (arrears > 0 && lateFee !== false && penaltyAmount > 0) ? penaltyAmount : 0;
       const totalPayable = arrears + currentCharges + surcharge;
       const totalDataRows = 4;
 
@@ -1090,7 +1097,9 @@ async function generateInvoicePdf(
         "Present this bill at the time of payment.",
         "Despite any disputes or errors found in the bill, it is mandatory to pay this bill every month by the due date. In case an error is found, the adjustment for the difference in the amount will be made in the subsequent month's bill sent to the consumer by the department after resolving the discrepancy.",
         "The fee for disconnecting a connection is Rs. 200/- and for reconnecting is Rs. 500/-.",
-        "If this bill is not paid by the due date, a 10% surcharge will be levied, and if payment is not made within 10 days after the due date, the connection will be disconnected without any notice.",
+        (penaltyAmount > 0 && lateFee !== false)
+          ? `If this bill is not paid by the due date, a late fee surcharge of Rs. ${penaltyAmount.toFixed(2)} will be levied, and if payment is not made within ${penaltyDays} days after the due date, the connection will be disconnected without any notice.`
+          : `If payment is not made within ${penaltyDays} days after the due date, the connection will be disconnected without any notice.`,
         "The bill can be paid at the Gram Panchayat office on any working day from 8:00 AM to 5:00 PM until the due date.",
         "Households whose previous bills remain pending as arrears are informed by the Chairman and all members of the Nagar Panchayat to deposit their pending bills by the last date; otherwise, their connections will be disconnected."
       ];
@@ -1173,15 +1182,8 @@ async function routeSystemIntent(
     }
     try {
       const b64Pdf = await generateInvoicePdf(
-        custData.name || "Customer", 
-        amt, 
-        undefined, 
-        adminSettings?.billTemplateImage,
-        lang,
-        custData.id,
-        adminSettings?.billingAmount,
-        adv,
-        adminSettings?.appLogoImage
+        custData,
+        adminSettings
       );
       attachments.push({ type: "file", name: "Invoice.pdf", data: b64Pdf });
     } catch (e) {
@@ -1804,10 +1806,7 @@ async function startServer() {
     const data = job.data as any;
     const pdfBase64 = await generateInvoicePdf(
       data.customer,
-      data.settings,
-      data.templateImage,
-      data.isSuspended,
-      data.settings?.billingAmount || 200
+      data.settings
     );
     onProgress(100);
     return { pdfBase64 };
@@ -2683,8 +2682,25 @@ async function startServer() {
         // generic fallback param when test template is used
       }
 
-      const lang = settings.preferredLanguage === 'hi' ? 'hi' : settings.preferredLanguage === 'pa' ? 'pa' : settings.preferredLanguage || "en_US";
-      
+      let lang = "en_US";
+      if (settings?.metaCustomTemplates) {
+        const matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.templateName === templateName);
+        if (matchedTmpl && matchedTmpl.language) {
+          lang = matchedTmpl.language;
+        }
+      }
+      if (!lang || lang === "en_US") {
+        if (settings?.preferredLanguage === 'hi') {
+          lang = 'hi';
+        } else if (settings?.preferredLanguage === 'pa') {
+          lang = 'pa';
+        } else if (settings?.preferredLanguage && settings.preferredLanguage !== 'en') {
+          lang = settings.preferredLanguage;
+        } else {
+          lang = "en_US";
+        }
+      }
+
       bodyPayload.template = {
         name: templateName,
         language: { code: lang },
@@ -3588,7 +3604,9 @@ async function startServer() {
       }
 
       // Handle Automated Penalty
-      if (settings.automation.lateFee && settings.lastBillingDate) {
+      const penaltyAmt = typeof settings.penaltyAmount === 'number' ? settings.penaltyAmount : (Number(settings.penaltyAmount) || 0);
+      const isLateFeeEnabled = Boolean(settings.automation?.lateFee) && settings.lateFee !== false && penaltyAmt > 0;
+      if (isLateFeeEnabled && settings.lastBillingDate) {
         const lastBilling = new Date(settings.lastBillingDate);
         const daysSinceBilling = Math.floor(
           (istTime.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24),
@@ -3607,7 +3625,7 @@ async function startServer() {
           !isSameMonthPenalty
         ) {
           console.log(
-            `[Automation] Applying late fee penalties for ${ownerId}`,
+            `[Automation] Applying late fee penalties (Rs. ${penaltyAmt}) for ${ownerId}`,
           );
 
           const overdueRef = db
@@ -3625,7 +3643,7 @@ async function startServer() {
               if ((customer.advanceBalance || 0) > 0) continue;
               batch.update(cDoc.ref, {
                 balance:
-                  (customer.balance || 0) + (settings.penaltyAmount || 0),
+                  (Number(customer.balance) || 0) + penaltyAmt,
               });
               count++;
               if (count === 400) {

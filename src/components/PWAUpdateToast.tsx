@@ -9,7 +9,7 @@ export function PWAUpdateToast() {
   const [showOfflineNotice, setShowOfflineNotice] = useState(false);
   const [isDismissedPermanently, setIsDismissedPermanently] = useState(() => {
     try {
-      return sessionStorage.getItem('pwa_update_dismissed_permanently') === 'true';
+      return localStorage.getItem('pwa_update_dismissed_permanently') === 'true';
     } catch (e) {
       return false;
     }
@@ -81,6 +81,7 @@ export function PWAUpdateToast() {
   const handleUpdate = async () => {
     setIsUpdating(true);
     try {
+      localStorage.removeItem('pwa_update_dismissed_permanently');
       console.log('[PWA] User accepted update. Activating waiting service worker and refreshing...');
       let reloaded = false;
       if ('serviceWorker' in navigator) {
@@ -111,7 +112,7 @@ export function PWAUpdateToast() {
   const handleDismissPermanently = () => {
     setIsDismissedPermanently(true);
     try {
-      sessionStorage.setItem('pwa_update_dismissed_permanently', 'true');
+      localStorage.setItem('pwa_update_dismissed_permanently', 'true');
     } catch (e) {
       // Ignore
     }

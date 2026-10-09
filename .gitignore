@@ -6,4 +6,5 @@ coverage/
 !.env.example
 .wwebjs_auth/
 .wwebjs_cache/
-
+dist/
+dist-ssr/

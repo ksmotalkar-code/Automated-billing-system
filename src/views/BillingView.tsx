@@ -1074,10 +1074,10 @@ export function BillingView() {
                       {selectedCustomer.balance > settings.billingAmount && (
                         <tr>
                           <td className="px-4 py-4">
-                            <p className="font-bold text-slate-900 text-rose-600">Late Payment Penalty</p>
-                            <p className="text-slate-500 text-xs mt-1">Applied after {settings.penaltyDays} days</p>
+                            <p className="font-bold text-slate-900 text-amber-600">Previous Arrears</p>
+                            <p className="text-slate-500 text-xs mt-1">Unpaid balance rolled forward from past cycles</p>
                           </td>
-                          <td className="px-4 py-4 text-right font-medium text-rose-600">
+                          <td className="px-4 py-4 text-right font-medium text-amber-600">
                             {formatCurrency(selectedCustomer.balance - settings.billingAmount)}
                           </td>
                         </tr>

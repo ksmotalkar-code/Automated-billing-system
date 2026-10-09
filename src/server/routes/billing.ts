@@ -16,18 +16,5 @@ export function createBillingRouter(runDailyAutomation: (ownerId?: string) => Pr
     }
   });
 
-  // Dynamic Payment Webhook endpoint
-  router.post("/payment-webhook/:ownerId", async (req, res) => {
-    try {
-      const { ownerId } = req.params;
-      const paymentData = req.body;
-      console.log(`[PaymentWebhook] Received payment webhook for tenant ${ownerId}:`, paymentData);
-      return res.json({ success: true, received: true });
-    } catch (err: any) {
-      console.error("[PaymentWebhook] Error processing webhook:", err);
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
   return router;
 }

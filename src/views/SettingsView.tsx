@@ -891,7 +891,7 @@ export function SettingsView() {
 
                     <div className="space-y-4">
                       {settings.metaCustomTemplates?.map((tmp, index) => (
-                        <div key={tmp.id} className="grid grid-cols-[1fr,2fr,auto] gap-4 items-center neu-pressed p-4 rounded-2xl">
+                        <div key={tmp.id} className="grid grid-cols-[1.5fr,2fr,1fr,auto] gap-3 items-center neu-pressed p-4 rounded-2xl">
                            <input
                              type="text"
                              value={tmp.templateName}
@@ -901,7 +901,7 @@ export function SettingsView() {
                                setSettings({ ...settings, metaCustomTemplates: updated });
                              }}
                              placeholder="Template Name (e.g. bill_reminder_v1)"
-                             className="px-4 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-xs font-black tracking-wider placeholder:font-normal placeholder:opacity-50"
+                             className="px-3 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-[11px] font-black tracking-wider placeholder:font-normal placeholder:opacity-50"
                            />
                            <input
                              type="text"
@@ -912,7 +912,19 @@ export function SettingsView() {
                                setSettings({ ...settings, metaCustomTemplates: updated });
                              }}
                              placeholder="customer_name, billing_amount, portal_link"
-                             className="px-4 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-xs font-mono placeholder:font-normal placeholder:opacity-50"
+                             className="px-3 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-[11px] font-mono placeholder:font-normal placeholder:opacity-50"
+                           />
+                           <input
+                             type="text"
+                             value={tmp.language || ''}
+                             onChange={(e) => {
+                               const updated = [...(settings.metaCustomTemplates || [])];
+                               updated[index].language = e.target.value;
+                               setSettings({ ...settings, metaCustomTemplates: updated });
+                             }}
+                             placeholder="en_US"
+                             title="Template Language Code (e.g. en_US, en, hi)"
+                             className="px-3 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-[11px] font-bold text-center placeholder:font-normal placeholder:opacity-50"
                            />
                            <button
                              onClick={() => {
@@ -931,7 +943,8 @@ export function SettingsView() {
                           const updated = [...(settings.metaCustomTemplates || []), {
                             id: Math.random().toString(36).substring(7),
                             templateName: '',
-                            parameters: ''
+                            parameters: '',
+                            language: 'en_US'
                           }];
                           setSettings({ ...settings, metaCustomTemplates: updated });
                         }}

@@ -303,6 +303,7 @@ export interface MetaTemplateDef {
   id: string;
   templateName: string;
   parameters: string; // comma separated: e.g. "customer_name, balance, date"
+  language?: string;
 }
 
 export interface AppSettings {
@@ -338,6 +339,7 @@ export interface AppSettings {
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
   enableWhatsappWeb?: boolean;
+  lateFee?: boolean;
   enableAutosave?: boolean;
   enableFreeTierLock?: boolean;
   paymentGatewayKey?: string;
@@ -1322,10 +1324,10 @@ export function subscribeToSettings(
       // Inject missing default custom templates config for predefined ones (so user doesn't have to manually create them instantly)
       if (!data.metaCustomTemplates || data.metaCustomTemplates.length === 0) {
         data.metaCustomTemplates = [
-          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome', parameters: 'customer_name, button_param' },
-          { id: 'def_billing', templateName: data.metaTemplateBilling || 'payment_due_reminder', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
-          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'invoice_bill', parameters: 'customer_name, payment_amount, button_param' },
-          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'payment_overdue_1', parameters: 'customer_name, overdue_amount, date, button_param' },
+          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome_customer_v1', parameters: 'customer_name, button_param' },
+          { id: 'def_billing', templateName: data.metaTemplateBilling || 'bill_reminder_v1', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
+          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'payment_ack_v3', parameters: 'customer_name, payment_amount, button_param' },
+          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'penalty_alert_v1', parameters: 'customer_name, overdue_amount, date, button_param' },
         ];
       }
       

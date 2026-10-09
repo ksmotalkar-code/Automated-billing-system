@@ -171,9 +171,11 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
     doc.text("AMOUNT ( RS )", verticalLineX + 4, startY + 7.5);
 
     // Dynamic charges calculation
-    const currentCharges = settings.billingAmount || 200;
+    const currentCharges = typeof settings.billingAmount === 'number' ? settings.billingAmount : (settings.billingAmount !== undefined && settings.billingAmount !== null && !isNaN(Number(settings.billingAmount)) ? Number(settings.billingAmount) : 200);
     const arrears = customer.balance > currentCharges ? customer.balance - currentCharges : 0;
-    const surcharge = arrears > 0 ? arrears * 0.10 : 0; // 10% surcharge
+    const penaltyAmt = typeof settings.penaltyAmount === 'number' ? settings.penaltyAmount : (Number(settings.penaltyAmount) || 0);
+    const isLateFeeEnabled = settings.lateFee !== false && (settings.lateFee === true || (settings as any).automation?.lateFee === true) && penaltyAmt > 0;
+    const surcharge = (arrears > 0 && isLateFeeEnabled) ? penaltyAmt : 0;
     const totalPayable = arrears + currentCharges + surcharge;
 
     // Row 1: Previous month's arrears, if any
@@ -211,7 +213,9 @@ export const generateInvoicePDF = (customer: Customer, settings: AppSettings, is
     "Present this bill at the time of payment.",
     "Despite any disputes or errors found in the bill, it is mandatory to pay this bill every month by the due date. In case an error is found, the adjustment for the difference in the amount will be made in the subsequent month's bill sent to the consumer by the department after resolving the discrepancy.",
     "The fee for disconnecting a connection is Rs. 200/- and for reconnecting is Rs. 500/-.",
-    "If this bill is not paid by the due date, a 10% surcharge will be levied, and if payment is not made within 10 days after the due date, the connection will be disconnected without any notice.",
+    (Number(settings.penaltyAmount) > 0 && settings.lateFee !== false)
+      ? `If this bill is not paid by the due date, a late fee surcharge of Rs. ${(Number(settings.penaltyAmount) || 0).toFixed(2)} will be levied, and if payment is not made within ${settings.penaltyDays || 10} days after the due date, the connection will be disconnected without any notice.`
+      : `If payment is not made within ${settings.penaltyDays || 10} days after the due date, the connection will be disconnected without any notice.`,
     "The bill can be paid at the Gram Panchayat office on any working day from 8:00 AM to 5:00 PM until the due date.",
     "Households whose previous bills remain pending as arrears are informed by the Chairman and all members of the Nagar Panchayat to deposit their pending bills by the last date; otherwise, their connections will be disconnected."
   ];
@@ -553,9 +557,11 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     }
 
   // 2. Automatic Penalty Application
+  const penaltyAmt = Number(settings.penaltyAmount) || 0;
+  const isLateFeeEnabled = Boolean(automation.lateFee) && settings.lateFee !== false && penaltyAmt > 0;
   const daysSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24) : 0;
-  if (automation.lateFee && daysSinceLastBill >= settings.penaltyDays && (!lastPenalty || lastPenalty < (lastBilling || now))) {
-    console.log("Automated Penalty Application Triggered");
+  if (isLateFeeEnabled && daysSinceLastBill >= (settings.penaltyDays || 10) && (!lastPenalty || lastPenalty < (lastBilling || now))) {
+    console.log("Automated Penalty Application Triggered with penalty:", penaltyAmt);
     const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance === 0));
     
     // Pre-save to avoid quota loop
@@ -563,24 +569,24 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
     updatedSettings.lastPenaltyDate = now.toISOString();
     needsSettingsUpdate = true;
     
-      let processedCount = 0;
-      let totalPenalties = 0;
-      for (let i = 0; i < activeCustomers.length; i += 200) {
+    let processedCount = 0;
+    let totalPenalties = 0;
+    for (let i = 0; i < activeCustomers.length; i += 200) {
       const batch = writeBatch(db);
       const chunk = activeCustomers.slice(i, i + 200);
 
       for (const customer of chunk) {
         const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
         batch.update(doc(db, 'customers', targetDocId), {
-          balance: customer.balance + settings.penaltyAmount
+          balance: customer.balance + penaltyAmt
         });
         processedCount++;
-        totalPenalties += settings.penaltyAmount;
+        totalPenalties += penaltyAmt;
         
         if (automation.bulkProcessing) {
           try {
-            const overdueMessage = `NOTICE: A late fee of INR ${settings.penaltyAmount.toFixed(2)} has been applied to your account. Your new balance is INR ${(customer.balance + settings.penaltyAmount).toFixed(2)}. Please pay at earliest.`;
-            sendWhatsAppNotification({...customer, balance: customer.balance + settings.penaltyAmount}, overdueMessage, settings, undefined, undefined, true, true, 'overdue')
+            const overdueMessage = `NOTICE: A late fee of INR ${penaltyAmt.toFixed(2)} has been applied to your account. Your new balance is INR ${(customer.balance + penaltyAmt).toFixed(2)}. Please pay at earliest.`;
+            sendWhatsAppNotification({...customer, balance: customer.balance + penaltyAmt}, overdueMessage, settings, undefined, undefined, true, true, 'overdue')
               .then(res => {
                 if (!res.success && res.error) {
                   logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'overdue' });
