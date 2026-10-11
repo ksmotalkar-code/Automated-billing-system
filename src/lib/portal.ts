@@ -29,6 +29,9 @@ export interface PaymentReceipt {
   submittedAt: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   amount: number;
+  approvedAmount?: number;
+  approvedAt?: string;
+  transactionId?: string;
 }
 
 export const createPortalLink = async (customer: Customer, settings: AppSettings, explicitOwnerId?: string): Promise<string> => {
@@ -91,6 +94,28 @@ export const submitPaymentReceipt = async (portalData: PublicPortalData, base64I
     ? customAmount
     : (portalData.balance > 0 ? portalData.balance : (portalData.billingAmount || 200));
 
+  // 1. Try server-side rate-limited endpoint first
+  try {
+    const res = await fetch('/api/portal/receipt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        portalId: portalData.portalId,
+        customerId: portalData.customerId,
+        ownerId: portalData.ownerId,
+        customerName: portalData.customerName,
+        base64Image: imageUrl,
+        amount: finalAmount,
+      }),
+    });
+    if (res.ok) {
+      return;
+    }
+  } catch (err) {
+    console.warn("[Portal] Server receipt endpoint unavailable, falling back to direct Firestore write:", err);
+  }
+
+  // 2. Fallback: Write directly to Firestore with schema verified by security rules
   await setDoc(doc(db, 'payment_receipts', id), {
     id,
     portalId: portalData.portalId,
@@ -106,6 +131,29 @@ export const submitPaymentReceipt = async (portalData: PublicPortalData, base64I
 
 export const submitPublicComplaint = async (portalData: PublicPortalData, message: string, description: string = "") => {
   const id = `COMP-${uuidv4().substring(0, 8).toUpperCase()}`;
+
+  // 1. Try server-side rate-limited endpoint first
+  try {
+    const res = await fetch('/api/portal/complaint', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        customerId: portalData.customerId,
+        customerName: portalData.customerName,
+        message,
+        description,
+        billStatus: portalData.balance > 0 ? `Unpaid (₹${portalData.balance})` : "Paid",
+        ownerId: portalData.ownerId,
+      }),
+    });
+    if (res.ok) {
+      return;
+    }
+  } catch (err) {
+    console.warn("[Portal] Server complaint endpoint unavailable, falling back to direct Firestore write:", err);
+  }
+
+  // 2. Fallback: Write directly to Firestore with schema verified by security rules
   await setDoc(doc(db, 'complaints', id), {
     id,
     customerId: portalData.customerId,

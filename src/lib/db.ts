@@ -1,7 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
-import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit, addDoc, deleteField } from 'firebase/firestore';
+import { collection, doc, setDoc, getDocs, getDoc, updateDoc, deleteDoc, onSnapshot, query, where, writeBatch, orderBy, limit, addDoc, deleteField, runTransaction } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { authFetch } from './api';
+import type { PaymentReceipt } from './portal';
 
 export enum OperationType {
   CREATE = 'create',
@@ -218,6 +220,7 @@ export interface Transaction {
   previousAdvance?: number;
   newAdvance?: number;
   notes?: string;
+  idempotencyKey?: string;
 }
 
 export interface AutomationSettings {
@@ -950,20 +953,53 @@ export const deleteAllCustomers = async (explicitOwnerId?: string) => {
 };
 
 export const addTransaction = async (
-  transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'>,
+  transaction: Omit<Transaction, 'id' | 'date' | 'ownerId'> & { idempotencyKey?: string },
   explicitOwnerId?: string
 ): Promise<Transaction> => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Add Transaction");
+
+  if (transaction.idempotencyKey) {
+    const idempRef = doc(db, 'idempotency_keys', `txn_${transaction.idempotencyKey}`);
+    try {
+      const existing = await getDoc(idempRef);
+      if (existing.exists()) {
+        const idempData = existing.data();
+        if (idempData.resourceId) {
+          const existingTxnDoc = await getDoc(doc(db, 'transactions', idempData.resourceId));
+          if (existingTxnDoc.exists()) {
+            return existingTxnDoc.data() as Transaction;
+          }
+        }
+      }
+    } catch (e) {
+      // proceed if check fails
+    }
+  }
+
+  const txnId = transaction.idempotencyKey
+    ? `TXN-${transaction.idempotencyKey.substring(0, 16).replace(/[^a-zA-Z0-9]/g, '').toUpperCase()}`
+    : `TXN-${uuidv4().substring(0, 8).toUpperCase()}`;
+
   const newTransaction: Transaction = {
     ...transaction,
-    id: `TXN-${uuidv4().substring(0, 8).toUpperCase()}`,
+    id: txnId,
     date: new Date().toISOString(),
     ownerId: uid,
   };
   try {
     await setDoc(doc(db, 'transactions', newTransaction.id), newTransaction);
+    if (transaction.idempotencyKey) {
+      await setDoc(doc(db, 'idempotency_keys', `txn_${transaction.idempotencyKey}`), {
+        id: `txn_${transaction.idempotencyKey}`,
+        ownerId: uid,
+        resourceType: 'transaction',
+        resourceId: newTransaction.id,
+        status: 'completed',
+        createdAt: new Date().toISOString(),
+      });
+    }
     return newTransaction;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'transactions');
@@ -1539,6 +1575,319 @@ export function subscribeToReports(
   });
 }
 
+export interface ApproveReceiptResult {
+  success: boolean;
+  alreadyApproved?: boolean;
+  transactionId?: string;
+  customer?: Customer;
+  effectiveAmount: number;
+  isAdvanceCredit: boolean;
+  newBalance: number;
+  newAdvance: number;
+}
+
+/**
+ * Atomically approves a payment receipt with full ACID transaction guarantees and idempotency.
+ * Completely eliminates double-crediting, duplicate transactions, and race conditions.
+ */
+export const approveReceiptWithAtomicTransaction = async (
+  receiptId: string,
+  customAmount?: number,
+  explicitOwnerId?: string
+): Promise<ApproveReceiptResult> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Approve Payment Receipt");
+
+  const receiptRef = doc(db, 'payment_receipts', receiptId);
+
+  return await runTransaction(db, async (txn) => {
+    const receiptSnap = await txn.get(receiptRef);
+    if (!receiptSnap.exists()) {
+      throw new Error(`Receipt ${receiptId} not found`);
+    }
+
+    const receipt = receiptSnap.data() as PaymentReceipt;
+
+    // Idempotency check: If already approved, exit cleanly without modifying balances or adding transactions!
+    if (receipt.status === 'Approved') {
+      return {
+        success: true,
+        alreadyApproved: true,
+        transactionId: receipt.transactionId || `TXN-RCPT-${receiptId.substring(0, 8).toUpperCase()}`,
+        effectiveAmount: receipt.approvedAmount || receipt.amount || 0,
+        isAdvanceCredit: false,
+        newBalance: 0,
+        newAdvance: 0,
+      };
+    }
+
+    if (receipt.status === 'Rejected') {
+      throw new Error("Cannot approve a rejected receipt.");
+    }
+
+    const effectiveAmount = (typeof customAmount === 'number' && customAmount > 0)
+      ? customAmount
+      : (Number(receipt.amount) || 0);
+
+    const custRef = doc(db, 'customers', receipt.customerId);
+    const custSnap = await txn.get(custRef);
+    if (!custSnap.exists()) {
+      throw new Error(`Customer ${receipt.customerId} not found for this receipt`);
+    }
+
+    const customer = custSnap.data() as Customer;
+    const currentDue = Number(customer.balance) || 0;
+    const currentAdvance = Number(customer.advanceBalance) || 0;
+
+    let newBalance = 0;
+    let newAdvance = currentAdvance;
+    let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = customer.status || 'Active';
+    let isAdvanceCredit = false;
+
+    if (effectiveAmount <= currentDue) {
+      newBalance = currentDue - effectiveAmount;
+      if (newBalance === 0) {
+        status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
+      }
+    } else {
+      newBalance = 0;
+      const excess = effectiveAmount - currentDue;
+      newAdvance = currentAdvance + excess;
+      status = 'Advance Paid';
+      isAdvanceCredit = true;
+    }
+
+    const updatedCustomer: Customer = {
+      ...customer,
+      balance: newBalance,
+      advanceBalance: newAdvance,
+      status: status,
+      invoiceSent: true,
+      paymentNotified: true,
+      ownerId: customer.ownerId || uid,
+    };
+
+    const txnId = `TXN-RCPT-${receiptId.substring(0, 8).toUpperCase()}`;
+    const txnRef = doc(db, 'transactions', txnId);
+
+    const newTxn: Transaction = {
+      id: txnId,
+      customerId: customer.id,
+      customerName: customer.name,
+      amount: effectiveAmount,
+      transactionId: txnId,
+      date: new Date().toISOString(),
+      ownerId: uid,
+      paymentMode: 'upi',
+      isAdvanceCredit,
+      advanceAdjustment: isAdvanceCredit ? (newAdvance - currentAdvance) : 0,
+      paymentType: isAdvanceCredit ? 'bill_and_advance' : 'bill_payment',
+      previousBalance: currentDue,
+      newBalance,
+      previousAdvance: currentAdvance,
+      newAdvance,
+      notes: isAdvanceCredit
+        ? `Receipt verified: Bill settled & ₹${newAdvance - currentAdvance} credited as Advance Balance`
+        : `Receipt verified payment of ₹${effectiveAmount}`,
+      idempotencyKey: receiptId,
+    };
+
+    // 1. Update customer document atomically
+    txn.set(custRef, updatedCustomer, { merge: true });
+
+    // 2. Create deterministic transaction record
+    txn.set(txnRef, newTxn);
+
+    // 3. Mark receipt as Approved with execution details
+    txn.update(receiptRef, {
+      status: 'Approved',
+      approvedAt: new Date().toISOString(),
+      approvedAmount: effectiveAmount,
+      transactionId: txnId,
+    });
+
+    // 4. Record idempotency marker
+    const idempRef = doc(db, 'idempotency_keys', `rcpt_appr_${receiptId}`);
+    txn.set(idempRef, {
+      id: `rcpt_appr_${receiptId}`,
+      ownerId: uid,
+      resourceType: 'receipt_approval',
+      resourceId: txnId,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      alreadyApproved: false,
+      transactionId: txnId,
+      customer: updatedCustomer,
+      effectiveAmount,
+      isAdvanceCredit,
+      newBalance,
+      newAdvance,
+    };
+  });
+};
+
+export interface RecordPaymentResult {
+  success: boolean;
+  alreadyProcessed?: boolean;
+  transactionId: string;
+  customer: Customer;
+  effectiveAmount: number;
+  isAdvanceCredit: boolean;
+  newBalance: number;
+  newAdvance: number;
+}
+
+/**
+ * Atomically records a staff manual counter payment (Cash / UPI) with full ACID transaction guarantees
+ * and idempotency key enforcement. Eliminates double-entry and inconsistent balances.
+ */
+export const recordPaymentWithAtomicTransaction = async (
+  customerId: string,
+  amount: number,
+  transactionId: string,
+  paymentMode: 'cash' | 'upi',
+  paymentRecordingType: 'standard' | 'advance',
+  explicitOwnerId?: string,
+  idempotencyKey?: string,
+): Promise<RecordPaymentResult> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Record Payment Transaction");
+
+  const effectiveKey = idempotencyKey || `manual_${transactionId.trim()}`;
+  const idempRef = doc(db, 'idempotency_keys', `pay_${effectiveKey}`);
+  const custRef = doc(db, 'customers', customerId);
+
+  return await runTransaction(db, async (txn) => {
+    // 1. Check idempotency marker
+    const idempSnap = await txn.get(idempRef);
+    if (idempSnap.exists()) {
+      const data = idempSnap.data();
+      const existingCustSnap = await txn.get(custRef);
+      return {
+        success: true,
+        alreadyProcessed: true,
+        transactionId: data.resourceId || transactionId,
+        customer: existingCustSnap.data() as Customer,
+        effectiveAmount: amount,
+        isAdvanceCredit: false,
+        newBalance: 0,
+        newAdvance: 0,
+      };
+    }
+
+    // 2. Fetch Customer
+    const custSnap = await txn.get(custRef);
+    if (!custSnap.exists()) {
+      throw new Error(`Customer ${customerId} not found`);
+    }
+
+    const customer = custSnap.data() as Customer;
+    const currentDue = Number(customer.balance) || 0;
+    const currentAdvance = Number(customer.advanceBalance) || 0;
+    let newBalance = 0;
+    let newAdvance = currentAdvance;
+    let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = customer.status || 'Active';
+    let isAdvanceCreditAdded = false;
+    const isDirectAdvanceDeposit = paymentRecordingType === 'advance';
+    let advanceAdjustment = 0;
+    let paymentType: 'bill_payment' | 'advance_credit' | 'bill_and_advance' = 'bill_payment';
+    let ledgerNote = "";
+
+    if (isDirectAdvanceDeposit) {
+      newBalance = currentDue;
+      newAdvance = currentAdvance + amount;
+      status = 'Advance Paid';
+      isAdvanceCreditAdded = true;
+      advanceAdjustment = amount;
+      paymentType = 'advance_credit';
+      ledgerNote = `Direct Advance Credit pre-payment of ₹${amount} recorded`;
+    } else if (amount <= currentDue) {
+      newBalance = currentDue - amount;
+      ledgerNote = `Water bill payment of ₹${amount} recorded`;
+      if (newBalance === 0) {
+        status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
+      }
+    } else {
+      newBalance = 0;
+      const excess = amount - currentDue;
+      newAdvance = currentAdvance + excess;
+      status = 'Advance Paid';
+      isAdvanceCreditAdded = true;
+      advanceAdjustment = excess;
+      paymentType = 'bill_and_advance';
+      ledgerNote = `Bill fully settled (₹${currentDue}) & ₹${excess} added as Advance Credit`;
+    }
+
+    const updatedCustomer: Customer = {
+      ...customer,
+      balance: newBalance,
+      advanceBalance: newAdvance,
+      status: status,
+      invoiceSent: true,
+      paymentNotified: true,
+      ownerId: customer.ownerId || uid,
+    };
+
+    const finalTxnId = transactionId.trim().startsWith("TXN-")
+      ? transactionId.trim()
+      : `TXN-${transactionId.trim()}`;
+    const txnRef = doc(db, 'transactions', finalTxnId);
+
+    const newTxn: Transaction = {
+      id: finalTxnId,
+      customerId: customer.id,
+      customerName: customer.name,
+      amount: amount,
+      transactionId: finalTxnId,
+      date: new Date().toISOString(),
+      ownerId: uid,
+      paymentMode: paymentMode,
+      isAdvanceCredit: isAdvanceCreditAdded || isDirectAdvanceDeposit,
+      advanceAdjustment: advanceAdjustment,
+      paymentType: paymentType,
+      previousBalance: currentDue,
+      newBalance: newBalance,
+      previousAdvance: currentAdvance,
+      newAdvance: newAdvance,
+      notes: ledgerNote,
+      idempotencyKey: effectiveKey,
+    };
+
+    // 1. Commit customer update
+    txn.set(custRef, updatedCustomer, { merge: true });
+
+    // 2. Commit transaction record
+    txn.set(txnRef, newTxn);
+
+    // 3. Commit idempotency marker
+    txn.set(idempRef, {
+      id: `pay_${effectiveKey}`,
+      ownerId: uid,
+      resourceType: 'counter_payment',
+      resourceId: finalTxnId,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      alreadyProcessed: false,
+      transactionId: finalTxnId,
+      customer: updatedCustomer,
+      effectiveAmount: amount,
+      isAdvanceCredit: isAdvanceCreditAdded,
+      newBalance,
+      newAdvance,
+    };
+  });
+};
+
 export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Rejected', explicitOwnerId?: string) => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) return;
@@ -1565,9 +1914,8 @@ export const resolveComplaint = async (id: string, notify: boolean = false, expl
       if (complaintSnap.exists()) {
         const data = complaintSnap.data() as Complaint;
         // Call server to send notification
-        await fetch('/api/complaints/notify-resolution', {
+        await authFetch('/api/complaints/notify-resolution', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             complaintId: id,
             ownerId: uid,

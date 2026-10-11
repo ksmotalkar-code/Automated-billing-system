@@ -67,7 +67,7 @@ class WhatsAppService {
    * Sends an automated message (and optional attachment)
    * This is the core automation function.
    */
-  public async sendMessage(params: WhatsAppMessage): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  public async sendMessage(params: WhatsAppMessage): Promise<{ success: boolean; messageId?: string; error?: string; fellBackToManual?: boolean }> {
     // We now use our backend proxy to send messages safely (avoiding CORS and keeping keys server-side)
     try {
       const { auth } = await import('../firebase');
@@ -86,11 +86,9 @@ class WhatsAppService {
          });
       }
 
-      const response = await fetch('/api/wa/send', {
+      const { authFetch } = await import('../lib/api');
+      const response = await authFetch('/api/wa/send', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           ownerId,
           to: params.to,
@@ -108,16 +106,25 @@ class WhatsAppService {
         }),
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch (jsonErr) {
+        data = { error: `Server HTTP ${response.status}: ${response.statusText}` };
+      }
 
       if (!response.ok) {
-        return { success: false, error: data.error || 'Failed to send message' };
+        return { success: false, error: data.error || data.message || `Server error (${response.status})` };
       }
 
       return { success: true, messageId: data.messageId };
     } catch (error: any) {
-      console.error('WhatsApp Service Error:', error);
-      return { success: false, error: error.message };
+      console.warn('WhatsApp Service Warning (Network or API issue):', error);
+      const errDetail = error?.message || String(error);
+      return { 
+        success: false, 
+        error: errDetail.includes('fetch') ? 'Network connection issue while contacting WhatsApp API server.' : errDetail 
+      };
     }
   }
 

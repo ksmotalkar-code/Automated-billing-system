@@ -1,6 +1,7 @@
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
 import { storage } from '../firebase';
 import { v4 as uuidv4 } from 'uuid';
+import { authFetch } from './api';
 
 /**
  * Compresses an image file in the browser to reduce upload payload and storage footprint.
@@ -64,9 +65,8 @@ export const uploadImageToStorage = async (
 
   // Primary: Use server-side Google Cloud Storage upload
   try {
-    const res = await fetch('/api/upload-image', {
+    const res = await authFetch('/api/upload-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ownerId: ownerId || 'general',
         base64Image,
@@ -105,9 +105,8 @@ export const deleteImageFromStorage = async (imageUrl: string | null | undefined
   if (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://')) return;
 
   try {
-    await fetch('/api/delete-image', {
+    await authFetch('/api/delete-image', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ imageUrl })
     });
   } catch (err) {

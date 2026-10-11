@@ -372,6 +372,23 @@ export const sendWhatsAppNotification = async (
       return { success: true };
     } else {
       console.error(`Automated WhatsApp API failed: ${result.error}.`);
+      // If single message dispatch fails and manual fallback is permitted, attempt manual wa.me link
+      if (!isBulkMode && (result.fellBackToManual || settings.preferredNotificationMethod === 'hybrid')) {
+        const mobile = customer.mobileNumber.replace(/\D/g, '');
+        let formattedTo = mobile;
+        if (mobile.length === 10) {
+          formattedTo = `91${mobile}`;
+        } else if (mobile.length === 12 && mobile.startsWith('91')) {
+          formattedTo = mobile;
+        } else {
+          formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
+        }
+        const url = `https://wa.me/${formattedTo}?text=${encodeURIComponent(finalMessage)}`;
+        if (typeof window !== 'undefined' && window.open) {
+          window.open(url, '_blank');
+          return { success: true, fellBackToManual: true };
+        }
+      }
       return { success: false, error: result.error };
     }
   } else if (settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati') {
@@ -397,7 +414,7 @@ export const sendWhatsAppNotification = async (
   return { success: false, error: usePortalLink ? "Bulk manual notifications disabled. Please enable Meta API for bulk messaging." : "API not configured and manual fallback disabled for bulk mode." };
 };
 
-export const runAutomationCycle = async (customers: Customer[], settings: AppSettings) => {
+export const runAutomationCycle = async (_customers: Customer[], settings: AppSettings) => {
   if (!settings.automation) return;
   if ((window as any)._automationRunning) return;
   
@@ -410,331 +427,16 @@ export const runAutomationCycle = async (customers: Customer[], settings: AppSet
   (window as any)._automationRunning = true;
 
   try {
-    const { automation } = settings;
-    const now = new Date();
-    const effectiveOwnerId = settings.ownerId || auth.currentUser?.uid;
-    
-    const localLastBillingSafe = localStorage.getItem(`automation_billing_${settings.ownerId || 'sys'}`);
-    const localLastPenaltySafe = localStorage.getItem(`automation_penalty_${settings.ownerId || 'sys'}`);
-    const localLastNotifSafe = localStorage.getItem(`automation_notif_${settings.ownerId || 'sys'}`);
-
-    const lastBilling = (localLastBillingSafe || settings.lastBillingDate) ? new Date((localLastBillingSafe || settings.lastBillingDate) as string) : null;
-    const lastPenalty = (localLastPenaltySafe || settings.lastPenaltyDate) ? new Date((localLastPenaltySafe || settings.lastPenaltyDate) as string) : null;
-    const lastNotification = (localLastNotifSafe || settings.lastNotificationDate) ? new Date((localLastNotifSafe || settings.lastNotificationDate) as string) : null;
-
-    let updatedSettings = { ...settings };
-    let needsSettingsUpdate = false;
-
-    // 1. Automatic Bill Generation
-    const defaultDay = parseInt(settings.defaultBillingDate || '1');
-    const isBillingDay = now.getDate() === defaultDay;
-    const monthsSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24 * 30.44) : 999;
-    
-    if (automation.scheduledBilling && isBillingDay && monthsSinceLastBill >= settings.billingCycleMonths) {
-      console.log("Automated Billing Cycle Triggered on Day:", defaultDay);
-      const activeCustomers = customers.filter(c => c.status === 'Active' || c.status === 'Advance Paid');
-      
-      // Prevent loop immediately by saving locally
-      localStorage.setItem(`automation_billing_${settings.ownerId || 'sys'}`, now.toISOString());
-      updatedSettings.lastBillingDate = now.toISOString();
-      needsSettingsUpdate = true;
-
-      // Process in batches
-      let processedCount = 0;
-      let totalBilled = 0;
-      for (let i = 0; i < activeCustomers.length; i += 200) {
-        const batch = writeBatch(db);
-        const chunk = activeCustomers.slice(i, i + 200);
-        
-        for (const customer of chunk) {
-          const advance = Number(customer.advanceBalance) || 0;
-          const billingAmt = Number(settings.billingAmount) || 200;
-          let newBalance = Number(customer.balance) || 0;
-          let newAdvance = advance;
-          let newStatus = customer.status;
-          let isCoveredByAdvance = false;
-
-          if (advance >= billingAmt) {
-            newAdvance = advance - billingAmt;
-            newBalance = 0;
-            newStatus = newAdvance > 0 ? 'Advance Paid' : 'Active';
-            isCoveredByAdvance = true;
-          } else if (advance > 0) {
-            newBalance = (Number(customer.balance) || 0) + (billingAmt - advance);
-            newAdvance = 0;
-            newStatus = 'Active';
-          } else {
-            newBalance = (Number(customer.balance) || 0) + billingAmt;
-            newAdvance = 0;
-          }
-
-          const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
-          batch.update(doc(db, 'customers', targetDocId), {
-            balance: newBalance,
-            advanceBalance: newAdvance,
-            status: newStatus,
-            invoiceSent: isCoveredByAdvance,
-            paymentNotified: isCoveredByAdvance
-          });
-
-          // Log transaction for advance credit deductions
-          if (advance > 0) {
-            const usedAdvance = advance >= billingAmt ? billingAmt : advance;
-            const autoTxnId = `AUTO-ADV-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-            batch.set(doc(db, 'transactions', autoTxnId), {
-              id: autoTxnId,
-              customerId: customer.id,
-              customerName: customer.name,
-              amount: usedAdvance,
-              transactionId: `CYCLE-ADJ-${now.toISOString().split('T')[0]}`,
-              date: now.toISOString(),
-              ownerId: effectiveOwnerId || auth.currentUser?.uid || '',
-              paymentMode: 'advance_credit',
-              paymentType: 'advance_adjustment',
-              isAdvanceCredit: false,
-              advanceAdjustment: -usedAdvance,
-              previousBalance: Number(customer.balance) || 0,
-              newBalance: newBalance,
-              previousAdvance: advance,
-              newAdvance: newAdvance,
-              notes: `Automated advance credit adjustment of INR ${usedAdvance.toFixed(2)} applied to billing cycle`
-            });
-          }
-
-          processedCount++;
-          totalBilled += billingAmt;
-
-          // If smart notifications are enabled, automatically text them their new bill
-          if (automation.smartNotifications && automation.bulkProcessing) {
-            try {
-              let message = "";
-              if (isCoveredByAdvance) {
-                message = `Dear ${customer.name}, your water bill of INR ${billingAmt.toFixed(2)} for the new cycle has been automatically paid from your advance credit. Remaining advance balance: INR ${newAdvance.toFixed(2)}. No payment is required. Thank you!`;
-              } else if (advance > 0) {
-                message = `Dear ${customer.name}, your water bill of INR ${billingAmt.toFixed(2)} has been partially covered by your INR ${advance.toFixed(2)} advance credit. Remaining balance due is INR ${newBalance.toFixed(2)}. Please pay by the due date.`;
-              } else {
-                message = `Dear ${customer.name}, your water bill for the new cycle has been generated. Your amount due is ${newBalance.toFixed(2)}. Please pay by the due date.`;
-              }
-              const pdfBlob = generateInvoicePDF({ ...customer, balance: newBalance, advanceBalance: newAdvance, status: newStatus }, updatedSettings);
-              sendWhatsAppNotification(customer, message, updatedSettings, pdfBlob, `Bill_${customer.id}.pdf`, true, true, isCoveredByAdvance ? 'receipt' : 'billing')
-                .then(res => {
-                  if (!res.success && res.error) {
-                    logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'billing' });
-                  }
-                })
-                .catch(e => {
-                  console.error("Auto billing notice error", e);
-                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'billing' });
-                });
-            } catch (err: any) {
-              logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'billing' });
-            }
-          }
-        }
-        try {
-          await batch.commit();
-        } catch(e: any) { 
-          console.error("Quota Exceeded on Billing", e); 
-          if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e; 
-          break; 
-        }
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
-      }
-
-      if (processedCount > 0 && effectiveOwnerId) {
-        try {
-          await saveBillingAuditLog({
-            ownerId: effectiveOwnerId,
-            type: 'bill_generation',
-            description: 'Automated Billing Cycle',
-            affectedCustomersCount: processedCount,
-            totalAmount: totalBilled,
-            timestamp: new Date().toISOString(),
-            executedBy: 'system'
-          });
-        } catch(e) { console.error(e) }
-      }
-    }
-
-  // 2. Automatic Penalty Application
-  const penaltyAmt = Number(settings.penaltyAmount) || 0;
-  const isLateFeeEnabled = Boolean(automation.lateFee) && settings.lateFee !== false && penaltyAmt > 0;
-  const daysSinceLastBill = lastBilling ? (now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24) : 0;
-  if (isLateFeeEnabled && daysSinceLastBill >= (settings.penaltyDays || 10) && (!lastPenalty || lastPenalty < (lastBilling || now))) {
-    console.log("Automated Penalty Application Triggered with penalty:", penaltyAmt);
-    const activeCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance === 0));
-    
-    // Pre-save to avoid quota loop
-    localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
-    updatedSettings.lastPenaltyDate = now.toISOString();
-    needsSettingsUpdate = true;
-    
-    let processedCount = 0;
-    let totalPenalties = 0;
-    for (let i = 0; i < activeCustomers.length; i += 200) {
-      const batch = writeBatch(db);
-      const chunk = activeCustomers.slice(i, i + 200);
-
-      for (const customer of chunk) {
-        const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
-        batch.update(doc(db, 'customers', targetDocId), {
-          balance: customer.balance + penaltyAmt
-        });
-        processedCount++;
-        totalPenalties += penaltyAmt;
-        
-        if (automation.bulkProcessing) {
-          try {
-            const overdueMessage = `NOTICE: A late fee of INR ${penaltyAmt.toFixed(2)} has been applied to your account. Your new balance is INR ${(customer.balance + penaltyAmt).toFixed(2)}. Please pay at earliest.`;
-            sendWhatsAppNotification({...customer, balance: customer.balance + penaltyAmt}, overdueMessage, settings, undefined, undefined, true, true, 'overdue')
-              .then(res => {
-                if (!res.success && res.error) {
-                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'overdue' });
-                }
-              })
-              .catch(e => {
-                console.error("Overdue notice error", e);
-                logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'overdue' });
-              });
-          } catch (err: any) {
-             logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'overdue' });
-          }
-        }
-      }
-      try {
-        await batch.commit();
-      } catch(e: any) { 
-        console.error("Quota Exceeded on Penalty", e); 
-        if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e;
-        break; 
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
-    }
-    
-    if (processedCount > 0 && effectiveOwnerId) {
-      try {
-        await saveBillingAuditLog({
-          ownerId: effectiveOwnerId,
-          type: 'penalty_application',
-          description: 'Automated Late Fee Penalty',
-          affectedCustomersCount: processedCount,
-          totalAmount: totalPenalties,
-          timestamp: new Date().toISOString(),
-          executedBy: 'system'
-        });
-      } catch(e) { console.error(e) }
-    }
-  }
-
-  // 3. Escalation Check
-  const escalationDays = settings.escalationDays || 60;
-  if (automation.billingLifecycle && automation.ruleBased && daysSinceLastBill >= escalationDays && settings.autoSuspend) {
-    console.log("Automated Escalation / Suspension Triggered");
-    const suspendedCustomers = customers.filter(c => c.status === 'Active' && c.balance >= settings.billingAmount && (!c.advanceBalance || c.advanceBalance <= 0));
-    
-    localStorage.setItem(`automation_penalty_${settings.ownerId || 'sys'}`, now.toISOString());
-    let suspendProcessedCount = 0;
-    for (let i = 0; i < suspendedCustomers.length; i += 200) {
-      const batch = writeBatch(db);
-      const chunk = suspendedCustomers.slice(i, i + 200);
-      
-      for (const customer of chunk) {
-         const targetDocId = customer.docId || (effectiveOwnerId ? `${effectiveOwnerId}_${customer.id}` : customer.id);
-         batch.update(doc(db, 'customers', targetDocId), { status: 'Suspended' });
-         suspendProcessedCount++;
-         
-         if (automation.bulkProcessing) {
-           try {
-             const escalationMessage = `FINAL NOTICE: Your account has been SUSPENDED due to an outstanding balance of INR ${customer.balance.toFixed(2)} unpaid for over ${escalationDays} days. Please pay immediately.`;
-             const escalationPdf = generateEscalationPDF(customer, settings);
-             sendWhatsAppNotification(customer, escalationMessage, settings, escalationPdf, `Final_Notice_${customer.id}.pdf`, true, true, 'suspension')
-               .then(res => {
-                 if (!res.success && res.error) {
-                   logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'suspension' });
-                 }
-               })
-               .catch(e => {
-                 console.error("Escalation notice error", e);
-                 logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'suspension' });
-               });
-           } catch (err: any) {
-             logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'suspension' });
-           }
-         }
-      }
-      try {
-        await batch.commit();
-      } catch(e: any) { 
-        console.error("Quota Exceeded on Escalation", e); 
-        if (e.message?.includes('Quota') || e.code === 'resource-exhausted') throw e;
-        break; 
-      }
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Rate limit protection
-    }
-    
-    if (suspendProcessedCount > 0 && effectiveOwnerId) {
-      try {
-        await saveBillingAuditLog({
-          ownerId: effectiveOwnerId,
-          type: 'auto_suspend',
-          description: 'Automated Account Suspension',
-          affectedCustomersCount: suspendProcessedCount,
-          totalAmount: 0,
-          timestamp: new Date().toISOString(),
-          executedBy: 'system'
-        });
-      } catch(e) { console.error(e) }
-    }
-  }
-
-  // 4. Daily Notification Check
-  if (automation.smartNotifications) {
-      const isNewDay = !lastNotification || new Date(lastNotification).toDateString() !== now.toDateString();
-      if (isNewDay) {
-        console.log("Daily Notification Flag Set");
-
-        // 3-Day Reminder Logic
-        const daysSinceLastBillInt = lastBilling ? Math.floor((now.getTime() - lastBilling.getTime()) / (1000 * 60 * 60 * 24)) : 0;
-        if (daysSinceLastBillInt > 0 && daysSinceLastBillInt % 3 === 0 && automation.bulkProcessing) {
-          console.log("3-Day Reminder Triggered for unpaid customers");
-          const unpaidCustomers = customers.filter(c => c.status === 'Active' && c.balance > 0);
-          for (let i = 0; i < unpaidCustomers.length; i++) {
-            const customer = unpaidCustomers[i];
-            try {
-              const pdfBlob = generateInvoicePDF(customer, settings);
-              const reminderMessage = `Dear ${customer.name}, this is a gentle reminder that your updated balance of INR ${customer.balance.toFixed(2)} is unpaid (including any applicable late fees). Please find your updated bill attached and pay promptly to avoid service impacts.`;
-              try {
-                const res = await sendWhatsAppNotification(customer, reminderMessage, settings, pdfBlob, `Updated_Bill_${customer.id}.pdf`, true, true, 'billing');
-                if (!res.success && res.error) {
-                  logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: res.error, type: 'reminder' });
-                }
-              } catch (e) {
-                console.error("Auto reminder notice error", e);
-                logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: String(e), type: 'reminder' });
-              }
-            } catch (err: any) {
-              logAutomationError({ customerId: customer.id, customerName: customer.name, errorMessage: err.message || String(err), type: 'reminder' });
-            }
-            if ((i + 1) % 5 === 0) {
-              await new Promise(resolve => setTimeout(resolve, 1500)); // Rate limit protection
-            }
-          }
-        }
-
-        localStorage.setItem(`automation_notif_${settings.ownerId || 'sys'}`, now.toISOString());
-        updatedSettings.lastNotificationDate = now.toISOString();
-        needsSettingsUpdate = true;
-      }
-  }
-
-  if (needsSettingsUpdate) {
-    try {
-      await saveSettings(updatedSettings);
-    } catch(e) { console.error("Failed to update final automation timestamps", e); }
-  }
-
+    const { authFetchJson } = await import('./api');
+    console.log("[Client Automation] Delegating daily automation check to authoritative server engine...");
+    await authFetchJson('/api/cron/daily', {
+      method: 'POST',
+      body: JSON.stringify({ ownerId: settings.ownerId || auth.currentUser?.uid }),
+    });
+  } catch (err) {
+    console.warn("[Client Automation] Server automation trigger warning:", err);
   } finally {
-     setTimeout(() => { (window as any)._automationRunning = false; }, 60000); // 1 minute lock to prevent flapping
+    setTimeout(() => { (window as any)._automationRunning = false; }, 300000); // 5 min client cooldown
   }
 };
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { CreditCard, Search, Plus, MoreVertical, X, QrCode, CheckCircle2, Image as ImageIcon, Check, XCircle, Loader2, Banknote, RefreshCw, Smartphone, Clock, History, Sparkles, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus } from "../lib/db";
+import { Customer, AppSettings, updateCustomer, addTransaction, updateReceiptStatus, approveReceiptWithAtomicTransaction, recordPaymentWithAtomicTransaction } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { PaymentReceipt } from "../lib/portal";
@@ -141,81 +141,34 @@ export function PaymentsView() {
 
     setIsConfirming(true);
     try {
-      // Calculate updated balance and advance balance
-      const currentDue = Number(selectedCustomer.balance) || 0;
-      const currentAdvance = Number(selectedCustomer.advanceBalance) || 0;
-      let newBalance = 0;
-      let newAdvance = currentAdvance;
-      let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = selectedCustomer.status || 'Active';
-      let isAdvanceCreditAdded = false;
-      let isDirectAdvanceDeposit = paymentRecordingType === 'advance';
-      let advanceAdjustment = 0;
-      let paymentType: 'bill_payment' | 'advance_credit' | 'bill_and_advance' = 'bill_payment';
-      let ledgerNote = "";
-
-      if (isDirectAdvanceDeposit) {
-        // Direct pre-payment into Advance Balance
-        newBalance = currentDue;
-        newAdvance = currentAdvance + amount;
-        status = 'Advance Paid';
-        isAdvanceCreditAdded = true;
-        advanceAdjustment = amount;
-        paymentType = 'advance_credit';
-        ledgerNote = `Direct Advance Credit pre-payment of ${formatCurrency(amount)} recorded`;
-      } else if (amount <= currentDue) {
-        // Standard payment applying to current due
-        newBalance = currentDue - amount;
-        advanceAdjustment = 0;
-        paymentType = 'bill_payment';
-        ledgerNote = `Water bill payment of ${formatCurrency(amount)} recorded`;
-        if (newBalance === 0) {
-          status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
-        }
-      } else {
-        // Amount exceeds current due - settle bill & credit remainder as advance
-        newBalance = 0;
-        const excess = amount - currentDue;
-        newAdvance = currentAdvance + excess;
-        status = 'Advance Paid';
-        isAdvanceCreditAdded = true;
-        advanceAdjustment = excess;
-        paymentType = 'bill_and_advance';
-        ledgerNote = `Bill fully settled (${formatCurrency(currentDue)}) & ${formatCurrency(excess)} added as Advance Credit`;
-      }
-
-      const updatedCustomer: Customer = {
-        ...selectedCustomer,
-        balance: newBalance,
-        advanceBalance: newAdvance,
-        status: status,
-        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
-      };
-      
-      await updateCustomer(updatedCustomer, false, undefined, currentOwnerId);
-
-      // Save rich transaction record with advance adjustment tracking
-      await addTransaction({
-        customerId: selectedCustomer.id,
-        customerName: selectedCustomer.name,
-        amount: amount,
-        transactionId: transactionId.trim(),
-        paymentMode: paymentMode,
-        isAdvanceCredit: isAdvanceCreditAdded || isDirectAdvanceDeposit,
-        advanceAdjustment: advanceAdjustment,
-        paymentType: paymentType,
-        previousBalance: currentDue,
-        newBalance: newBalance,
-        previousAdvance: currentAdvance,
-        newAdvance: newAdvance,
-        notes: ledgerNote
-      }, currentOwnerId);
+      // Execute ACID atomic payment transaction with full idempotency guarantee
+      const result = await recordPaymentWithAtomicTransaction(
+        selectedCustomer.id,
+        amount,
+        transactionId.trim(),
+        paymentMode,
+        paymentRecordingType,
+        currentOwnerId
+      );
 
       setIsPaymentModalOpen(false);
+
+      if (result.alreadyProcessed) {
+        showAlert("Payment Already Recorded", `This transaction (${result.transactionId}) has already been recorded and settled. No duplicate charge was made.`);
+        return;
+      }
+
+      const updatedCustomer = result.customer;
+      const newBalance = result.newBalance;
+      const newAdvance = result.newAdvance;
+      const isDirectAdvanceDeposit = paymentRecordingType === 'advance';
+      const isAdvanceCreditAdded = result.isAdvanceCredit;
+
       let paymentStatusText = "";
       if (isDirectAdvanceDeposit) {
         paymentStatusText = `credited directly to Advance Balance (New Advance Balance: ${formatCurrency(newAdvance)})`;
       } else if (isAdvanceCreditAdded) {
-        paymentStatusText = `fully settled, and an advance credit of ${formatCurrency(newAdvance - currentAdvance)} has been credited (Total Advance Balance: ${formatCurrency(newAdvance)})`;
+        paymentStatusText = `fully settled, and an advance credit of ${formatCurrency(newAdvance - (Number(selectedCustomer.advanceBalance) || 0))} has been credited (Total Advance Balance: ${formatCurrency(newAdvance)})`;
       } else if (newBalance === 0) {
         paymentStatusText = "fully settled with zero remaining balance";
       } else {
@@ -236,7 +189,7 @@ export function PaymentsView() {
           pdfName = `Receipt_${updatedCustomer.id}.pdf`;
           templateCat = 'receipt';
         } else if (isAdvanceCreditAdded) {
-          message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received. Your current bill is fully SETTLED, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Thank you! Attached is your official receipt.`;
+          message = `Dear ${updatedCustomer.name}, your water bill payment of ${formatCurrency(amount)} has been received. Your current bill is fully SETTLED, and ${formatCurrency(newAdvance - (Number(selectedCustomer.advanceBalance) || 0))} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Thank you! Attached is your official receipt.`;
           pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
           pdfName = `Receipt_${updatedCustomer.id}.pdf`;
           templateCat = 'receipt';
@@ -252,14 +205,11 @@ export function PaymentsView() {
           templateCat = 'billing';
         }
 
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
         sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
-      } else if (newBalance === 0) {
-        await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: false }, false, undefined, currentOwnerId);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Payment confirmation error:", error);
-      showAlert("Error", "Failed to confirm payment. Please check your connection and try again.");
+      showAlert("Error", error?.message || "Failed to confirm payment. Please check your connection and try again.");
     } finally {
       setIsConfirming(false);
     }
@@ -358,92 +308,55 @@ export function PaymentsView() {
 
     setIsActioningReceipt(`${receipt.id}-approve`);
     try {
-      const currentDue = Number(customer.balance) || 0;
-      const currentAdvance = Number(customer.advanceBalance) || 0;
-      let newBalance = 0;
-      let newAdvance = currentAdvance;
-      let status: 'Active' | 'Suspended' | 'Faulty' | 'Advance Paid' = customer.status || 'Active';
-      let isAdvanceCredit = false;
+      const result = await approveReceiptWithAtomicTransaction(
+        receipt.id,
+        effectiveAmount,
+        currentOwnerId || undefined
+      );
 
-      if (effectiveAmount <= currentDue) {
-        newBalance = currentDue - effectiveAmount;
-        if (newBalance === 0) {
-          status = newAdvance > 0 ? 'Advance Paid' : (status === 'Advance Paid' ? 'Active' : status);
-        }
-      } else {
-        newBalance = 0;
-        const excess = effectiveAmount - currentDue;
-        newAdvance = currentAdvance + excess;
-        status = 'Advance Paid';
-        isAdvanceCredit = true;
+      if (result.alreadyApproved) {
+        setIsReceiptModalOpen(false);
+        setSelectedReceipt(null);
+        showAlert("Already Approved", "This receipt was already approved earlier. No duplicate balance adjustments were made.");
+        return;
       }
 
-      const updatedCustomer: Customer = {
-        ...customer,
-        balance: newBalance,
-        advanceBalance: newAdvance,
-        status: status,
-        ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
-      };
-      
-      await updateCustomer(updatedCustomer, false, undefined, currentOwnerId);
-
-      await addTransaction({
-        customerId: customer.id,
-        customerName: customer.name,
-        amount: effectiveAmount,
-        transactionId: `REC-${receipt.id.substring(0, 8).toUpperCase()}`,
-        paymentMode: 'upi',
-        isAdvanceCredit: isAdvanceCredit,
-        advanceAdjustment: isAdvanceCredit ? (newAdvance - currentAdvance) : 0,
-        paymentType: isAdvanceCredit ? 'bill_and_advance' : 'bill_payment',
-        previousBalance: currentDue,
-        newBalance: newBalance,
-        previousAdvance: currentAdvance,
-        newAdvance: newAdvance,
-        notes: isAdvanceCredit
-          ? `Receipt verified: Bill settled & ${formatCurrency(newAdvance - currentAdvance)} credited as Advance Balance`
-          : `Receipt verified payment of ${formatCurrency(effectiveAmount)}`
-      }, currentOwnerId);
-
-      await updateReceiptStatus(receipt.id, 'Approved', currentOwnerId);
-      
       setIsReceiptModalOpen(false);
       setSelectedReceipt(null);
-      let alertMsg = `Receipt approved and payment of ${formatCurrency(effectiveAmount)} recorded.`;
-      if (isAdvanceCredit) {
-        alertMsg += ` Advance credit of ${formatCurrency(newAdvance - currentAdvance)} added to account! (Total Advance: ${formatCurrency(newAdvance)})`;
+      let alertMsg = `Receipt approved and payment of ${formatCurrency(result.effectiveAmount)} recorded.`;
+      if (result.isAdvanceCredit) {
+        alertMsg += ` Advance credit of ${formatCurrency(result.newAdvance)} added to account!`;
       }
       showAlert("Approved", alertMsg);
 
-      let message = "";
-      let pdfBlob: Blob;
-      let pdfName = "";
-      let templateCat: 'receipt' | 'billing' = 'receipt';
+      if (result.customer) {
+        const updatedCustomer = result.customer;
+        let message = "";
+        let pdfBlob: Blob;
+        let pdfName = "";
+        let templateCat: 'receipt' | 'billing' = 'receipt';
 
-      if (updatedCustomer.balance === 0 || isAdvanceCredit) {
-        // Fully Paid
-        if (isAdvanceCredit) {
-          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(newAdvance - currentAdvance)} has been credited to your Advance Balance (Total Advance: ${formatCurrency(newAdvance)}). Attached is your official receipt.`;
+        if (updatedCustomer.balance === 0 || result.isAdvanceCredit) {
+          if (result.isAdvanceCredit) {
+            message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(result.newAdvance)} has been credited to your Advance Balance. Attached is your official receipt.`;
+          } else {
+            message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
+          }
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, result.effectiveAmount);
+          pdfName = `Receipt_${updatedCustomer.id}.pdf`;
+          templateCat = 'receipt';
         } else {
-          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
+          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(result.effectiveAmount)}. Your remaining outstanding balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
+          pdfBlob = generateInvoicePDF(updatedCustomer, settings, false, 0);
+          pdfName = `Invoice_${updatedCustomer.id}.pdf`;
+          templateCat = 'billing';
         }
-        pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, effectiveAmount);
-        pdfName = `Receipt_${updatedCustomer.id}.pdf`;
-        templateCat = 'receipt';
-      } else {
-        // Pending Outstanding Balance
-        message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(effectiveAmount)}. Your remaining outstanding balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated formal invoice.`;
-        pdfBlob = generateInvoicePDF(updatedCustomer, settings, false, 0);
-        pdfName = `Invoice_${updatedCustomer.id}.pdf`;
-        templateCat = 'billing';
-      }
 
-      await updateCustomer({ ...updatedCustomer, invoiceSent: true, paymentNotified: true }, false, undefined, currentOwnerId);
-      sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
-    } catch (error) {
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
+      }
+    } catch (error: any) {
       console.error("Error approving receipt:", error);
-      showAlert("Error", "Failed to approve receipt.");
+      showAlert("Error", error?.message || "Failed to approve receipt.");
     } finally {
       setIsActioningReceipt(null);
     }

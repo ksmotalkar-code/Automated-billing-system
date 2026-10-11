@@ -3,6 +3,7 @@ dotenv.config();
 
 import { PDFDocument, rgb, StandardFonts, degrees } from "pdf-lib";
 import express from "express";
+import crypto from "crypto";
 import path from "path";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
@@ -16,7 +17,7 @@ import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
 import { createWhatsAppRouter } from "./src/server/routes/whatsapp.ts";
-import { tenantMiddleware, errorHandler } from "./src/server/middleware/auth.ts";
+import { tenantMiddleware, errorHandler, requireAuth, cronAuth, AuthenticatedRequest, verifyHmacSignature, checkRateLimit, checkRateLimitPersistent, setRateLimitDbGetter, DistributedLock } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from "firebase/app";
 import {
@@ -1788,8 +1789,16 @@ async function startServer() {
   );
   app.use(compression());
   app.use(cors());
-  app.use(express.json({ limit: "50mb" }));
+  app.use(
+    express.json({
+      limit: "50mb",
+      verify: (req: any, _res, buf) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(tenantMiddleware);
 
   // API Routes (Before Vite Middleware)
   app.get("/api/health", (req, res) => {
@@ -1800,22 +1809,107 @@ async function startServer() {
     res.json({ status: "ok", message: "SmartBilling Server is running" });
   });
 
-  // Background Job Queue Status & Trigger Probes
+  // Configure and initialize crash-resilient Background Job Queue
+  backgroundQueue.setDbGetter(() => admin.apps.length ? getAdminDb() : null);
+  backgroundQueue.init().catch((e) => console.warn("[Queue] Init warning:", e));
+
+  // Configure distributed persistent rate limiting backed by Firestore
+  setRateLimitDbGetter(() => admin.apps.length ? getAdminDb() : null);
+
+  // 1. PDF Generation Worker
   backgroundQueue.registerWorker("PDF_GENERATION", async (job, onProgress) => {
-    onProgress(15);
+    await onProgress(20);
     const data = job.data as any;
     const pdfBase64 = await generateInvoicePdf(
-      data.customer,
-      data.settings
+      data.customer || data.name,
+      data.settings || data.balance,
+      data.amountPaid || data.templateImage,
+      data.templateImage,
+      data.lang,
+      data.customerId,
+      data.billingAmount,
+      data.advanceBalance,
+      data.appLogoImage
     );
-    onProgress(100);
+    await onProgress(100);
     return { pdfBase64 };
   });
 
-  app.get("/api/queue/status/:jobId", (req, res) => {
-    const job = backgroundQueue.getJob(req.params.jobId);
-    if (!job) return res.status(404).json({ error: "Job not found" });
-    return res.json(job);
+  // 2. Bulk Billing Automation Worker
+  backgroundQueue.registerWorker("BULK_BILLING", async (job, onProgress) => {
+    await onProgress(10);
+    const ownerId = job.ownerId || (job.data as any)?.ownerId;
+    await runDailyAutomation(ownerId);
+    await onProgress(100);
+    return { success: true };
+  });
+
+  // 3. Test Task Worker
+  backgroundQueue.registerWorker("TEST_TASK", async (job, onProgress) => {
+    for (let i = 1; i <= 5; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      await onProgress(i * 20);
+    }
+    return { executedAt: new Date().toISOString(), input: job.data };
+  });
+
+  // Queue Status Polling Endpoint (Persistent lookup)
+  app.get("/api/queue/status/:jobId", async (req, res) => {
+    try {
+      const job = await backgroundQueue.getJob(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      return res.json(job);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List Tenant Background Jobs
+  app.get("/api/queue/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || "system";
+      const status = req.query.status as string | undefined;
+      const limit = parseInt(req.query.limit as string, 10) || 50;
+      const jobs = await backgroundQueue.listJobs(ownerId, status, limit);
+      return res.json({ success: true, count: jobs.length, jobs });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Enqueue New Background Job
+  app.post("/api/queue/enqueue", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { type, data, maxRetries } = req.body;
+      if (!type) return res.status(400).json({ error: "Missing job type" });
+      const ownerId = req.ownerId || "system";
+      const job = await backgroundQueue.addJob(type, data, { ownerId, maxRetries });
+      return res.json({ success: true, job });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Cancel Pending Background Job
+  app.post("/api/queue/cancel/:jobId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || "system";
+      const success = await backgroundQueue.cancelJob(req.params.jobId, ownerId);
+      return res.json({ success });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Retry Failed Background Job
+  app.post("/api/queue/retry/:jobId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || "system";
+      const success = await backgroundQueue.retryJob(req.params.jobId, ownerId);
+      return res.json({ success });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // Mount Persistent Cloud Storage API
@@ -2142,206 +2236,290 @@ async function startServer() {
     }
   });
 
-  // 1. Payment Webhook Endpoint (e.g. WhatsApp Pay, Cashfree)
+  // 1. Hardened Payment Webhook Endpoint (e.g. WhatsApp Pay, Cashfree, Razorpay, UPI)
   // The bank sends a POST request here when someone scans your dynamic QR and pays
-  app.post("/api/payment-webhook/:ownerId", async (req, res) => {
+  app.post("/api/payment-webhook/:ownerId", async (req: any, res) => {
     try {
       const { ownerId } = req.params;
-      const signature =
-        req.headers["x-whatsapp-signature"] ||
-        req.headers["x-webhook-signature"];
 
-      let webhookSecret = null;
+      // Distributed persistent rate limiting: survives container restarts & scaling
+      const clientIp = req.ip || req.socket.remoteAddress || "webhook-caller";
+      const { allowed } = await checkRateLimitPersistent(`payment_webhook_${ownerId}_${clientIp}`, 120, 60000);
+      if (!allowed) {
+        console.warn(`[Payment Webhook] Rate limit exceeded for owner: ${ownerId} from IP: ${clientIp}`);
+        return res.status(429).json({ error: "Too many webhook requests" });
+      }
+
       const settings = await getSettings(ownerId);
-      if (settings?.paymentGatewaySecret) {
-        webhookSecret = settings.paymentGatewaySecret;
-      }
+      const rawSecret = settings?.paymentGatewaySecret || process.env.PAYMENT_GATEWAY_SECRET || process.env.PAYMENT_GATEWAY_WEBHOOK_SECRET;
+      const configuredSecret = (typeof rawSecret === 'string' && rawSecret.trim().length > 3 && rawSecret !== '.') ? rawSecret.trim() : null;
 
-      // In production, we actively verify the signature here using webhookSecret or process.env variables
-      // if (webhookSecret && !verifySignature(req.body, signature, webhookSecret)) return res.sendStatus(403);
+      // Timing-safe HMAC signature verification
+      const signature =
+        (req.headers["x-hub-signature-256"] as string) ||
+        (req.headers["x-webhook-signature"] as string) ||
+        (req.headers["x-whatsapp-signature"] as string) ||
+        (req.headers["x-signature-sha256"] as string);
 
-      const payload = req.body;
-      console.log(`Received payment Webhook for owner ${ownerId}:`, payload);
-
-      // Expected structure from your payment gateway (example WhatsApp Pay)
-      const customerId =
-        payload.payload?.payment?.entity?.notes?.customerId ||
-        payload.metadata?.customerId;
-      const amountPaid =
-        payload.payload?.payment?.entity?.amount || payload.amount || 0;
-
-      // Fallback: Check if they just sent plain root attributes
-      const fallbackCustomerId = payload.customerId || payload.customer_id;
-      const finalCustomerId = customerId || fallbackCustomerId;
-
-      if (!finalCustomerId) {
-        return res
-          .status(400)
-          .json({
-            status: "error",
-            message: "Missing customer tracking details",
-          });
-      }
-
-      console.log(
-        `Payment confirmed for ${finalCustomerId} amount ₹${amountPaid}`,
-      );
-
-      /* 
-         If `firebase-admin` is connected (requires Service Account):
-         1. getRequiredAdminDb().collection('customers').doc(finalCustomerId).get()
-         2. Deduct `amountPaid` from `balance`
-         3. Save to `transactions` subcollection
-         4. If balance == 0, trigger `generateInvoicePDF` and `sendWhatsAppNotification` natively using Node.js logic!
-      */
-      if (admin.apps.length) {
-        try {
-          const db = getAdminDb();
-          if (!db)
-            throw new Error(
-              "Firebase Admin Database is not available. Please verify your FIREBASE_SERVICE_ACCOUNT setting.",
-            );
-          const custRef = db.collection("customers").doc(finalCustomerId);
-          const custDoc = await custRef.get();
-          if (custDoc.exists) {
-            const customer = custDoc.data();
-            const currentBal = Number(customer?.balance) || 0;
-            const currentAdv = Number(customer?.advanceBalance) || 0;
-            let newBalance = 0;
-            let newAdvance = currentAdv;
-            let newStatus = customer?.status;
-
-            if (amountPaid > currentBal) {
-              const excess = amountPaid - currentBal;
-              newBalance = 0;
-              newAdvance = currentAdv + excess;
-              if (newStatus !== "Suspended") {
-                newStatus = "Advance Paid";
-              }
-            } else {
-              newBalance = Math.max(0, currentBal - amountPaid);
-              if (newBalance === 0 && currentAdv > 0) {
-                if (newStatus !== "Suspended") newStatus = "Advance Paid";
-              } else if (newBalance === 0 && newStatus !== "Suspended") {
-                newStatus = "Active";
-              }
-            }
-
-            await custRef.update({ 
-              balance: newBalance,
-              advanceBalance: newAdvance,
-              status: newStatus
-            });
-
-            // Save transaction
-            await db
-              .collection("customers")
-              .doc(finalCustomerId)
-              .collection("transactions")
-              .add({
-                amount: amountPaid,
-                date: new Date().toISOString(),
-                id: `TXN-${Date.now()}`,
-              });
-
-            // Automate WhatsApp Receipt
-            if (
-              newBalance === 0 &&
-              ownerId &&
-              customer?.status !== "Suspended"
-            ) {
-              const settingsDoc = await db
-                .collection("settings")
-                .doc(ownerId)
-                .get();
-              const settings = settingsDoc.data() as any;
-              if (
-                settings?.automation?.smartNotifications &&
-                ((settings.metaWhatsAppApiKey &&
-                  settings.metaWhatsAppPhoneNumberId) ||
-                  settings.watiAccessToken)
-              ) {
-                  const lang = settings?.preferredLanguage || 'en';
-                  const mobile = customer?.mobileNumber?.replace(/\D/g, "");
-                  if (mobile && mobile.length >= 10) {
-                    let message = getSvrT(lang, 'paymentSuccess', { name: customer?.name, amt: amountPaid });
-                    if (newAdvance > currentAdv) {
-                      message += `\n💰 Pre-paid Advance Credit: Rs. ${newAdvance} (Will auto-apply to future bills)`;
-                    }
-                    try {
-                      const generatedPdf = await generateInvoicePdf(
-                        customer?.name || "Customer",
-                        newBalance,
-                        amountPaid,
-                        settings?.billTemplateImage,
-                        lang,
-                        customer?.id,
-                        settings?.billingAmount,
-                        newAdvance,
-                        settings?.appLogoImage
-                      );
-                      
-                      let finalTemplateParams: any[] = [
-                        customer?.name || "Customer",
-                        amountPaid,
-                        {
-                          isButtonParam: true,
-                          value: finalCustomerId,
-                          index: "0",
-                        },
-                      ];
-                      
-                      const templateName = settings?.metaTemplateReceipt;
-                      if (templateName && settings?.metaCustomTemplates) {
-                        const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
-                        if (matchedConfig && matchedConfig.parameters) {
-                          const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
-                          finalTemplateParams = paramKeys.map((key:string) => {
-                            if (key === 'customer_name') return customer?.name || "Customer";
-                            if (key === 'customer_balance') return customer?.balance || 0;
-                            if (key === 'billing_amount') return settings?.billingAmount || 0;
-                            if (key === 'new_balance') return customer?.balance || 0;
-                            if (key === 'payment_amount') return amountPaid;
-                            if (key === 'overdue_amount') return customer?.balance || 0;
-                            if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                            if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${finalCustomerId}`;
-                            if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${finalCustomerId}`, index: "0" };
-                            return '';
-                          });
-                        }
-                      }
-
-                    await sendWhatsAppMessage(
-                      settings,
-                      mobile,
-                      message,
-                      generatedPdf,
-                      "Payment_Receipt.pdf",
-                      false,
-                      "receipt",
-                      finalTemplateParams,
-                    );
-                  } catch (e) {
-                    console.error("Webhook Auto-Receipt failed", e);
-                  }
-                  await custRef.update({ paymentNotified: true });
-                }
-              }
-            }
-          }
-        } catch (err) {
-          console.error("Firebase webhook automated processing failed:", err);
+      if (configuredSecret) {
+        const rawPayload = req.rawBody || JSON.stringify(req.body);
+        const isSignatureValid = verifyHmacSignature(rawPayload, signature, configuredSecret);
+        if (!isSignatureValid) {
+          console.warn(`[Payment Webhook] Invalid HMAC signature for owner ${ownerId}. Signature: ${signature}`);
+          return res.status(403).json({ error: "Invalid webhook signature" });
         }
       }
 
-      // Respond immediately to the bank to confirm receipt and halt retries
-      res.json({ received: true });
-    } catch (error) {
-      console.error("Webhook processing error:", error);
-      res.status(500).json({ error: "Webhook processing failed" });
+      const payload = req.body || {};
+      console.log(`[Payment Webhook] Validated payload received for owner ${ownerId}:`, {
+        event: payload.event || payload.type,
+        id: payload.id || payload.payment_id,
+      });
+
+      // Extract transaction / payment reference for idempotency
+      const paymentRef =
+        payload.id ||
+        payload.payload?.payment?.entity?.id ||
+        payload.payment_id ||
+        payload.transaction_id ||
+        payload.txId ||
+        payload.orderId ||
+        payload.referenceId;
+
+      // Expected structure from payment gateway (WhatsApp Pay, Razorpay, Cashfree, UPI)
+      const customerId =
+        payload.payload?.payment?.entity?.notes?.customerId ||
+        payload.metadata?.customerId ||
+        payload.notes?.customerId ||
+        payload.customerId ||
+        payload.customer_id;
+
+      const rawAmount =
+        payload.payload?.payment?.entity?.amount ??
+        payload.amount ??
+        payload.payment_amount ??
+        0;
+
+      // Some gateways like Razorpay provide amount in paise (cents)
+      const isPaise = typeof rawAmount === "number" && rawAmount > 50000 && !payload.isRupees;
+      const amountPaid = isPaise ? rawAmount / 100 : Number(rawAmount) || 0;
+
+      if (!customerId) {
+        return res.status(400).json({
+          status: "error",
+          message: "Missing customer tracking details (customerId)",
+        });
+      }
+
+      if (amountPaid <= 0) {
+        return res.status(400).json({
+          status: "error",
+          message: "Invalid payment amount",
+        });
+      }
+
+      const idempotencyKey = paymentRef ? `payhook_${paymentRef}` : `payhook_${customerId}_${Date.now()}`;
+      console.log(
+        `[Payment Webhook] Processing confirmed payment for ${customerId} amount ₹${amountPaid} (Key: ${idempotencyKey})`,
+      );
+
+      let processedTxnId = "";
+      let updatedCustomerForNotification: any = null;
+      let newBalanceResult = 0;
+      let newAdvanceResult = 0;
+
+      if (admin.apps.length) {
+        const db = getAdminDb();
+        if (!db) {
+          throw new Error("Firebase Admin Database is not available.");
+        }
+
+        // ACID Database Transaction for Financial Integrity & Idempotency
+        const txnResult = await db.runTransaction(async (t) => {
+          // 1. Idempotency Check: prevent duplicate webhook credit
+          const idempRef = db.collection("idempotency_keys").doc(idempotencyKey);
+          const idempDoc = await t.get(idempRef);
+          if (idempDoc.exists) {
+            console.log(`[Payment Webhook] Duplicate webhook invocation ignored via idempotency key: ${idempotencyKey}`);
+            return { duplicate: true, existingData: idempDoc.data() };
+          }
+
+          // 2. Read Customer State
+          const custRef = db.collection("customers").doc(customerId);
+          const custDoc = await t.get(custRef);
+          if (!custDoc.exists) {
+            throw new Error(`Customer with ID ${customerId} not found.`);
+          }
+
+          const customer = custDoc.data() as any;
+          const currentBal = Number(customer?.balance) || 0;
+          const currentAdv = Number(customer?.advanceBalance) || 0;
+          let newBalance = 0;
+          let newAdvance = currentAdv;
+          let newStatus = customer?.status || "Active";
+          let isAdvanceCredit = false;
+
+          if (amountPaid > currentBal) {
+            const excess = amountPaid - currentBal;
+            newBalance = 0;
+            newAdvance = currentAdv + excess;
+            if (newStatus !== "Suspended") {
+              newStatus = "Advance Paid";
+            }
+            isAdvanceCredit = true;
+          } else {
+            newBalance = Math.max(0, currentBal - amountPaid);
+            if (newBalance === 0 && currentAdv > 0) {
+              if (newStatus !== "Suspended") newStatus = "Advance Paid";
+            } else if (newBalance === 0 && newStatus !== "Suspended") {
+              newStatus = "Active";
+            }
+          }
+
+          const genTxnId = `TXN-WH-${(paymentRef || Date.now().toString()).substring(0, 16).toUpperCase()}`;
+
+          const transactionRecord = {
+            id: genTxnId,
+            customerId: customerId,
+            customerName: customer?.name || "Customer",
+            amount: amountPaid,
+            transactionId: genTxnId,
+            date: new Date().toISOString(),
+            ownerId: ownerId,
+            paymentMode: "upi",
+            isAdvanceCredit,
+            advanceAdjustment: isAdvanceCredit ? (newAdvance - currentAdv) : 0,
+            paymentType: isAdvanceCredit ? "bill_and_advance" : "bill_payment",
+            previousBalance: currentBal,
+            newBalance,
+            previousAdvance: currentAdv,
+            newAdvance,
+            notes: `Online Payment Webhook verified (Ref: ${paymentRef || "N/A"})`,
+            idempotencyKey: idempotencyKey,
+          };
+
+          // 3. Atomically update customer balances
+          t.update(custRef, {
+            balance: newBalance,
+            advanceBalance: newAdvance,
+            status: newStatus,
+            paymentNotified: true,
+            updatedAt: new Date().toISOString(),
+          });
+
+          // 4. Create authoritative transaction record in top-level transactions collection
+          const topLevelTxnRef = db.collection("transactions").doc(genTxnId);
+          t.set(topLevelTxnRef, transactionRecord);
+
+          // 5. Also keep legacy customer subcollection for backward compatibility
+          const subTxnRef = custRef.collection("transactions").doc(genTxnId);
+          t.set(subTxnRef, {
+            id: genTxnId,
+            amount: amountPaid,
+            date: new Date().toISOString(),
+            paymentMode: "upi",
+          });
+
+          // 6. Record immutable idempotency marker
+          t.set(idempRef, {
+            id: idempotencyKey,
+            ownerId: ownerId,
+            resourceType: "payment_webhook",
+            resourceId: genTxnId,
+            amount: amountPaid,
+            customerId: customerId,
+            status: "completed",
+            createdAt: new Date().toISOString(),
+          });
+
+          return {
+            duplicate: false,
+            txnId: genTxnId,
+            updatedCustomer: { ...customer, balance: newBalance, advanceBalance: newAdvance, status: newStatus },
+            newBalance,
+            newAdvance,
+            isAdvanceCredit,
+          };
+        });
+
+        if (txnResult.duplicate) {
+          return res.status(200).json({ received: true, status: "duplicate_ignored" });
+        }
+
+        processedTxnId = txnResult.txnId;
+        updatedCustomerForNotification = txnResult.updatedCustomer;
+        newBalanceResult = txnResult.newBalance;
+        newAdvanceResult = txnResult.newAdvance;
+
+        // Automated WhatsApp Receipt after successful commit
+        if (
+          settings?.automation?.smartNotifications &&
+          ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) || settings.watiAccessToken) &&
+          updatedCustomerForNotification?.status !== "Suspended"
+        ) {
+          const lang = settings?.preferredLanguage || "en";
+          const mobile = updatedCustomerForNotification?.mobileNumber?.replace(/\D/g, "");
+          if (mobile && mobile.length >= 10) {
+            let message = getSvrT(lang, "paymentSuccess", {
+              name: updatedCustomerForNotification?.name,
+              amt: amountPaid,
+            });
+            if (newAdvanceResult > 0) {
+              message += `\n💰 Pre-paid Advance Credit: Rs. ${newAdvanceResult} (Will auto-apply to future bills)`;
+            }
+
+            try {
+              const generatedPdf = await generateInvoicePdf(
+                updatedCustomerForNotification?.name || "Customer",
+                newBalanceResult,
+                amountPaid,
+                settings?.billTemplateImage,
+                lang,
+                updatedCustomerForNotification?.id,
+                settings?.billingAmount,
+                newAdvanceResult,
+                settings?.appLogoImage,
+              );
+
+              const finalTemplateParams: any[] = [
+                updatedCustomerForNotification?.name || "Customer",
+                amountPaid,
+                {
+                  isButtonParam: true,
+                  value: customerId,
+                  index: "0",
+                },
+              ];
+
+              await sendWhatsAppMessage(
+                settings,
+                mobile,
+                message,
+                generatedPdf,
+                "Payment_Receipt.pdf",
+                false,
+                "receipt",
+                finalTemplateParams,
+              );
+            } catch (e) {
+              console.error("[Payment Webhook] Auto-Receipt sending failed:", e);
+            }
+          }
+        }
+      }
+
+      // Respond immediately to the gateway with confirmation
+      res.status(200).json({
+        received: true,
+        status: "processed",
+        transactionId: processedTxnId,
+        idempotencyKey,
+      });
+    } catch (error: any) {
+      console.error("[Payment Webhook] Webhook processing error:", error);
+      res.status(500).json({ error: error?.message || "Webhook processing failed" });
     }
   });
-
   // Generic fetch wrapper with exponential backoff and randomized jitter for network & rate-limit resilience
   async function fetchWithRetry(
     url: string,
@@ -3662,6 +3840,12 @@ async function startServer() {
         }
       }
     }
+
+    return {
+      success: true,
+      timestamp: new Date().toISOString(),
+      ownerId: specificOwnerId || "ALL",
+    };
   }
 
   // 2. Daily Cron Automation Trigger
@@ -3760,6 +3944,16 @@ async function startServer() {
       }
     }
 
+    const lock = new DistributedLock(() => getAdminDb());
+    const lockName = "cron_billing_ALL";
+    const workerId = `midnight_cron_${process.env.HOSTNAME || process.pid}`;
+    const lockResult = await lock.acquire(lockName, 600000, workerId); // 10-minute lock TTL
+
+    if (!lockResult.acquired) {
+      console.log(`[Midnight Cron] Skipping execution: Lock already held by another container (${lockResult.existingWorkerId})`);
+      return;
+    }
+
     try {
       await runDailyAutomation();
     } catch (autoErr: any) {
@@ -3771,43 +3965,16 @@ async function startServer() {
       } else {
         console.error("Daily automation failed", autoErr);
       }
+    } finally {
+      await lock.release(lockName, workerId);
     }
   });
 
-  app.post("/api/cron/daily", async (req, res) => {
+  // Send Individual Message API (Protected by requireAuth)
+  app.post("/api/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const { ownerId } = req.body;
-      console.log(
-        `Starting Manual Daily Automation Engine Trigger for ${ownerId || "ALL"}...`,
-      );
-      await runDailyAutomation(ownerId);
-      res.json({ status: "success" });
-    } catch (error: any) {
-      if (
-        error.code === 5 ||
-        (error.message && error.message.includes("NOT_FOUND"))
-      ) {
-        console.error(
-          `[ACTION REQUIRED] Manual automation skipped. Firestore Database not found in project ${firebaseConfig.projectId}.`,
-        );
-        res
-          .status(404)
-          .json({
-            error:
-              "Firestore Database not found. Please create it in the Firebase console.",
-          });
-      } else {
-        console.error("Cron Error", error);
-        res.status(500).json({ error: "Automation failed" });
-      }
-    }
-  });
-
-  // Send Individual Message API (Proxied for CORS safety)
-  app.post("/api/wa/send", async (req, res) => {
-    try {
+      const ownerId = req.ownerId || req.body.ownerId;
       const {
-        ownerId,
         to,
         message,
         apiKey,
@@ -3895,11 +4062,11 @@ async function startServer() {
     }
   });
 
-  // Bulk Broadcast API
-  app.post("/api/wa/broadcast", async (req, res) => {
+  // Bulk Broadcast API (Protected by requireAuth)
+  app.post("/api/wa/broadcast", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
+      const ownerId = req.ownerId || req.body.ownerId;
       const {
-        ownerId,
         message,
         apiKey,
         phoneId,
@@ -4036,11 +4203,10 @@ async function startServer() {
     }
   });
 
-  // Test WhatsApp API Configuration
-  app.post("/api/wa/test", async (req, res) => {
+  // Test WhatsApp API Configuration (Protected by requireAuth)
+  app.post("/api/wa/test", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const {
-        ownerId,
         testMobile,
         apiKey,
         phoneId,
@@ -4049,7 +4215,7 @@ async function startServer() {
         method,
         templateToTest,
       } = req.body;
-      const effectiveOwnerId = ownerId || "system";
+      const effectiveOwnerId = req.ownerId || req.body.ownerId || "system";
 
       let settings: any = {
         metaWhatsAppApiKey: apiKey,
@@ -4095,7 +4261,7 @@ async function startServer() {
           const db = getAdminDb();
           const custSnap = await db
             ?.collection("customers")
-            .where("ownerId", "==", ownerId)
+            .where("ownerId", "==", effectiveOwnerId)
             .limit(1)
             .get();
           if (custSnap && !custSnap.empty) {
@@ -4439,10 +4605,11 @@ async function startServer() {
     }
   });
 
-  // Real-Time Meta / Dealer Token & Connection Verifier
-  app.post("/api/wa/verify-token", async (req, res) => {
+  // Real-Time Meta / Dealer Token & Connection Verifier (Protected by requireAuth)
+  app.post("/api/wa/verify-token", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const { ownerId, apiKey, phoneId } = req.body;
+      const ownerId = req.ownerId || req.body.ownerId;
+      const { apiKey, phoneId } = req.body;
       const clean = sanitizeMetaCredentials(apiKey, phoneId);
       let targetApiKey = clean.apiKey;
       let targetPhoneId = clean.phoneId;
@@ -4541,8 +4708,8 @@ async function startServer() {
     }
   });
 
-  // Dedicated Server-Side WhatsApp API Audit Trail Endpoint
-  app.get("/api/wa/audit-logs", async (req, res) => {
+  // Dedicated Server-Side WhatsApp API Audit Trail Endpoint (Protected by requireAuth)
+  app.get("/api/wa/audit-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const limit = parseInt(req.query.limit as string, 10) || 50;
       const format = (req.query.format as string) || "json";
@@ -4831,9 +4998,10 @@ async function startServer() {
     }
   });
 
-  app.post("/api/complaints/notify-resolution", async (req, res) => {
+  app.post("/api/complaints/notify-resolution", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const { complaintId, ownerId, customerId } = req.body;
+      const { complaintId, customerId } = req.body;
+      const ownerId = req.ownerId || req.body.ownerId;
       if (!complaintId || !ownerId || !customerId)
         return res.status(400).json({ error: "Missing params" });
 
@@ -4948,18 +5116,37 @@ async function startServer() {
     }
   });
 
-  // Meta Incoming Message Receipt
-  const processedMessageIds: string[] = [];
-  app.post(["/api/whatsapp-webhook", "/api/whatsapp-webhook/:ownerId"], async (req, res) => {
+  // Meta Incoming Message Receipt (Hardened with Rate Limiting & HMAC Signature Validation)
+  app.post(["/api/whatsapp-webhook", "/api/whatsapp-webhook/:ownerId"], async (req: any, res) => {
     try {
       const incomingOwnerId = req.params.ownerId || (req.query.ownerId as string) || "system";
+      const clientIp = req.ip || req.socket.remoteAddress || "meta-webhook";
+
+      // Distributed persistent rate limiting for webhook bursts
+      const { allowed } = await checkRateLimitPersistent(`wa_webhook_${incomingOwnerId}_${clientIp}`, 300, 60000);
+      if (!allowed) {
+        console.warn(`[WhatsApp Webhook] Rate limit exceeded from IP: ${clientIp}`);
+        return res.status(429).send("RATE_LIMIT_EXCEEDED");
+      }
 
       const body = req.body;
-      if (!body.object) {
+      if (!body || !body.object) {
         return res.sendStatus(200);
       }
 
-      // Send 200 OK immediately to prevent Meta from retrying
+      // Optional HMAC verification against App Secret if configured
+      const metaSignature = req.headers["x-hub-signature-256"] as string;
+      const appSecret = process.env.META_APP_SECRET || process.env.META_WEBHOOK_SECRET;
+      if (metaSignature && appSecret) {
+        const rawPayload = req.rawBody || JSON.stringify(req.body);
+        const validSig = verifyHmacSignature(rawPayload, metaSignature, appSecret);
+        if (!validSig) {
+          console.warn("[WhatsApp Webhook] Rejecting webhook due to invalid x-hub-signature-256");
+          return res.status(403).send("INVALID_SIGNATURE");
+        }
+      }
+
+      // Send 200 OK immediately to satisfy Meta SLA and avoid redundant webhooks
       res.status(200).send("EVENT_RECEIVED");
 
       // Process in background
@@ -4980,15 +5167,7 @@ async function startServer() {
               for (const messageObj of messages) {
                 const msgId = messageObj.id;
                 if (msgId) {
-                if (processedMessageIds.includes(msgId)) {
-                  console.log(`[Webhook] Ignoring duplicate message: ${msgId}`);
-                  continue;
-                }
-                processedMessageIds.push(msgId);
-                if (processedMessageIds.length > 2000)
-                  processedMessageIds.shift();
-
-                // DB-backed deduplication with transaction to prevent race conditions
+                // DB-backed deduplication with transaction to prevent race conditions across container restarts
                 const dbInstance = admin.apps.length ? getRequiredAdminDb() : null;
                 if (dbInstance) {
                   try {
@@ -6042,10 +6221,10 @@ To link your connection or update your registered number, please contact the Gra
   }
 });
 
-  // Real WhatsApp Chatbot Live Diagnostics & Health Check Endpoint
-  app.get(["/chatbot/diagnostics", "/api/chatbot/diagnostics"], async (req, res) => {
+  // Real WhatsApp Chatbot Live Diagnostics & Health Check Endpoint (Protected by requireAuth)
+  app.get(["/chatbot/diagnostics", "/api/chatbot/diagnostics"], requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.query.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.query.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
         await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
@@ -6215,10 +6394,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Toggle Chatbot Active Status
-  app.post("/api/chatbot/toggle-active", async (req, res) => {
+  // Toggle Chatbot Active Status (Protected by requireAuth)
+  app.post("/api/chatbot/toggle-active", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
       const { active } = req.body;
@@ -6243,10 +6422,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Explicit Webhook Handshake Probe Endpoint
-  app.post("/api/chatbot/probe-webhook", async (req, res) => {
+  // Explicit Webhook Handshake Probe Endpoint (Protected by requireAuth)
+  app.post("/api/chatbot/probe-webhook", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
         await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
@@ -6280,10 +6459,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Fetch real customers for live diagnostics case selection
-  app.get("/api/chatbot/real-customers", async (req, res) => {
+  // Fetch real customers for live diagnostics case selection (Protected by requireAuth)
+  app.get("/api/chatbot/real-customers", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.query.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.query.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
 
@@ -6317,11 +6496,11 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Real-case diagnostics test endpoint: executes against REAL database records
-  app.post(["/api/chatbot/diagnose-message", "/api/chatbot/simulate"], async (req, res) => {
+  // Real-case diagnostics test endpoint (Protected by requireAuth)
+  app.post(["/api/chatbot/diagnose-message", "/api/chatbot/simulate"], requireAuth, async (req: AuthenticatedRequest, res) => {
     const startTime = Date.now();
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
         await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
@@ -6524,10 +6703,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Automated Real-World Test Suite Runner
-  app.post("/api/chatbot/run-test-suite", async (req, res) => {
+  // Automated Real-World Test Suite Runner (Protected by requireAuth)
+  app.post("/api/chatbot/run-test-suite", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
         await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
@@ -6675,11 +6854,11 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Real WhatsApp Live Test Message Dispatch (Direct to Meta Cloud API)
-  app.post("/api/chatbot/send-live-test", async (req, res) => {
+  // Real WhatsApp Live Test Message Dispatch (Protected by requireAuth)
+  app.post("/api/chatbot/send-live-test", requireAuth, async (req: AuthenticatedRequest, res) => {
     const startTime = Date.now();
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
         await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
@@ -6760,10 +6939,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Live WhatsApp Event Logs Endpoint
-  app.get("/api/chatbot/live-logs", async (req, res) => {
+  // Live WhatsApp Event Logs Endpoint (Protected by requireAuth)
+  app.get("/api/chatbot/live-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.query.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.query.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
 
@@ -6788,10 +6967,10 @@ To link your connection or update your registered number, please contact the Gra
     }
   });
 
-  // Clear Diagnostic Logs Endpoint
-  app.post("/api/chatbot/clear-logs", async (req, res) => {
+  // Clear Diagnostic Logs Endpoint (Protected by requireAuth)
+  app.post("/api/chatbot/clear-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const requestedOwnerId = (req.body.ownerId as string) || "system";
+      const requestedOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(requestedOwnerId);
       const effectiveOwnerId = resolvedOwnerId !== "system" ? resolvedOwnerId : requestedOwnerId;
 

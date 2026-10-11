@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useTenant } from "../contexts/TenantContext";
+import { authFetch } from "../lib/api";
 
 export interface DiagnosticsData {
   ok: boolean;
@@ -68,7 +69,7 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
       const url = currentOwnerId 
         ? `/api/chatbot/diagnostics?ownerId=${encodeURIComponent(currentOwnerId)}` 
         : "/api/chatbot/diagnostics";
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const json = await res.json();
       setData(json);
       if (Array.isArray(json.recentLogs)) {
@@ -89,7 +90,7 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
       const url = currentOwnerId 
         ? `/api/chatbot/live-logs?ownerId=${encodeURIComponent(currentOwnerId)}` 
         : "/api/chatbot/live-logs";
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const json = await res.json();
       if (json.ok && Array.isArray(json.logs)) {
         setRecentLogs(json.logs.slice(0, 5));
@@ -115,9 +116,8 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
     setIsTogglingBot(true);
     try {
       const newTarget = !data?.botActive;
-      const res = await fetch("/api/chatbot/toggle-active", {
+      const res = await authFetch("/api/chatbot/toggle-active", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ownerId: currentOwnerId || undefined,
           active: newTarget
@@ -143,9 +143,8 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
     setTestResult(null);
 
     try {
-      const res = await fetch("/api/chatbot/send-live-test", {
+      const res = await authFetch("/api/chatbot/send-live-test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mobile: cleanMobile,
           message: "Namaste! This is a test message from your Gram Panchayat Smart Water Billing system. Everything is connected and working!",

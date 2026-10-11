@@ -44,9 +44,23 @@ service cloud.firestore {
     function isValidComplaint(data) {
       return data.keys().hasAll(['id', 'customerId', 'customerName', 'message', 'status', 'createdAt', 'ownerId']) &&
              data.id is string && data.id.size() <= 64 &&
-             data.message is string && data.message.size() <= 2000 &&
+             data.customerId is string && data.customerId.size() <= 64 &&
+             data.customerName is string && data.customerName.size() <= 100 &&
+             data.message is string && data.message.size() > 0 && data.message.size() <= 2000 &&
              data.status in ['Pending', 'Resolved'] &&
-             data.ownerId is string;
+             data.createdAt is string && data.createdAt.size() <= 50 &&
+             data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128;
+    }
+
+    function isValidPaymentReceipt(data) {
+      return data.keys().hasAll(['id', 'customerId', 'ownerId', 'customerName', 'submittedAt', 'status', 'amount']) &&
+             data.id is string && data.id.size() <= 64 &&
+             data.customerId is string && data.customerId.size() <= 64 &&
+             data.ownerId is string && data.ownerId.size() > 0 && data.ownerId.size() <= 128 &&
+             data.customerName is string && data.customerName.size() <= 100 &&
+             data.status in ['Pending', 'Approved', 'Rejected'] &&
+             data.amount is number && data.amount >= 0 && data.amount <= 1000000 &&
+             data.submittedAt is string && data.submittedAt.size() <= 50;
     }
 
     // =========================================================================
@@ -101,7 +115,8 @@ service cloud.firestore {
     match /payment_receipts/{receiptId} {
       allow get: if isOwner(existing()) || ('portalToken' in existing());
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if true; // Public portal payment proof uploads
+      allow create: if (isSignedIn() && incoming().ownerId == request.auth.uid) ||
+                      (isValidPaymentReceipt(incoming()) && incoming().status == 'Pending' && incoming().id == receiptId);
       allow update: if isOwner(existing());
       allow delete: if isOwner(existing());
     }
@@ -110,7 +125,8 @@ service cloud.firestore {
     match /complaints/{complaintId} {
       allow get: if isOwner(existing());
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if true; // Public customer portal submissions
+      allow create: if (isSignedIn() && incoming().ownerId == request.auth.uid) ||
+                      (isValidComplaint(incoming()) && incoming().status == 'Pending' && incoming().id == complaintId);
       allow update: if isOwner(existing());
       allow delete: if isOwner(existing());
     }
@@ -167,7 +183,7 @@ service cloud.firestore {
     match /automation_errors/{errorId} {
       allow read: if isOwner(existing());
       allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if true; // Backend/Engine logs errors
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
       allow update: if isOwner(existing());
       allow delete: if isOwner(existing());
     }
@@ -180,17 +196,55 @@ service cloud.firestore {
       allow delete: if isOwner(existing());
     }
 
-    // Webhook Deduplication (Server / engine only)
+    // Webhook Deduplication (Server Admin SDK only; direct client read/write denied)
     match /webhook_dedup/{msgId} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
 
     // WhatsApp Live Audit Logs
     match /whatsapp_logs/{logId} {
       allow read, list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if true;
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
       allow update: if false;
       allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+    }
+
+    // Background Jobs: strictly isolated per tenant
+    match /background_jobs/{jobId} {
+      allow read: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if isOwner(existing());
+      allow delete: if isOwner(existing());
+    }
+
+    // Idempotency Keys (Immutable financial deduplication records)
+    match /idempotency_keys/{keyId} {
+      allow read: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update, delete: if false; // Immutable once written
+    }
+
+    // Rate Limit State (Server Admin SDK only; direct client read/write denied)
+    match /rate_limits/{bucketKey} {
+      allow read, write: if false;
+    }
+
+    // Distributed Locks (Server Admin SDK only; direct client read/write denied)
+    match /distributed_locks/{lockId} {
+      allow read, write: if false;
+    }
+
+    // Cron Job Lock Collection (Server Admin SDK only; direct client read/write denied)
+    match /lock/{lockId} {
+      allow read, write: if false;
+    }
+
+    // Server-side Billing Automation Sessions (Source of truth for cron status & processing state)
+    match /automation_sessions/{sessionId} {
+      allow read: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false; // Only written via Server Admin SDK
     }
   }
 }

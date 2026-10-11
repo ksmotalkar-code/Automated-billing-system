@@ -1,5 +1,6 @@
 import express from "express";
 import { CloudStorageService } from "../services/storage.ts";
+import { requireAuth, AuthenticatedRequest } from "../middleware/auth.ts";
 
 export function createStorageRouter(getDb: () => any) {
   const router = express.Router();
@@ -32,10 +33,11 @@ export function createStorageRouter(getDb: () => any) {
     }
   });
 
-  // Generic Image upload (persists in cloud database/storage)
-  router.post("/upload-image", async (req, res) => {
+  // Generic Image upload (Protected by requireAuth)
+  router.post("/upload-image", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const { image, type, ownerId } = req.body;
+      const { image, type } = req.body;
+      const ownerId = req.ownerId || req.body.ownerId || "system";
       if (!image) {
         return res.status(400).json({ error: "No image provided" });
       }
@@ -60,8 +62,8 @@ export function createStorageRouter(getDb: () => any) {
     }
   });
 
-  // Delete Image Endpoint
-  router.post("/delete-image", async (req, res) => {
+  // Delete Image Endpoint (Protected by requireAuth)
+  router.post("/delete-image", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const { url, storageId } = req.body;
       const db = getDb();

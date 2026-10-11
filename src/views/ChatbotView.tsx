@@ -9,6 +9,7 @@ import { useTranslation } from "react-i18next";
 import { useTenant } from "../contexts/TenantContext";
 import { ChatbotDiagnosticWidget } from "../components/ChatbotDiagnosticWidget";
 import { WhatsAppChatbotConfig } from "../components/WhatsAppChatbotConfig";
+import { authFetch } from "../lib/api";
 
 export function ChatbotView() {
   const { currentOwnerId } = useTenant();
@@ -78,7 +79,7 @@ ${cmdList}`;
     setTestingDiagnostics(true);
     try {
       const url = currentOwnerId ? `/api/chatbot/diagnostics?ownerId=${encodeURIComponent(currentOwnerId)}` : "/api/chatbot/diagnostics";
-      const res = await fetch(url);
+      const res = await authFetch(url);
       const data = await res.json();
       setDiagnostics(data);
     } catch (e: any) {
@@ -93,9 +94,8 @@ ${cmdList}`;
     setSimulating(true);
     setSimResult(null);
     try {
-      const res = await fetch("/api/chatbot/simulate", {
+      const res = await authFetch("/api/chatbot/simulate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           message: msgToSend,
           pendingReportSelection,

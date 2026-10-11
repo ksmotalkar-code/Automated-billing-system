@@ -14,6 +14,7 @@ import { getLogs, clearLogs, LogEntry } from '../lib/logger';
 import { CommandManagerWrapper } from '../components/CommandManager';
 import { WhatsAppChatbotConfig } from '../components/WhatsAppChatbotConfig';
 import { uploadImageToStorage, deleteImageFromStorage } from '../lib/storage';
+import { authFetch } from '../lib/api';
 
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -119,12 +120,12 @@ export function SettingsView() {
     setIsLoadingAudit(true);
     setShowAuditModal(true);
     try {
-      const resp = await fetch('/api/wa/audit-logs?limit=50');
+      const resp = await authFetch('/api/wa/audit-logs?limit=50');
       const data = await resp.json();
       if (resp.ok && data.entries) {
         setAuditLogsList(data.entries);
       }
-      const rawResp = await fetch('/api/wa/audit-logs?format=raw');
+      const rawResp = await authFetch('/api/wa/audit-logs?format=raw');
       if (rawResp.ok) {
         const text = await rawResp.text();
         setAuditRawText(text);
@@ -152,9 +153,8 @@ export function SettingsView() {
   const handleVerifyToken = async () => {
     setTokenVerifyStatus({ isLoading: true, tested: true });
     try {
-      const resp = await fetch('/api/wa/verify-token', {
+      const resp = await authFetch('/api/wa/verify-token', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           ownerId: currentOwnerId || auth.currentUser?.uid, 
           apiKey: settings.metaWhatsAppApiKey, 
@@ -276,9 +276,8 @@ export function SettingsView() {
     }
     setIsTestLoading(true);
     try {
-      const resp = await fetch('/api/wa/test', {
+      const resp = await authFetch('/api/wa/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           ownerId: currentOwnerId || auth.currentUser?.uid, 
           testMobile, 
@@ -313,9 +312,8 @@ export function SettingsView() {
         setConfirmConfig({ ...confirmConfig, isOpen: false });
         setIsTriggerLoading(true);
         try {
-          const resp = await fetch('/api/cron/daily', {
+          const resp = await authFetch('/api/cron/daily', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ownerId: currentOwnerId || auth.currentUser?.uid })
           });
           if (resp.ok) {
@@ -504,9 +502,8 @@ export function SettingsView() {
             }
           }
 
-          const resp = await fetch('/api/wa/broadcast', {
+          const resp = await authFetch('/api/wa/broadcast', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
                ownerId: currentOwnerId || auth.currentUser?.uid, 
                message: broadcastMessage, 

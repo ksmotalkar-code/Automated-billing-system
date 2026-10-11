@@ -1,4 +1,5 @@
 import express from "express";
+import { requireAuth, AuthenticatedRequest } from "../middleware/auth.ts";
 
 export interface WhatsAppRouteDeps {
   getSettings: (ownerId: string) => Promise<any>;
@@ -11,8 +12,8 @@ export interface WhatsAppRouteDeps {
 export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
   const router = express.Router();
 
-  // Test WhatsApp message dispatch
-  router.post("/wa/test", async (req, res) => {
+  // Test WhatsApp message dispatch (Protected by requireAuth)
+  router.post("/wa/test", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const { mobileNumber, message, settings } = req.body;
       if (!mobileNumber || !message) {
@@ -55,10 +56,10 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     return { apiKey: cleanKey, phoneId: cleanPhone };
   }
 
-  // Diagnostic Endpoint
-  router.get("/chatbot/diagnostics", async (req, res) => {
+  // Diagnostic Endpoint (Protected by requireAuth)
+  router.get("/chatbot/diagnostics", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const ownerId = (req.query.ownerId as string) || "system";
+      const ownerId = req.ownerId || (req.query.ownerId as string) || "system";
       let effectiveOwnerId = ownerId;
       let settings = await deps.getSettings(ownerId);
       if (deps.resolveOwnerIdForWebhook && (!settings?.metaWhatsAppApiKey || ownerId === "system")) {
@@ -147,10 +148,10 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     }
   });
 
-  // Toggle Bot Active Status
-  router.post("/chatbot/toggle-active", async (req, res) => {
+  // Toggle Bot Active Status (Protected by requireAuth)
+  router.post("/chatbot/toggle-active", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
-      const ownerId = (req.body.ownerId as string) || "system";
+      const ownerId = req.ownerId || (req.body.ownerId as string) || "system";
       const { active } = req.body;
       let effectiveOwnerId = ownerId;
       if (deps.resolveOwnerIdForWebhook && ownerId === "system") {

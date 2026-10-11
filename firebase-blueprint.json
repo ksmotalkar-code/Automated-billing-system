@@ -207,6 +207,41 @@
         "createdAtIso": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
       },
       "required": ["id", "ownerId", "direction", "mobile", "status"]
+    },
+    "BackgroundJob": {
+      "title": "BackgroundJob",
+      "description": "Persistent asynchronous background task execution record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Job ID", "maxLength": 64 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "type": { "type": "string", "description": "Job type", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "failed"], "description": "Execution status" },
+        "progress": { "type": "number", "description": "Progress percentage" },
+        "data": { "type": "string", "description": "Serialized task input payload" },
+        "result": { "type": "string", "description": "Serialized task output result" },
+        "error": { "type": "string", "description": "Error message if failed" },
+        "retryCount": { "type": "number", "description": "Number of retries" },
+        "lockedBy": { "type": "string", "description": "Worker instance identifier" },
+        "lockedAt": { "type": "number", "description": "Lock acquisition timestamp in ms" },
+        "createdAt": { "type": "number", "description": "Job creation timestamp in ms" },
+        "updatedAt": { "type": "number", "description": "Job update timestamp in ms" }
+      },
+      "required": ["id", "ownerId", "type", "status", "progress", "createdAt", "updatedAt"]
+    },
+    "IdempotencyRecord": {
+      "title": "IdempotencyRecord",
+      "description": "Deterministic deduplication record for financial mutations and webhooks",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Idempotency Key", "maxLength": 128 },
+        "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
+        "resourceType": { "type": "string", "description": "Type of mutation (payment, receipt, webhook)" },
+        "resourceId": { "type": "string", "description": "Associated resource or transaction ID" },
+        "status": { "type": "string", "enum": ["completed", "in_flight"], "description": "Mutation status" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["id", "ownerId", "resourceType", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -261,6 +296,26 @@
     "/whatsapp_logs/{logId}": {
       "schema": { "$ref": "#/entities/WhatsappLog" },
       "description": "Live WhatsApp webhook and outbound audit logs"
+    },
+    "/background_jobs/{jobId}": {
+      "schema": { "$ref": "#/entities/BackgroundJob" },
+      "description": "Persistent asynchronous background task records"
+    },
+    "/idempotency_keys/{keyId}": {
+      "schema": { "$ref": "#/entities/IdempotencyRecord" },
+      "description": "Deterministic deduplication records for financial mutations"
+    },
+    "/rate_limits/{bucketKey}": {
+      "description": "Distributed persistent rate limiting buckets"
+    },
+    "/distributed_locks/{lockId}": {
+      "description": "Atomic distributed locks with TTL for cron jobs and background tasks"
+    },
+    "/lock/{lockId}": {
+      "description": "Cron job lock collection with 5-minute TTL and automatic crash cleanup"
+    },
+    "/automation_sessions/{sessionId}": {
+      "description": "Server-side billing engine session state tracking cron status and last-processed timestamps"
     }
   }
 }
