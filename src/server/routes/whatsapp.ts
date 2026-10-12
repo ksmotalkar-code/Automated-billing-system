@@ -56,6 +56,145 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     return { apiKey: cleanKey, phoneId: cleanPhone };
   }
 
+  function analyzeDiagnosticFailure(
+    hasApiKey: boolean,
+    hasPhoneId: boolean,
+    checkOk: boolean,
+    checkData: any,
+    apiErrorMsg?: string
+  ) {
+    if (!hasApiKey || !hasPhoneId) {
+      return {
+        issueType: "MISSING_CONFIGURATION",
+        title: "WhatsApp API Configuration Missing",
+        summary: "Meta API Key or Phone Number ID is not configured in Settings.",
+        actionSteps: [
+          "Go to System Settings > WhatsApp API Configuration.",
+          "Enter your Meta System User Permanent Access Token and Phone Number ID.",
+          "Save settings and rerun diagnostics."
+        ],
+        isTokenExpired: false,
+        isDataUseCheckup: false,
+        isEndpointConfigError: true
+      };
+    }
+
+    if (checkOk) {
+      return {
+        issueType: "NONE",
+        title: "100% Operational & Healthy",
+        summary: "Meta Cloud API node responded successfully. Graph API connection is active.",
+        actionSteps: [],
+        isTokenExpired: false,
+        isDataUseCheckup: false,
+        isEndpointConfigError: false
+      };
+    }
+
+    const errObj = checkData?.error || {};
+    const code = errObj.code;
+    const subcode = errObj.error_subcode || errObj.subcode;
+    const msg = String(errObj.message || apiErrorMsg || "").toLowerCase();
+    const errType = String(errObj.type || "").toLowerCase();
+
+    // 1. Data Use Checkup hold
+    if (
+      msg.includes("data use checkup") ||
+      msg.includes("data_use_checkup") ||
+      subcode === 2018278 ||
+      (code === 200 && msg.includes("data use"))
+    ) {
+      return {
+        issueType: "DATA_USE_CHECKUP_HOLD",
+        title: "Meta Action Required: Complete Data Use Checkup",
+        summary: "Your System User Permanent Access Token is valid, but Meta has temporarily paused live Graph API calls for your App until you complete the mandatory Data Use Checkup.",
+        actionSteps: [
+          "Open Meta Developers Dashboard (https://developers.facebook.com/apps/).",
+          "Select your App and click the top alert banner: 'Complete Data Use Checkup'.",
+          "Review permissions, certify data compliance, and click Submit.",
+          "Live message dispatch will unblock immediately once submitted!"
+        ],
+        isTokenExpired: false,
+        isDataUseCheckup: true,
+        isEndpointConfigError: false,
+        errorCode: code,
+        errorSubcode: subcode
+      };
+    }
+
+    // 2. Token Expiry or Invalid OAuth Credentials
+    if (
+      code === 190 ||
+      code === 102 ||
+      code === 10 ||
+      errType.includes("oauthexception") ||
+      msg.includes("session has expired") ||
+      msg.includes("expired") ||
+      msg.includes("invalid oauth") ||
+      msg.includes("access token") ||
+      msg.includes("token is invalid") ||
+      msg.includes("revoked")
+    ) {
+      return {
+        issueType: "TOKEN_EXPIRATION",
+        title: "Meta Access Token Expired or Revoked",
+        summary: "The configured Meta API Bearer Token is invalid, expired, or was revoked in Meta Business Manager.",
+        actionSteps: [
+          "Log into Meta Business Manager (business.facebook.com).",
+          "Navigate to System Users under User Management.",
+          "Select your System User and click 'Generate New Token'.",
+          "Ensure 'whatsapp_business_messaging' and 'whatsapp_business_management' permissions are checked.",
+          "Copy the new permanent token and paste it into Settings > Meta WhatsApp API Key."
+        ],
+        isTokenExpired: true,
+        isDataUseCheckup: false,
+        isEndpointConfigError: false,
+        errorCode: code
+      };
+    }
+
+    // 3. Incorrect Endpoint Configuration
+    if (
+      code === 100 ||
+      msg.includes("does not exist") ||
+      msg.includes("unsupported get request") ||
+      msg.includes("phone_number_id") ||
+      msg.includes("invalid parameter") ||
+      msg.includes("object with id")
+    ) {
+      return {
+        issueType: "INCORRECT_ENDPOINT_CONFIG",
+        title: "Incorrect Phone Number ID or Endpoint URL Configuration",
+        summary: "The configured Phone Number ID does not exist on Graph API v21.0 or does not belong to the WABA linked to your token.",
+        actionSteps: [
+          "Open Meta WhatsApp Manager > API Setup.",
+          "Copy the exact 'Phone number ID' (e.g. 10002893829384) shown in the top dropdown.",
+          "Ensure you are NOT using the WhatsApp Business Account ID instead of the Phone Number ID.",
+          "Paste the verified Phone Number ID into Settings > Meta Phone Number ID."
+        ],
+        isTokenExpired: false,
+        isDataUseCheckup: false,
+        isEndpointConfigError: true,
+        errorCode: code
+      };
+    }
+
+    // 4. Fallback Generic API error
+    return {
+      issueType: "GENERIC_API_ERROR",
+      title: "Meta Graph API Response Error",
+      summary: errObj.message || apiErrorMsg || "Connection to Meta Graph API failed.",
+      actionSteps: [
+        "Check internet connectivity and verify Meta Graph API status (status.fb.com).",
+        "Re-check credentials in System Settings."
+      ],
+      isTokenExpired: false,
+      isDataUseCheckup: false,
+      isEndpointConfigError: false,
+      errorCode: code
+    };
+  }
+
   // Diagnostic Endpoint (Protected by requireAuth)
   router.get("/chatbot/diagnostics", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -89,9 +228,14 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
       let metaApiReachable = false;
       let metaDetails = "Not checked";
       let isDataUseCheckup = false;
+      let isTokenExpired = false;
+      let isEndpointConfigError = false;
       let verifiedName = "";
       let displayPhone = "";
       let qualityRating = "UNKNOWN";
+      let checkData: any = null;
+      let checkOk = false;
+      let apiErrorMsg = "";
 
       if (hasMetaApiKey && hasPhoneId) {
         try {
@@ -100,8 +244,10 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
               Authorization: `Bearer ${clean.apiKey}`,
             },
           });
-          const checkData = await checkRes.json();
-          if (checkRes.ok) {
+          checkData = await checkRes.json();
+          checkOk = checkRes.ok;
+
+          if (checkOk) {
             metaApiReachable = true;
             verifiedName = checkData.verified_name || "";
             displayPhone = checkData.display_phone_number || "";
@@ -109,14 +255,24 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
             metaDetails = `Connected (${verifiedName || displayPhone || "Active"})`;
           } else {
             metaDetails = checkData.error?.message || "Invalid credentials";
-            if (metaDetails.toLowerCase().includes("data use checkup")) {
-              isDataUseCheckup = true;
-            }
           }
         } catch (apiErr: any) {
-          metaDetails = apiErr.message || "Connection failed";
+          apiErrorMsg = apiErr.message || "Connection failed";
+          metaDetails = apiErrorMsg;
         }
       }
+
+      const issueAnalysis = analyzeDiagnosticFailure(
+        hasMetaApiKey,
+        hasPhoneId,
+        checkOk,
+        checkData,
+        apiErrorMsg
+      );
+
+      isDataUseCheckup = issueAnalysis.isDataUseCheckup;
+      isTokenExpired = issueAnalysis.isTokenExpired;
+      isEndpointConfigError = issueAnalysis.isEndpointConfigError;
 
       return res.json({
         ok: true,
@@ -128,6 +284,9 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
         hasMetaApiKey,
         hasPhoneId,
         isDataUseCheckup,
+        isTokenExpired,
+        isEndpointConfigError,
+        issueAnalysis,
         dataUseCheckupGuide: isDataUseCheckup
           ? "Your token is valid in Meta debugger, but Meta has temporarily paused live API calls until you complete the required Data Use Checkup. Open https://developers.facebook.com/apps/ -> Select your App -> Click the 'Complete Data Use Checkup' banner."
           : null,
@@ -140,6 +299,8 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
           qualityRating,
           details: metaDetails,
           isDataUseCheckup,
+          isTokenExpired,
+          isEndpointConfigError,
         },
         timestamp: new Date().toISOString(),
       });
@@ -243,5 +404,162 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     }
   });
 
+  // Fetch Raw Meta Webhook Receipts (Protected by requireAuth)
+  router.get("/whatsapp-webhook/raw-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || (req.query.ownerId as string) || "system";
+      const admin = (globalThis as any).admin;
+      let dbLogs: RawWebhookLogItem[] = [];
+
+      if (admin && admin.apps && admin.apps.length) {
+        try {
+          const db = admin.firestore();
+          const snap = await db.collection("meta_raw_webhooks")
+            .where("ownerId", "==", ownerId)
+            .orderBy("createdAt", "desc")
+            .limit(50)
+            .get();
+          dbLogs = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+        } catch (e) {
+          console.warn("[WhatsAppRouter] Firestore fetch for raw webhooks failed:", e);
+        }
+      }
+
+      const map = new Map<string, RawWebhookLogItem>();
+      rawWebhookLogsBuffer.forEach(l => map.set(l.id, l));
+      dbLogs.forEach(l => {
+        if (!map.has(l.id)) map.set(l.id, l);
+      });
+
+      const logs = Array.from(map.values())
+        .sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime())
+        .slice(0, 50);
+
+      return res.json({ ok: true, logs });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e.message, logs: [] });
+    }
+  });
+
+  // Clear Raw Webhook Logs (Protected by requireAuth)
+  router.post("/whatsapp-webhook/clear-raw-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      rawWebhookLogsBuffer.length = 0;
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
+  // Simulate Meta Ping Webhook (Protected by requireAuth)
+  router.post("/whatsapp-webhook/simulate-ping", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || (req.body.ownerId as string) || "system";
+      const messageText = req.body.messageText || "BILL";
+      const fromMobile = req.body.fromMobile || "919876543210";
+      const senderName = req.body.senderName || "Test Resident";
+
+      const simPayload = {
+        object: "whatsapp_business_account",
+        entry: [
+          {
+            id: "10023482394823",
+            changes: [
+              {
+                value: {
+                  messaging_product: "whatsapp",
+                  metadata: {
+                    display_phone_number: "15551234567",
+                    phone_number_id: "10002893829384"
+                  },
+                  contacts: [
+                    {
+                      profile: { name: senderName },
+                      wa_id: fromMobile
+                    }
+                  ],
+                  messages: [
+                    {
+                      from: fromMobile,
+                      id: `wamid.simulated_${Date.now()}`,
+                      timestamp: String(Math.floor(Date.now() / 1000)),
+                      type: "text",
+                      text: { body: messageText }
+                    }
+                  ]
+                },
+                field: "messages"
+              }
+            ]
+          }
+        ]
+      };
+
+      const logId = `RAWH_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      const logReceipt: RawWebhookLogItem = {
+        id: logId,
+        ownerId,
+        receivedAt: new Date().toISOString(),
+        clientIp: "127.0.0.1 (Simulator)",
+        userAgent: "MetaWebhookSimulator/1.0",
+        signaturePresent: true,
+        signatureVerified: true,
+        rawBody: simPayload,
+        summary: `Simulated inbound message from ${fromMobile} (${senderName}): "${messageText}"`,
+        eventType: "message",
+        messagesCount: 1,
+        statusesCount: 0,
+        errorsCount: 0,
+        simulated: true
+      };
+
+      recordRawWebhookReceipt(logReceipt);
+
+      return res.json({ ok: true, logId, receipt: logReceipt });
+    } catch (e: any) {
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   return router;
 }
+
+export interface RawWebhookLogItem {
+  id: string;
+  ownerId: string;
+  receivedAt: string;
+  clientIp: string;
+  userAgent?: string;
+  signaturePresent: boolean;
+  signatureVerified: boolean;
+  rawBody: any;
+  summary: string;
+  eventType: 'message' | 'status' | 'error' | 'verification' | 'other';
+  messagesCount: number;
+  statusesCount: number;
+  errorsCount: number;
+  simulated?: boolean;
+}
+
+const rawWebhookLogsBuffer: RawWebhookLogItem[] = [];
+
+export function recordRawWebhookReceipt(log: RawWebhookLogItem) {
+  rawWebhookLogsBuffer.unshift(log);
+  if (rawWebhookLogsBuffer.length > 100) {
+    rawWebhookLogsBuffer.pop();
+  }
+
+  const admin = (globalThis as any).admin;
+  if (admin && admin.apps && admin.apps.length) {
+    try {
+      const db = admin.firestore();
+      db.collection("meta_raw_webhooks").doc(log.id).set({
+        ...log,
+        createdAt: new Date()
+      });
+    } catch (e) {
+      console.warn("Failed to store raw webhook to Firestore:", e);
+    }
+  }
+}
+

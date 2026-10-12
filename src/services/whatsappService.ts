@@ -119,11 +119,25 @@ class WhatsAppService {
 
       let data: any = {};
       let parseError = false;
-      try {
-        data = await response.json();
-      } catch (jsonErr) {
+      const contentType = response.headers.get('content-type') || '';
+
+      if (contentType.includes('application/json')) {
+        try {
+          data = await response.json();
+        } catch (jsonErr) {
+          parseError = true;
+          data = { error: `Server returned invalid JSON response (HTTP ${response.status})` };
+        }
+      } else {
         parseError = true;
-        data = { error: `Server returned non-JSON response (HTTP ${response.status}: ${response.statusText})` };
+        let textSummary = '';
+        try {
+          const text = await response.text();
+          if (text && !text.includes('<!doctype') && !text.includes('<html')) {
+            textSummary = text.slice(0, 150);
+          }
+        } catch (e) {}
+        data = { error: textSummary ? `Server error (HTTP ${response.status}): ${textSummary}` : `Server returned non-JSON response (HTTP ${response.status}: ${response.statusText || 'Error'})` };
       }
 
       if (!response.ok || parseError) {
@@ -174,11 +188,12 @@ class WhatsAppService {
       body: formData,
     });
 
-    const data = await response.json();
-    if (!response.ok) {
-      throw new Error(data.error?.message || 'Failed to upload media');
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok || !contentType.includes('application/json')) {
+      throw new Error(`Failed to upload media to WhatsApp API (HTTP ${response.status})`);
     }
 
+    const data = await response.json();
     return data.id;
   }
 }

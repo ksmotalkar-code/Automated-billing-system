@@ -381,7 +381,7 @@ export const sendWhatsAppNotification = async (
       console.log(`Automated WhatsApp message sent to ${customer.name}`);
       return { success: true };
     } else {
-      console.error(`Automated WhatsApp API failed: ${result.error}.`);
+      console.warn(`Automated WhatsApp API status: ${result.error}.`);
       // If single message dispatch fails and manual fallback is permitted, attempt manual wa.me link
       if (!isBulkMode && (result.fellBackToManual || settings.preferredNotificationMethod === 'hybrid')) {
         const mobile = customer.mobileNumber.replace(/\D/g, '');

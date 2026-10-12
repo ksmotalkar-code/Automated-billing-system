@@ -16,6 +16,7 @@ import { WhatsAppChatbotConfig } from '../components/WhatsAppChatbotConfig';
 import { uploadImageToStorage, deleteImageFromStorage } from '../lib/storage';
 import { authFetch } from '../lib/api';
 import { WhatsAppTemplateDiagnosticsView } from '../components/WhatsAppTemplateDiagnosticsView';
+import { MetaWebhookLogViewer } from '../components/MetaWebhookLogViewer';
 
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -1317,6 +1318,11 @@ export function SettingsView() {
                       <p className="text-xs text-red-800/80 font-bold">
                         Incoming webhooks require <code>FIREBASE_SERVICE_ACCOUNT</code> on your server environment. Without this, the system cannot verify inbound token authority.
                       </p>
+                   </div>
+
+                   {/* Meta Raw Webhook Log Inspector */}
+                   <div className="pt-4">
+                     <MetaWebhookLogViewer />
                    </div>
                 </div>
 

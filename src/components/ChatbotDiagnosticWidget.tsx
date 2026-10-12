@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { useTenant } from "../contexts/TenantContext";
 import { authFetch } from "../lib/api";
+import { MetaWebhookLogViewer } from "./MetaWebhookLogViewer";
 
 export interface DiagnosticsData {
   ok: boolean;
@@ -40,6 +41,15 @@ export interface DiagnosticsData {
     isDataUseCheckup?: boolean;
   };
   metaDetails?: string;
+  issueAnalysis?: {
+    issueType: string;
+    title: string;
+    summary: string;
+    actionSteps: string[];
+    isTokenExpired?: boolean;
+    isDataUseCheckup?: boolean;
+    isEndpointConfigError?: boolean;
+  };
   recentLogs?: any[];
   timestamp?: string;
   error?: string;
@@ -275,41 +285,80 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
       <AnimatePresence>
         {isExpanded && (
           <div className="p-4 sm:p-6 space-y-5">
-            {/* 1. Critical Alert: Meta Data Use Checkup */}
-            {isMetaDisrupted && (
+            {/* 1. Diagnostic Analysis Alert Banners */}
+            {data?.issueAnalysis && data.issueAnalysis.issueType !== 'NONE' && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="p-4 sm:p-5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-200 space-y-3"
+                className={`p-4 sm:p-5 rounded-2xl border text-xs leading-relaxed space-y-3 ${
+                  data.issueAnalysis.issueType === 'DATA_USE_CHECKUP_HOLD'
+                    ? 'bg-amber-500/15 border-amber-500/30 text-amber-200'
+                    : data.issueAnalysis.issueType === 'TOKEN_EXPIRATION'
+                      ? 'bg-rose-500/15 border-rose-500/30 text-rose-200'
+                      : 'bg-blue-500/15 border-blue-500/30 text-blue-200'
+                }`}
               >
                 <div className="flex items-start gap-3">
-                  <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    <h4 className="font-bold text-sm text-amber-300">
-                      Meta Action Required: Complete "Data Use Checkup"
-                    </h4>
-                    <p className="text-xs text-amber-200/90 leading-relaxed">
-                      Your Access Token is valid in Meta Debugger, but Meta has temporarily paused live message sending for your App. To restore it immediately (takes 1 minute):
+                  <AlertTriangle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                    data.issueAnalysis.issueType === 'DATA_USE_CHECKUP_HOLD'
+                      ? 'text-amber-400'
+                      : data.issueAnalysis.issueType === 'TOKEN_EXPIRATION'
+                        ? 'text-rose-400'
+                        : 'text-blue-400'
+                  }`} />
+                  <div className="space-y-1.5 flex-1">
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-extrabold text-sm text-white uppercase tracking-wider">
+                        {data.issueAnalysis.title}
+                      </h4>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider bg-black/40 border border-white/10">
+                        {data.issueAnalysis.issueType}
+                      </span>
+                    </div>
+                    <p className="font-medium opacity-90">
+                      {data.issueAnalysis.summary}
                     </p>
-                    <ol className="text-xs text-amber-200/90 list-decimal list-inside space-y-1 pt-1 font-medium">
-                      <li>Log into the <span className="font-bold text-white">Meta Developer Dashboard</span>.</li>
-                      <li>Click on your App and look at the top alert banner: <span className="font-bold text-white">"Complete Data Use Checkup"</span>.</li>
-                      <li>Click the banner, certify compliance, and click <span className="font-bold text-white">Submit</span>. Live WhatsApp messages will resume instantly!</li>
-                    </ol>
+                    {Array.isArray(data.issueAnalysis.actionSteps) && data.issueAnalysis.actionSteps.length > 0 && (
+                      <div className="pt-2 border-t border-white/10 space-y-1">
+                        <span className="font-bold uppercase tracking-wider text-[10px] opacity-80 block">
+                          Step-by-Step Resolution Guide:
+                        </span>
+                        <ol className="list-decimal list-inside space-y-1 font-medium pl-1 text-[11px]">
+                          {data.issueAnalysis.actionSteps.map((step: string, idx: number) => (
+                            <li key={idx} className="leading-snug">{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-end pt-1">
-                  <a
-                    href="https://developers.facebook.com/apps/"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20"
-                  >
-                    <span>Open Meta Developer Dashboard</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
+                {data.issueAnalysis.issueType === 'DATA_USE_CHECKUP_HOLD' && (
+                  <div className="flex items-center justify-end pt-1">
+                    <a
+                      href="https://developers.facebook.com/apps/"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider hover:bg-amber-400 transition-colors shadow-lg shadow-amber-500/20"
+                    >
+                      <span>Open Meta Developer Dashboard</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
+                {data.issueAnalysis.issueType === 'TOKEN_EXPIRATION' && (
+                  <div className="flex items-center justify-end pt-1">
+                    <a
+                      href="https://business.facebook.com/settings/system-users"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-600 text-white font-black text-xs uppercase tracking-wider hover:bg-rose-500 transition-colors shadow-lg shadow-rose-900/30"
+                    >
+                      <span>Generate Token in Meta Business Manager</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -474,6 +523,11 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
                 </div>
               </div>
             )}
+
+            {/* 5. Raw Meta Webhook Log Inspector */}
+            <div className="pt-2 border-t border-white/10">
+              <MetaWebhookLogViewer />
+            </div>
           </div>
         )}
       </AnimatePresence>

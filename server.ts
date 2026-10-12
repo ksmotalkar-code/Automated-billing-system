@@ -16,7 +16,7 @@ import { backgroundQueue } from "./src/server/services/queue.ts";
 import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
-import { createWhatsAppRouter } from "./src/server/routes/whatsapp.ts";
+import { createWhatsAppRouter, recordRawWebhookReceipt } from "./src/server/routes/whatsapp.ts";
 import { pruneTemplateRegistry } from "./src/server/services/templatePruner.ts";
 import { tenantMiddleware, errorHandler, requireAuth, cronAuth, AuthenticatedRequest, verifyHmacSignature, checkRateLimit, checkRateLimitPersistent, setRateLimitDbGetter, DistributedLock } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
@@ -1510,6 +1510,11 @@ ${cmdListText}`;
     msgLower === "पंचायत रिपोर्ट" ||
     msgLower === "मासिक रिपोर्ट"
   ) {
+    const matchingCmd = Array.isArray(chatbotSettings?.commands)
+      ? chatbotSettings.commands.find((c: any) => c.isActive && testChatbotCommand(rawMsgLower, c.triggerWord, c.buttonLabel))
+      : null;
+    const savedCmdPayload = baseText.trim() || (matchingCmd?.response ? processDynamicResponse(matchingCmd.response, custData) : "");
+
     // Deliver reports strictly marked with 'a. panchayat reports'
     const availableReports = await getReportsForOwner(ownerId, ['a. panchayat reports']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
@@ -1550,7 +1555,7 @@ ${cmdListText}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Panchayat_Report"}.pdf`;
 
-      replyText = `📄 *Gram Panchayat Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [a. Panchayat Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = `📄 *Gram Panchayat Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [a. Panchayat Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1573,7 +1578,9 @@ ${cmdListText}`;
         })
         .join("\n\n");
 
-      replyText = `📄 *Gram Panchayat Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = savedCmdPayload
+        ? `${savedCmdPayload}\n\n📄 *Gram Panchayat Reports PDF Links:*\n\n${reportsPdfLinks}`
+        : `📄 *Gram Panchayat Reports PDF Links:*\n\n${reportsPdfLinks}`;
 
       const latestReport = availableReports[0];
       const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
@@ -1589,7 +1596,7 @@ ${cmdListText}`;
       action = "monthly_report";
       matched = true;
     } else {
-      replyText = `📋 *Gram Panchayat Reports Section:*\n\nCurrently, no reports are tagged under "a. Panchayat Reports" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = savedCmdPayload || `📋 *Gram Panchayat Reports Section:*\n\nCurrently, no reports are tagged under "a. Panchayat Reports" in the system records.`;
       action = "monthly_report";
       matched = true;
     }
@@ -1610,6 +1617,11 @@ ${cmdListText}`;
     msgLower.includes("deep detail") ||
     msgLower.includes("deep report")
   ) {
+    const matchingCmd = Array.isArray(chatbotSettings?.commands)
+      ? chatbotSettings.commands.find((c: any) => c.isActive && testChatbotCommand(rawMsgLower, c.triggerWord, c.buttonLabel))
+      : null;
+    const savedCmdPayload = baseText.trim() || (matchingCmd?.response ? processDynamicResponse(matchingCmd.response, custData) : "");
+
     const availableDeepReports = await getReportsForOwner(ownerId, ['b. deep details report']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
@@ -1638,7 +1650,7 @@ ${cmdListText}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Deep_Details_Report"}.pdf`;
 
-      replyText = `📑 *Deep Details Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [b. Deep Details Report]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Note:* If you need further specific voucher investigation, reply with your voucher details.`;
+      replyText = `📑 *Deep Details Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [b. Deep Details Report]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n💡 *Note:* If you need further specific voucher investigation, reply with your voucher details.`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1661,7 +1673,9 @@ ${cmdListText}`;
         })
         .join("\n\n");
 
-      replyText = `📑 *Deep Details Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Need itemized voucher investigation?* Reply with your inquiry (e.g. Month, voucher number, or repair work item) and our team will review within 24 working hours.`;
+      replyText = savedCmdPayload
+        ? `${savedCmdPayload}\n\n📑 *Deep Details Reports PDF Links:*\n\n${reportsPdfLinks}\n\n💡 *Need itemized voucher investigation?* Reply with your inquiry (e.g. Month, voucher number, or repair work item) and our team will review within 24 working hours.`
+        : `📑 *Deep Details Reports PDF Links:*\n\n${reportsPdfLinks}\n\n💡 *Need itemized voucher investigation?* Reply with your inquiry (e.g. Month, voucher number, or repair work item) and our team will review within 24 working hours.`;
 
       const latestReport = availableDeepReports[0];
       const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
@@ -1677,7 +1691,7 @@ ${cmdListText}`;
       action = "deep_report";
       matched = true;
     } else {
-      replyText = `📑 *Deep Details Report Section:*\n\nCurrently, no specific Deep Details Report is uploaded under the "b. Deep Details Report" tag in the system records.\n\nTo inquire about specific expenditures, vouchers, or repair records, please reply with the month and the item you are inquiring about:\n1. Month / Year of expenditure or repair\n2. Bill or voucher number\n3. Description (e.g. pipe repair D-joint purchase, bleaching powder cost, motor repair wire check)\n\nWe will review and provide records within 24 working hours. Thank you.`;
+      replyText = savedCmdPayload || `📑 *Deep Details Report Section:*\n\nCurrently, no specific Deep Details Report is uploaded under the "b. Deep Details Report" tag in the system records.\n\nTo inquire about specific expenditures, vouchers, or repair records, please reply with the month and the item you are inquiring about:\n1. Month / Year of expenditure or repair\n2. Bill or voucher number\n3. Description (e.g. pipe repair D-joint purchase, bleaching powder cost, motor repair wire check)\n\nWe will review and provide records within 24 working hours. Thank you.`;
       action = "deep_report";
       matched = true;
     }
@@ -1714,6 +1728,11 @@ ${cmdListText}`;
     msgLower === "वाटरवर्क्स रिपोर्ट" ||
     msgLower === "वाटर वर्क्स रिपोर्ट"
   ) {
+    const matchingCmd = Array.isArray(chatbotSettings?.commands)
+      ? chatbotSettings.commands.find((c: any) => c.isActive && testChatbotCommand(rawMsgLower, c.triggerWord, c.buttonLabel))
+      : null;
+    const savedCmdPayload = baseText.trim() || (matchingCmd?.response ? processDynamicResponse(matchingCmd.response, custData) : "");
+
     const availableWaterReports = await getReportsForOwner(ownerId, ['c. waterworks reports']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
@@ -1742,7 +1761,7 @@ ${cmdListText}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Waterworks_Report"}.pdf`;
 
-      replyText = `💧 *Waterworks Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [c. Waterworks Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Waterworks Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n🔧 *Jal Jeevan Mission / Waterworks Desk:* Contact your village pump operator for line maintenance.`;
+      replyText = `💧 *Waterworks Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [c. Waterworks Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🔧 *Jal Jeevan Mission / Waterworks Desk:* Contact your village pump operator for line maintenance.`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1765,7 +1784,9 @@ ${cmdListText}`;
         })
         .join("\n\n");
 
-      replyText = `💧 *Waterworks Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Waterworks Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n🔧 *Need drinking water / pump house assistance?* Reply with your inquiry or register a service complaint.`;
+      replyText = savedCmdPayload
+        ? `${savedCmdPayload}\n\n💧 *Waterworks Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🔧 *Need drinking water / pump house assistance?* Reply with your inquiry or register a service complaint.`
+        : `💧 *Waterworks Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🔧 *Need drinking water / pump house assistance?* Reply with your inquiry or register a service complaint.`;
 
       const latestReport = availableWaterReports[0];
       const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
@@ -1781,7 +1802,7 @@ ${cmdListText}`;
       action = "waterworks_report";
       matched = true;
     } else {
-      replyText = `💧 *Waterworks Reports Section:*\n\nCurrently, no reports are tagged under "c. Waterworks Reports" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = savedCmdPayload || `💧 *Waterworks Reports Section:*\n\nCurrently, no reports are tagged under "c. Waterworks Reports" in the system records.`;
       action = "waterworks_report";
       matched = true;
     }
@@ -1806,6 +1827,11 @@ ${cmdListText}`;
     msgLower === "ਰਿਪੋਰਟ" ||
     msgLower === "रिपोर्ट"
   ) {
+    const matchingCmd = Array.isArray(chatbotSettings?.commands)
+      ? chatbotSettings.commands.find((c: any) => c.isActive && testChatbotCommand(rawMsgLower, c.triggerWord, c.buttonLabel))
+      : null;
+    const savedCmdPayload = baseText.trim() || (matchingCmd?.response ? processDynamicResponse(matchingCmd.response, custData) : "");
+
     const allReports = await getReportsForOwner(ownerId, ['a. panchayat reports', 'b. deep details report', 'c. waterworks reports']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
@@ -1843,7 +1869,7 @@ ${cmdListText}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Report"}.pdf`;
 
-      replyText = `📄 *Official Report PDF Link*\n\n📌 *${selectedReport.title}*\n${tagBadge}\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = `📄 *Official Report PDF Link*\n\n📌 *${selectedReport.title}*\n${tagBadge}\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1874,7 +1900,9 @@ ${cmdListText}`;
         })
         .join("\n\n");
 
-      replyText = `📄 *Gram Panchayat & Waterworks Reports:*\n\n${reportsPdfLinks}\n\n🌐 *Reports Portal:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Tip:* Reply with *Panchayat Reports*, *Deep Details Report*, or *Waterworks Reports* to view specific categories.`;
+      replyText = savedCmdPayload
+        ? `${savedCmdPayload}\n\n📄 *Gram Panchayat & Waterworks Reports:*\n\n${reportsPdfLinks}\n\n💡 *Tip:* Reply with *Panchayat Reports*, *Deep Details Report*, or *Waterworks Reports* to view specific categories.`
+        : `📄 *Gram Panchayat & Waterworks Reports:*\n\n${reportsPdfLinks}\n\n💡 *Tip:* Reply with *Panchayat Reports*, *Deep Details Report*, or *Waterworks Reports* to view specific categories.`;
 
       const latestReport = allReports[0];
       const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
@@ -1890,7 +1918,7 @@ ${cmdListText}`;
       action = "report_selected";
       matched = true;
     } else {
-      replyText = `📋 *Reports Archive:*\n\nCurrently, no reports are tagged under Panchayat Reports, Deep Details Report, or Waterworks Reports in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = savedCmdPayload || `📋 *Reports Archive:*\n\nCurrently, no reports are tagged under Panchayat Reports, Deep Details Report, or Waterworks Reports in the system records.`;
       action = "reports_none";
       matched = true;
     }
@@ -5851,6 +5879,60 @@ async function startServer() {
           return res.status(403).send("INVALID_SIGNATURE");
         }
       }
+
+      // Record raw webhook receipt for diagnostics & inspection
+      let messagesCount = 0;
+      let statusesCount = 0;
+      let errorsCount = 0;
+      let eventType: 'message' | 'status' | 'error' | 'verification' | 'other' = 'other';
+      let summaryParts: string[] = [];
+
+      if (Array.isArray(body.entry)) {
+        for (const entry of body.entry) {
+          if (Array.isArray(entry.changes)) {
+            for (const change of entry.changes) {
+              const val = change.value || {};
+              if (Array.isArray(val.messages) && val.messages.length > 0) {
+                messagesCount += val.messages.length;
+                eventType = 'message';
+                const firstMsg = val.messages[0];
+                const fromNum = firstMsg.from || '';
+                const bodyTxt = firstMsg.text?.body || firstMsg.type || 'message';
+                summaryParts.push(`Msg from ${fromNum}: "${bodyTxt}"`);
+              }
+              if (Array.isArray(val.statuses) && val.statuses.length > 0) {
+                statusesCount += val.statuses.length;
+                if (eventType !== 'message') eventType = 'status';
+                const firstStat = val.statuses[0];
+                summaryParts.push(`Status: ${firstStat.status} for ${firstStat.recipient_id || ''}`);
+              }
+              if (Array.isArray(val.errors) && val.errors.length > 0) {
+                errorsCount += val.errors.length;
+                eventType = 'error';
+                summaryParts.push(`Meta Error: ${val.errors[0]?.message || 'Webhook error'}`);
+              }
+            }
+          }
+        }
+      }
+
+      const receiptId = `RAWH_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      recordRawWebhookReceipt({
+        id: receiptId,
+        ownerId: incomingOwnerId,
+        receivedAt: new Date().toISOString(),
+        clientIp: String(clientIp),
+        userAgent: req.headers["user-agent"],
+        signaturePresent: Boolean(metaSignature),
+        signatureVerified: Boolean(metaSignature && appSecret),
+        rawBody: body,
+        summary: summaryParts.join(" | ") || `Raw Meta webhook receipt (${body.object || 'entry'})`,
+        eventType,
+        messagesCount,
+        statusesCount,
+        errorsCount,
+        simulated: false
+      });
 
       // Send 200 OK immediately to satisfy Meta SLA and avoid redundant webhooks
       res.status(200).send("EVENT_RECEIVED");
