@@ -175,7 +175,7 @@ export interface ReportFolder {
   createdAt: string;
 }
 
-export type ReportTag = 'panchayat_report' | 'deep_details_report';
+export type ReportTag = 'panchayat_report' | 'deep_details_report' | 'waterworks_report';
 
 export const REPORT_TAG_LABELS: Record<ReportTag, { label: string; badge: string; description: string }> = {
   panchayat_report: {
@@ -187,6 +187,11 @@ export const REPORT_TAG_LABELS: Record<ReportTag, { label: string; badge: string
     label: "b. Deep Details Report",
     badge: "Deep Details Report",
     description: "Itemized expenditures, voucher specifics, and technical repair reports"
+  },
+  waterworks_report: {
+    label: "c. Waterworks Reports",
+    badge: "Waterworks Reports",
+    description: "Water supply, pump house maintenance, pipeline repairs, and Jal Jeevan Mission reports"
   }
 };
 
@@ -200,7 +205,7 @@ export interface Report {
   files?: ReportFile[];
   assetLink?: string;
   tags?: string[];
-  reportType?: 'panchayat_report' | 'deep_details_report' | 'both';
+  reportType?: 'panchayat_report' | 'deep_details_report' | 'waterworks_report' | 'both' | string;
 }
 
 export interface Transaction {
@@ -1357,14 +1362,31 @@ export function subscribeToSettings(
     if (docSnap.exists()) {
       const data = docSnap.data() as AppSettings;
       
-      // Inject missing default custom templates config for predefined ones (so user doesn't have to manually create them instantly)
-      if (!data.metaCustomTemplates || data.metaCustomTemplates.length === 0) {
-        data.metaCustomTemplates = [
-          { id: 'def_welcome', templateName: data.metaTemplateWelcome || 'welcome_customer_v1', parameters: 'customer_name, button_param' },
-          { id: 'def_billing', templateName: data.metaTemplateBilling || 'bill_reminder_v1', parameters: 'customer_name, billing_amount, new_balance, date, button_param' },
-          { id: 'def_receipt', templateName: data.metaTemplateReceipt || 'payment_ack_v3', parameters: 'customer_name, payment_amount, button_param' },
-          { id: 'def_overdue', templateName: data.metaTemplateOverdue || 'penalty_alert_v1', parameters: 'customer_name, overdue_amount, date, button_param' },
-        ];
+      // Ensure custom templates config exists and includes entries for all configured template names
+      if (!data.metaCustomTemplates) {
+        data.metaCustomTemplates = [];
+      }
+      const existingNames = new Set(data.metaCustomTemplates.map(t => t.templateName));
+      const categoryDefaults = [
+        { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
+        { key: 'metaTemplateBilling', defaultName: 'payment_due_reminder', params: 'customer_name, billing_amount, new_balance, date, button_param', id: 'def_billing' },
+        { key: 'metaTemplateReceipt', defaultName: 'invoice_bill', params: 'customer_name, payment_amount, button_param', id: 'def_receipt' },
+        { key: 'metaTemplateBroadcast', defaultName: 'operation_disruption_2', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', id: 'def_broadcast' },
+        { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
+        { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
+        { key: 'metaTemplateCustom', defaultName: 'general_notification', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', id: 'def_custom' },
+      ];
+      for (const def of categoryDefaults) {
+        const configuredName = (data as any)[def.key] || def.defaultName;
+        if (configuredName && !existingNames.has(configuredName)) {
+          data.metaCustomTemplates.push({
+            id: def.id,
+            templateName: configuredName,
+            parameters: def.params,
+            language: 'en_US'
+          });
+          existingNames.add(configuredName);
+        }
       }
       
       // Ensure billTemplateImage is explicitly null if undefined or empty
@@ -1954,13 +1976,17 @@ export const updateReportTags = async (id: string, tags: string[], explicitOwner
   if (!uid) throw new Error("Not authenticated");
   try {
     const reportRef = doc(db, 'reports', id);
+    let resolvedReportType = 'panchayat_report';
+    if (tags.includes('waterworks_report')) {
+      resolvedReportType = 'waterworks_report';
+    } else if (tags.includes('panchayat_report') && tags.includes('deep_details_report')) {
+      resolvedReportType = 'both';
+    } else if (tags.includes('deep_details_report')) {
+      resolvedReportType = 'deep_details_report';
+    }
     await updateDoc(reportRef, { 
       tags,
-      reportType: tags.includes('panchayat_report') && tags.includes('deep_details_report')
-        ? 'both'
-        : tags.includes('deep_details_report')
-        ? 'deep_details_report'
-        : 'panchayat_report'
+      reportType: resolvedReportType
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `reports/${id}`);
@@ -2012,6 +2038,15 @@ export interface ChatbotCommand {
   mediaName?: string;
 }
 
+export interface BusinessHours {
+  enabled: boolean;
+  startTime: string;
+  endTime: string;
+  days: string[];
+  timezone?: string;
+  offlineMessage?: string;
+}
+
 export interface ChatbotSettings {
   isActive: boolean;
   commands: ChatbotCommand[];
@@ -2021,6 +2056,75 @@ export interface ChatbotSettings {
   includeQuickTip?: boolean;
   hasInitialized?: boolean;
   ownerId?: string;
+  autoReplyOutsideHours?: boolean;
+  businessHours?: BusinessHours;
+  offlineMessage?: string;
+}
+
+export function isOutsideBusinessHours(businessHours?: BusinessHours): boolean {
+  if (!businessHours || !businessHours.enabled) {
+    return false;
+  }
+
+  const startTime = businessHours.startTime || "09:00";
+  const endTime = businessHours.endTime || "17:00";
+  const days = Array.isArray(businessHours.days) && businessHours.days.length > 0
+    ? businessHours.days
+    : ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const timezone = businessHours.timezone || "Asia/Kolkata";
+
+  const now = new Date();
+  let dayName = "Mon";
+  let currentHHMM = "12:00";
+
+  try {
+    const tz = timezone && timezone !== 'local' ? timezone : undefined;
+    const options: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      ...(tz ? { timeZone: tz } : {})
+    };
+    const formatter = new Intl.DateTimeFormat('en-US', options);
+    const parts = formatter.formatToParts(now);
+
+    let dayStr = '';
+    let hourStr = '';
+    let minStr = '';
+
+    for (const p of parts) {
+      if (p.type === 'weekday') dayStr = p.value;
+      if (p.type === 'hour') hourStr = p.value;
+      if (p.type === 'minute') minStr = p.value;
+    }
+
+    if (hourStr === '24') hourStr = '00';
+    dayName = dayStr || 'Mon';
+    currentHHMM = `${hourStr.padStart(2, '0')}:${minStr.padStart(2, '0')}`;
+  } catch (e) {
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    dayName = dayNames[now.getDay()];
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    currentHHMM = `${h}:${m}`;
+  }
+
+  const isDayActive = days.some(d =>
+    d.toLowerCase().startsWith(dayName.toLowerCase()) ||
+    dayName.toLowerCase().startsWith(d.toLowerCase())
+  );
+
+  if (!isDayActive) {
+    return true;
+  }
+
+  if (startTime <= endTime) {
+    return currentHHMM < startTime || currentHHMM >= endTime;
+  } else {
+    const isInside = currentHHMM >= startTime || currentHHMM < endTime;
+    return !isInside;
+  }
 }
 
 export const getChatbotSettings = async (explicitOwnerId?: string): Promise<ChatbotSettings | null> => {

@@ -7,7 +7,7 @@ export interface AuthFetchOptions extends RequestInit {
 /**
  * Robust Authenticated Fetch Client
  * Automatically acquires and attaches Firebase Auth ID tokens and tenant headers
- * to all client-side API calls.
+ * to all client-side API calls with absolute URL normalization and connection resilience.
  */
 export async function authFetch(url: string, options: AuthFetchOptions = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
@@ -30,19 +30,36 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
     headers.set('Content-Type', 'application/json');
   }
 
-  const timeoutMs = options.timeoutMs || 30000;
+  const timeoutMs = options.timeoutMs || 45000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   const signal = options.signal || controller.signal;
 
+  // Resolve absolute URL if relative path supplied to prevent iframe relative fetch resolution failures
+  let targetUrl = url;
+  if (targetUrl.startsWith('/')) {
+    if (typeof window !== 'undefined' && window.location && window.location.origin) {
+      targetUrl = `${window.location.origin}${targetUrl}`;
+    }
+  }
+
   try {
-    const response = await fetch(url, {
+    const response = await fetch(targetUrl, {
       ...options,
       headers,
       signal,
     });
     return response;
+  } catch (netErr: any) {
+    console.warn(`[authFetch] Network connection failure on ${targetUrl}:`, netErr);
+    if (netErr.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
+    }
+    if (netErr.message && netErr.message.includes('Failed to fetch')) {
+      throw new Error(`Network connection error while contacting server (${url}). Please check connection.`);
+    }
+    throw netErr;
   } finally {
     clearTimeout(timeoutId);
   }

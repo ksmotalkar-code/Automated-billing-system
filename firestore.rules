@@ -209,6 +209,12 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.ownerId == request.auth.uid;
     }
 
+    // WhatsApp Template Pruning Audit Logs
+    match /template_prune_logs/{logId} {
+      allow read, list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if false; // Only written via Server Admin SDK / Background Daemon
+    }
+
     // Background Jobs: strictly isolated per tenant
     match /background_jobs/{jobId} {
       allow read: if isOwner(existing());

@@ -297,20 +297,25 @@ export const sendWhatsAppNotification = async (
   // Look for custom parameters mapping
   let dynamicParamsResolved = false;
   if (templateName && settings.metaCustomTemplates) {
-    const matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
+    let matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
+    if (!matchedConfig && templateCategory) {
+      // Fallback matching by default template category IDs or names
+      matchedConfig = settings.metaCustomTemplates.find(t => t.id === `def_${templateCategory}`);
+    }
     if (matchedConfig && matchedConfig.parameters) {
       const paramKeys = matchedConfig.parameters.split(',').map(s => s.trim());
       templateParams = paramKeys.map(key => {
         let val: any = '';
         if (key === 'customer_name') val = customer.name;
         else if (key === 'customer_balance') val = customer.balance;
-        else if (key === 'billing_amount') val = settings.billingAmount;
-        else if (key === 'new_balance') val = customer.balance + settings.billingAmount;
+        else if (key === 'billing_amount') val = settings.billingAmount || 200;
+        else if (key === 'new_balance') val = customer.balance + (settings.billingAmount || 200);
         else if (key === 'payment_amount') val = customer.balance; // Approximation if unknown
-        else if (key === 'overdue_amount') val = customer.balance + settings.penaltyAmount;
+        else if (key === 'overdue_amount') val = customer.balance + (settings.penaltyAmount || 50);
+        else if (key === 'penalty_amount') val = settings.penaltyAmount || 50;
         else if (key === 'date') val = new Date().toLocaleDateString('en-GB');
         else if (key === 'portal_link' || key === 'button_param') val = { isButtonParam: true, value: customer.id, index: '0' };
-        else val = '';
+        else val = key;
         return val;
       });
       dynamicParamsResolved = true;

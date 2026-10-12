@@ -11,6 +11,18 @@ import { PWAUpdateToast } from './components/PWAUpdateToast';
 
 initLogger();
 
+// Auto-activate any waiting service worker and check for latest applet bundle
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    for (const reg of registrations) {
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+      reg.update().catch(() => {});
+    }
+  });
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>

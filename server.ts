@@ -17,6 +17,7 @@ import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
 import { createWhatsAppRouter } from "./src/server/routes/whatsapp.ts";
+import { pruneTemplateRegistry } from "./src/server/services/templatePruner.ts";
 import { tenantMiddleware, errorHandler, requireAuth, cronAuth, AuthenticatedRequest, verifyHmacSignature, checkRateLimit, checkRateLimitPersistent, setRateLimitDbGetter, DistributedLock } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
 import { initializeApp as initializeClientApp } from "firebase/app";
@@ -309,13 +310,13 @@ export async function resolveOwnerIdForWebhook(
       metaWhatsAppPhoneNumberId: masterSettings.metaWhatsAppPhoneNumberId || phoneNumberId,
       metaWhatsAppVerifyToken: masterSettings.metaWhatsAppVerifyToken || s?.metaWhatsAppVerifyToken || "random_123",
       preferredNotificationMethod: masterSettings.preferredNotificationMethod || s?.preferredNotificationMethod || "api",
-      metaTemplateBilling: masterSettings.metaTemplateBilling || s?.metaTemplateBilling || "bill_reminder_v1",
-      metaTemplateReceipt: masterSettings.metaTemplateReceipt || s?.metaTemplateReceipt || "payment_ack_v3",
-      metaTemplateBroadcast: masterSettings.metaTemplateBroadcast || s?.metaTemplateBroadcast || "mass_broadcast_generic",
-      metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome_customer_v1",
-      metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "penalty_alert_v1",
-      metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "service_suspended",
-      metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "custom_alert",
+      metaTemplateBilling: masterSettings.metaTemplateBilling || s?.metaTemplateBilling || "payment_due_reminder",
+      metaTemplateReceipt: masterSettings.metaTemplateReceipt || s?.metaTemplateReceipt || "invoice_bill",
+      metaTemplateBroadcast: masterSettings.metaTemplateBroadcast || s?.metaTemplateBroadcast || "operation_disruption_2",
+      metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome",
+      metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "payment_overdue_1",
+      metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "autopay",
+      metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "general_notification",
       metaCustomTemplates: masterSettings.metaCustomTemplates || s?.metaCustomTemplates,
       appLogoImage: masterSettings.appLogoImage || s?.appLogoImage,
       upiQrCodeImage: masterSettings.upiQrCodeImage || s?.upiQrCodeImage,
@@ -327,7 +328,7 @@ export async function resolveOwnerIdForWebhook(
 
 export async function getReportsForOwner(
   ownerId: string,
-  allowedTags?: ('a. panchayat reports' | 'b. deep details report')[] | ('panchayat_report' | 'deep_details_report')[]
+  allowedTags?: ('a. panchayat reports' | 'b. deep details report' | 'c. waterworks reports')[] | ('panchayat_report' | 'deep_details_report' | 'waterworks_report')[] | string[]
 ): Promise<any[]> {
   const adminDb = getAdminDb();
   let reports: any[] = [];
@@ -369,7 +370,7 @@ export async function getReportsForOwner(
 
 export function isReportMarkedWithTag(
   report: any,
-  allowedTags?: ('a. panchayat reports' | 'b. deep details report')[] | ('panchayat_report' | 'deep_details_report')[]
+  allowedTags?: ('a. panchayat reports' | 'b. deep details report' | 'c. waterworks reports')[] | ('panchayat_report' | 'deep_details_report' | 'waterworks_report')[] | string[]
 ): boolean {
   if (!report) return false;
   
@@ -407,29 +408,50 @@ export function isReportMarkedWithTag(
     t.includes('deep')
   );
 
+  const isWaterworksTag = tags.some((t) =>
+    t === 'c. waterworks reports' ||
+    t === 'waterworks reports' ||
+    t === 'waterworks report' ||
+    t === 'waterworks_report' ||
+    t === 'c. waterworks report' ||
+    t === 'waterworks' ||
+    t === 'water works' ||
+    t.includes('waterwork') ||
+    t.includes('water work') ||
+    t.includes('water supply')
+  );
+
   if (!allowedTags || allowedTags.length === 0) {
-    return isPanchayatTag || isDeepTag;
+    return isPanchayatTag || isDeepTag || isWaterworksTag;
   }
 
   const checkPanchayat = allowedTags.some(at => 
-    at === 'a. panchayat reports' || at === 'panchayat_report'
+    at === 'a. panchayat reports' || at === 'panchayat_report' || (typeof at === 'string' && at.toLowerCase().includes('panchayat'))
   );
   const checkDeep = allowedTags.some(at => 
-    at === 'b. deep details report' || at === 'deep_details_report'
+    at === 'b. deep details report' || at === 'deep_details_report' || (typeof at === 'string' && at.toLowerCase().includes('deep'))
+  );
+  const checkWaterworks = allowedTags.some(at => 
+    at === 'c. waterworks reports' || at === 'waterworks_report' || (typeof at === 'string' && (at.toLowerCase().includes('waterwork') || at.toLowerCase().includes('water works')))
   );
 
-  if (checkPanchayat && checkDeep) {
-    return isPanchayatTag || isDeepTag;
+  if (checkPanchayat && checkDeep && checkWaterworks) {
+    return isPanchayatTag || isDeepTag || isWaterworksTag;
   }
+  if (checkPanchayat && checkDeep) return isPanchayatTag || isDeepTag;
+  if (checkPanchayat && checkWaterworks) return isPanchayatTag || isWaterworksTag;
+  if (checkDeep && checkWaterworks) return isDeepTag || isWaterworksTag;
+
   if (checkPanchayat) return isPanchayatTag;
   if (checkDeep) return isDeepTag;
+  if (checkWaterworks) return isWaterworksTag;
 
   return false;
 }
 
 export function filterReportsByConditionalTags(
   reports: any[],
-  filterMode: 'panchayat_or_deep' | 'panchayat_only' | 'deep_only' = 'panchayat_or_deep'
+  filterMode: 'panchayat_or_deep' | 'panchayat_only' | 'deep_only' | 'waterworks_only' | 'all_tagged' = 'all_tagged'
 ): any[] {
   if (!Array.isArray(reports)) return [];
   return reports.filter((r: any) => {
@@ -439,19 +461,37 @@ export function filterReportsByConditionalTags(
     if (filterMode === 'deep_only') {
       return isReportMarkedWithTag(r, ['b. deep details report']);
     }
-    // 'panchayat_or_deep': fetches only reports marked with tags 'a. panchayat reports' or 'b. deep details report'
-    return isReportMarkedWithTag(r, ['a. panchayat reports', 'b. deep details report']);
+    if (filterMode === 'waterworks_only') {
+      return isReportMarkedWithTag(r, ['c. waterworks reports']);
+    }
+    if (filterMode === 'panchayat_or_deep') {
+      return isReportMarkedWithTag(r, ['a. panchayat reports', 'b. deep details report']);
+    }
+    // 'all_tagged': returns reports marked with any of the 3 tags
+    return isReportMarkedWithTag(r, ['a. panchayat reports', 'b. deep details report', 'c. waterworks reports']);
   });
 }
 
-export function filterReportsByTag(reports: any[], targetTag: 'panchayat_report' | 'deep_details_report' | 'panchayat_or_deep'): any[] {
+export function filterReportsByTag(
+  reports: any[],
+  targetTag: 'panchayat_report' | 'deep_details_report' | 'waterworks_report' | 'panchayat_or_deep' | 'all_tagged'
+): any[] {
   if (targetTag === 'panchayat_or_deep') {
     return filterReportsByConditionalTags(reports, 'panchayat_or_deep');
   }
-  return filterReportsByConditionalTags(
-    reports,
-    targetTag === 'panchayat_report' ? 'panchayat_only' : 'deep_only'
-  );
+  if (targetTag === 'all_tagged') {
+    return filterReportsByConditionalTags(reports, 'all_tagged');
+  }
+  if (targetTag === 'panchayat_report') {
+    return filterReportsByConditionalTags(reports, 'panchayat_only');
+  }
+  if (targetTag === 'deep_details_report') {
+    return filterReportsByConditionalTags(reports, 'deep_only');
+  }
+  if (targetTag === 'waterworks_report') {
+    return filterReportsByConditionalTags(reports, 'waterworks_only');
+  }
+  return reports;
 }
 
 // We'll import node-cron when the user sets up their Firebase Admin
@@ -1149,6 +1189,72 @@ async function generateInvoicePdf(
   return await pdfDoc.saveAsBase64({ dataUri: true });
 }
 
+function isOutsideBusinessHoursInServer(businessHours: any): boolean {
+  if (!businessHours || (!businessHours.enabled && !businessHours.autoReplyOutsideHours)) {
+    return false;
+  }
+
+  const startTime = businessHours.startTime || "09:00";
+  const endTime = businessHours.endTime || "17:00";
+  const days = Array.isArray(businessHours.days) && businessHours.days.length > 0
+    ? businessHours.days
+    : ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const timezone = businessHours.timezone || "Asia/Kolkata";
+
+  const now = new Date();
+  let dayName = "Mon";
+  let currentHHMM = "12:00";
+
+  try {
+    const tz = timezone && timezone !== 'local' ? timezone : undefined;
+    const options: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      ...(tz ? { timeZone: tz } : {})
+    };
+    const formatter = new Intl.DateTimeFormat('en-US', options);
+    const parts = formatter.formatToParts(now);
+
+    let dayStr = '';
+    let hourStr = '';
+    let minStr = '';
+
+    for (const p of parts) {
+      if (p.type === 'weekday') dayStr = p.value;
+      if (p.type === 'hour') hourStr = p.value;
+      if (p.type === 'minute') minStr = p.value;
+    }
+
+    if (hourStr === '24') hourStr = '00';
+    dayName = dayStr || 'Mon';
+    currentHHMM = `${hourStr.padStart(2, '0')}:${minStr.padStart(2, '0')}`;
+  } catch (e) {
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    dayName = dayNames[now.getDay()];
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    currentHHMM = `${h}:${m}`;
+  }
+
+  const isDayActive = days.some((d: string) =>
+    d.toLowerCase().startsWith(dayName.toLowerCase()) ||
+    dayName.toLowerCase().startsWith(d.toLowerCase())
+  );
+
+  if (!isDayActive) {
+    return true;
+  }
+
+  if (startTime <= endTime) {
+    return currentHHMM < startTime || currentHHMM >= endTime;
+  } else {
+    const isInside = currentHHMM >= startTime || currentHHMM < endTime;
+    return !isInside;
+  }
+}
+
 async function routeSystemIntent(
   rawMsgLower: string,
   custData: any,
@@ -1163,6 +1269,41 @@ async function routeSystemIntent(
   let matched = false;
   let attachments: any[] = [];
   let action: string = "";
+
+  // Check Off-Hours Auto-Reply Trigger
+  const isAutoReplyEnabled = Boolean(
+    chatbotSettings?.autoReplyOutsideHours ||
+    chatbotSettings?.businessHours?.enabled
+  );
+  const forceOutsideHours = Boolean(custData?.simulateOutsideHours);
+
+  if (isAutoReplyEnabled && (forceOutsideHours || isOutsideBusinessHoursInServer(chatbotSettings?.businessHours))) {
+    const bh = chatbotSettings?.businessHours || {};
+    const startTime = bh.startTime || "09:00";
+    const endTime = bh.endTime || "17:00";
+    const daysList = Array.isArray(bh.days) && bh.days.length > 0 ? bh.days.join(", ") : "Mon-Fri";
+    const custName = custData?.name || "Resident";
+
+    let template = chatbotSettings?.offlineMessage || bh.offlineMessage || "";
+    if (!template.trim()) {
+      template = `Namaste ${custName}! 🙏 Our Gram Panchayat office is currently CLOSED.\n\n⏰ Business Operating Hours:\n• Hours: ${startTime} to ${endTime}\n• Days: ${daysList}\n\nYour message has been received and logged into our system. Our official team will review it during office hours. For urgent water supply emergencies, please call the Helpline at 1800-123-4567.`;
+    } else {
+      template = template
+        .replace(/\{\{?name\}\}?/gi, custName)
+        .replace(/\{\{?startTime\}\}?/gi, startTime)
+        .replace(/\{\{?endTime\}\}?/gi, endTime)
+        .replace(/\{\{?days\}\}?/gi, daysList)
+        .replace(/\{\{?timezone\}\}?/gi, bh.timezone || "Asia/Kolkata");
+    }
+
+    return {
+      matched: true,
+      replyText: template.trim(),
+      attachments: [],
+      action: "offline_auto_reply",
+      isOutsideHours: true
+    };
+  }
 
   if (
     msgLower === "download bill" ||
@@ -1337,49 +1478,29 @@ ${cmdListText}`;
     matched = true;
     action = "complaint";
   } else if (
-    custData?.pendingReportSelection ||
     custData?.pendingMonthlyReport ||
-    msgLower === "report" ||
-    msgLower === "reports" ||
-    msgLower === "get report" ||
-    msgLower === "get reports" ||
-    msgLower === "view report" ||
-    msgLower === "view reports" ||
-    msgLower === "show report" ||
-    msgLower === "show reports" ||
-    msgLower === "all reports" ||
     msgLower === "panchayat report" ||
     msgLower === "panchayat reports" ||
+    msgLower === "a. panchayat reports" ||
+    msgLower === "a. panchayat report" ||
     msgLower === "gram panchayat report" ||
     msgLower === "gram panchayat reports" ||
     msgLower === "monthly report" ||
     msgLower === "monthly reports" ||
     msgLower === "annual report" ||
     msgLower === "audit report" ||
-    msgLower === "water report" ||
     msgLower === "panchayat pdf" ||
-    msgLower === "report pdf" ||
-    msgLower === "pdf report" ||
-    msgLower === "sysreports" ||
     msgLower === "sysmonthly" ||
     msgLower.includes("panchayat report") ||
     msgLower.includes("panchayat reports") ||
     msgLower.includes("monthly report") ||
-    msgLower.includes("audit report") ||
-    msgLower.includes("annual report") ||
-    msgLower.startsWith("report ") ||
-    msgLower.startsWith("get report ") ||
-    msgLower.startsWith("view report ") ||
-    msgLower.startsWith("download report ") ||
-    msgLower === "ਰਿਪੋਰਟ" ||
     msgLower === "ਪੰਚਾਇਤ ਰਿਪੋਰਟ" ||
     msgLower === "ਮਹੀਨਾਵਾਰ ਰਿਪੋਰਟ" ||
-    msgLower === "रिपोर्ट" ||
     msgLower === "पंचायत रिपोर्ट" ||
     msgLower === "मासिक रिपोर्ट"
   ) {
-    // Conditional filtering: fetch ONLY reports marked with tags 'a. panchayat reports' or 'b. deep details report', rather than returning the full list
-    const availableReports = await getReportsForOwner(ownerId, ['a. panchayat reports', 'b. deep details report']);
+    // Deliver reports strictly marked with 'a. panchayat reports'
+    const availableReports = await getReportsForOwner(ownerId, ['a. panchayat reports']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
     // Check if user is specifying/selecting a particular report
@@ -1412,21 +1533,13 @@ ${cmdListText}`;
     }
 
     if (selectedReport) {
-      const isPanchayat = isReportMarkedWithTag(selectedReport, ['a. panchayat reports']);
-      const isDeep = isReportMarkedWithTag(selectedReport, ['b. deep details report']);
-      const tagBadge = isPanchayat && isDeep
-        ? "🏷️ [a. Panchayat Reports & b. Deep Details Report]"
-        : isDeep
-        ? "🏷️ [b. Deep Details Report]"
-        : "🏷️ [a. Panchayat Reports]";
-
       const reportDownloadUrl = (selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://")))
         ? selectedReport.assetLink
         : `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Panchayat_Report"}.pdf`;
 
-      replyText = `📄 *Gram Panchayat Report PDF Link*\n\n📌 *${selectedReport.title}*\n${tagBadge}\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+      replyText = `📄 *Gram Panchayat Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [a. Panchayat Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1439,27 +1552,18 @@ ${cmdListText}`;
       action = "report_selected";
       matched = true;
     } else if (availableReports.length > 0) {
-      // Directly deliver all conditionally filtered reports with valid tags and PDF links
       const reportsPdfLinks = availableReports
         .map((r: any, i: number) => {
           const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
             ? r.assetLink
             : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
           const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
-          const isPanchayat = isReportMarkedWithTag(r, ['a. panchayat reports']);
-          const isDeep = isReportMarkedWithTag(r, ['b. deep details report']);
-          const tagBadge = isPanchayat && isDeep
-            ? "🏷️ [a. Panchayat Reports & b. Deep Details]"
-            : isDeep
-            ? "🏷️ [b. Deep Details Report]"
-            : "🏷️ [a. Panchayat Reports]";
-          return `${i + 1}. *${r.title}* ${tagBadge}${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+          return `${i + 1}. *${r.title}* 🏷️ [a. Panchayat Reports]${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
         })
         .join("\n\n");
 
       replyText = `📄 *Gram Panchayat Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
 
-      // Also attach the first/latest report's PDF if available as an attached file
       const latestReport = availableReports[0];
       const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
@@ -1471,11 +1575,11 @@ ${cmdListText}`;
         });
       }
 
-      action = "report_selected";
+      action = "monthly_report";
       matched = true;
     } else {
-      replyText = `📋 *Gram Panchayat Reports Section:*\n\nCurrently, no reports are tagged under "a. Panchayat Reports" or "b. Deep Details Report" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
-      action = "reports_none";
+      replyText = `📋 *Gram Panchayat Reports Section:*\n\nCurrently, no reports are tagged under "a. Panchayat Reports" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      action = "monthly_report";
       matched = true;
     }
   } else if (
@@ -1489,8 +1593,6 @@ ${cmdListText}`;
     msgLower === "deep detail" ||
     msgLower === "deep details" ||
     msgLower === "sysdeepreport" ||
-    msgLower === "sysreport" ||
-    msgLower === "system_report" ||
     msgLower.includes("deep detail report") ||
     msgLower.includes("deep details report") ||
     msgLower.includes("b. deep details report") ||
@@ -1500,7 +1602,6 @@ ${cmdListText}`;
     const availableDeepReports = await getReportsForOwner(ownerId, ['b. deep details report']);
     const protocol = reqHost.includes("localhost") ? "http" : "https";
 
-    // Check if user is specifying/selecting a particular deep detail report
     let selectedReport: any = null;
     const cleanDigits = msgLower.replace(/[^\d]/g, "");
     const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
@@ -1526,7 +1627,7 @@ ${cmdListText}`;
       const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
       const fileName = firstFile?.name || `${selectedReport.title || "Deep_Details_Report"}.pdf`;
 
-      replyText = `📑 *Deep Details Report PDF Link*\n\n📌 *${selectedReport.title}*\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Note:* If you need further specific voucher investigation, reply with your voucher details.`;
+      replyText = `📑 *Deep Details Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [b. Deep Details Report]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Panchayat Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Note:* If you need further specific voucher investigation, reply with your voucher details.`;
 
       if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
         const base64Data = firstFile.data.split(",")[1] || firstFile.data;
@@ -1539,14 +1640,13 @@ ${cmdListText}`;
       action = "deep_report_selected";
       matched = true;
     } else if (availableDeepReports.length > 0) {
-      // Deliver all available tagged Deep Details reports PDF links
       const reportsPdfLinks = availableDeepReports
         .map((r: any, i: number) => {
           const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
             ? r.assetLink
             : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
           const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
-          return `${i + 1}. *${r.title}*${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+          return `${i + 1}. *${r.title}* 🏷️ [b. Deep Details Report]${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
         })
         .join("\n\n");
 
@@ -1566,8 +1666,221 @@ ${cmdListText}`;
       action = "deep_report";
       matched = true;
     } else {
-      replyText = `📑 *Deep Details Report Section:*\n\nCurrently, no specific Deep Details Report is uploaded under the "Deep Details Report" tag in the system records.\n\nTo inquire about specific expenditures, vouchers, or repair records, please reply with the month and the item you are inquiring about:\n1. Month / Year of expenditure or repair\n2. Bill or voucher number\n3. Description (e.g. pipe repair D-joint purchase, bleaching powder cost, motor repair wire check)\n\nWe will review and provide records within 24 working hours. Thank you.`;
+      replyText = `📑 *Deep Details Report Section:*\n\nCurrently, no specific Deep Details Report is uploaded under the "b. Deep Details Report" tag in the system records.\n\nTo inquire about specific expenditures, vouchers, or repair records, please reply with the month and the item you are inquiring about:\n1. Month / Year of expenditure or repair\n2. Bill or voucher number\n3. Description (e.g. pipe repair D-joint purchase, bleaching powder cost, motor repair wire check)\n\nWe will review and provide records within 24 working hours. Thank you.`;
       action = "deep_report";
+      matched = true;
+    }
+  } else if (
+    custData?.pendingWaterworksReport ||
+    msgLower === "waterworks report" ||
+    msgLower === "waterworks reports" ||
+    msgLower === "water works report" ||
+    msgLower === "water works reports" ||
+    msgLower === "waterworks" ||
+    msgLower === "water works" ||
+    msgLower === "c. waterworks reports" ||
+    msgLower === "c. waterworks report" ||
+    msgLower === "c. waterworks" ||
+    msgLower === "syswaterworks" ||
+    msgLower === "syswaterreport" ||
+    msgLower === "syswaterworksreport" ||
+    msgLower === "water supply report" ||
+    msgLower === "water supply reports" ||
+    msgLower === "pump house report" ||
+    msgLower === "pump house reports" ||
+    msgLower === "pipeline report" ||
+    msgLower === "water report" ||
+    msgLower === "water reports" ||
+    msgLower.includes("waterworks report") ||
+    msgLower.includes("waterworks reports") ||
+    msgLower.includes("water works report") ||
+    msgLower.includes("water works reports") ||
+    msgLower.includes("waterworks") ||
+    msgLower.includes("water works") ||
+    msgLower.includes("water supply report") ||
+    msgLower === "ਵਾਟਰਵਰਕਸ ਰਿਪੋਰਟ" ||
+    msgLower === "ਵਾਟਰ ਵਰਕਸ ਰਿਪੋਰਟ" ||
+    msgLower === "वाटरवर्क्स रिपोर्ट" ||
+    msgLower === "वाटर वर्क्स रिपोर्ट"
+  ) {
+    const availableWaterReports = await getReportsForOwner(ownerId, ['c. waterworks reports']);
+    const protocol = reqHost.includes("localhost") ? "http" : "https";
+
+    let selectedReport: any = null;
+    const cleanDigits = msgLower.replace(/[^\d]/g, "");
+    const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
+    const isDirectNumber = numericChoice !== null && numericChoice >= 1 && numericChoice <= availableWaterReports.length;
+
+    if (isDirectNumber && availableWaterReports.length > 0) {
+      selectedReport = availableWaterReports[numericChoice - 1];
+    } else {
+      const cleanTerm = msgLower
+        .replace(/^(waterworks report|waterworks reports|water works report|water works|waterworks|water report|report|get|view|download)\s+/gi, "")
+        .trim();
+      if (cleanTerm.length > 1 && availableWaterReports.length > 0) {
+        selectedReport = availableWaterReports.find((r: any) =>
+          r.title && (r.title.toLowerCase().includes(cleanTerm) || cleanTerm.includes(r.title.toLowerCase()))
+        );
+      }
+    }
+
+    if (selectedReport) {
+      const reportDownloadUrl = (selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://")))
+        ? selectedReport.assetLink
+        : `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
+      const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
+      const fileName = firstFile?.name || `${selectedReport.title || "Waterworks_Report"}.pdf`;
+
+      replyText = `💧 *Waterworks Report PDF Link*\n\n📌 *${selectedReport.title}*\n🏷️ [c. Waterworks Reports]\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Waterworks Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n🔧 *Jal Jeevan Mission / Waterworks Desk:* Contact your village pump operator for line maintenance.`;
+
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: fileName,
+          data: base64Data,
+        });
+      }
+      action = "waterworks_report_selected";
+      matched = true;
+    } else if (availableWaterReports.length > 0) {
+      const reportsPdfLinks = availableWaterReports
+        .map((r: any, i: number) => {
+          const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
+            ? r.assetLink
+            : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
+          const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
+          return `${i + 1}. *${r.title}* 🏷️ [c. Waterworks Reports]${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+        })
+        .join("\n\n");
+
+      replyText = `💧 *Waterworks Reports PDF Links:*\n\n${reportsPdfLinks}\n\n🌐 *Waterworks Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n🔧 *Need drinking water / pump house assistance?* Reply with your inquiry or register a service complaint.`;
+
+      const latestReport = availableWaterReports[0];
+      const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: firstFile.name || `${latestReport.title || "Waterworks_Report"}.pdf`,
+          data: base64Data,
+        });
+      }
+
+      action = "waterworks_report";
+      matched = true;
+    } else {
+      replyText = `💧 *Waterworks Reports Section:*\n\nCurrently, no reports are tagged under "c. Waterworks Reports" in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      action = "waterworks_report";
+      matched = true;
+    }
+  } else if (
+    custData?.pendingReportSelection ||
+    msgLower === "report" ||
+    msgLower === "reports" ||
+    msgLower === "get report" ||
+    msgLower === "get reports" ||
+    msgLower === "view report" ||
+    msgLower === "view reports" ||
+    msgLower === "show report" ||
+    msgLower === "show reports" ||
+    msgLower === "all reports" ||
+    msgLower === "sysreports" ||
+    msgLower === "report pdf" ||
+    msgLower === "pdf report" ||
+    msgLower.startsWith("report ") ||
+    msgLower.startsWith("get report ") ||
+    msgLower.startsWith("view report ") ||
+    msgLower.startsWith("download report ") ||
+    msgLower === "ਰਿਪੋਰਟ" ||
+    msgLower === "रिपोर्ट"
+  ) {
+    const allReports = await getReportsForOwner(ownerId, ['a. panchayat reports', 'b. deep details report', 'c. waterworks reports']);
+    const protocol = reqHost.includes("localhost") ? "http" : "https";
+
+    let selectedReport: any = null;
+    const cleanDigits = msgLower.replace(/[^\d]/g, "");
+    const numericChoice = cleanDigits ? parseInt(cleanDigits, 10) : null;
+    const isDirectNumber = numericChoice !== null && numericChoice >= 1 && numericChoice <= allReports.length;
+
+    if (isDirectNumber && allReports.length > 0) {
+      selectedReport = allReports[numericChoice - 1];
+    } else {
+      const cleanTerm = msgLower
+        .replace(/^(report|get report|view report|download report|all reports|for|give me|send me)\s+/gi, "")
+        .trim();
+      if (cleanTerm.length > 0 && allReports.length > 0) {
+        selectedReport = allReports.find((r: any) =>
+          r.title && (r.title.toLowerCase().includes(cleanTerm) || cleanTerm.includes(r.title.toLowerCase()))
+        );
+      }
+    }
+
+    if (selectedReport) {
+      const isPanchayat = isReportMarkedWithTag(selectedReport, ['a. panchayat reports']);
+      const isDeep = isReportMarkedWithTag(selectedReport, ['b. deep details report']);
+      const isWater = isReportMarkedWithTag(selectedReport, ['c. waterworks reports']);
+      const tagsList: string[] = [];
+      if (isPanchayat) tagsList.push("a. Panchayat");
+      if (isDeep) tagsList.push("b. Deep Details");
+      if (isWater) tagsList.push("c. Waterworks");
+      const tagBadge = tagsList.length > 0 ? `🏷️ [${tagsList.join(" & ")}]` : "";
+
+      const reportDownloadUrl = (selectedReport.assetLink && (selectedReport.assetLink.startsWith("http://") || selectedReport.assetLink.startsWith("https://")))
+        ? selectedReport.assetLink
+        : `${protocol}://${reqHost}/api/reports/download/${selectedReport.id}`;
+      const firstFile = selectedReport.files && selectedReport.files.length > 0 ? selectedReport.files[0] : null;
+      const fileName = firstFile?.name || `${selectedReport.title || "Report"}.pdf`;
+
+      replyText = `📄 *Official Report PDF Link*\n\n📌 *${selectedReport.title}*\n${tagBadge}\n📥 *PDF Link:* ${reportDownloadUrl}${selectedReport.assetLink && !reportDownloadUrl.includes(selectedReport.assetLink) ? `\n🌐 *Cloud / Drive Link:* ${selectedReport.assetLink}` : ""}\n\n🌐 *Reports Section:*\n${protocol}://${reqHost}/?portal=true&section=reports`;
+
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: fileName,
+          data: base64Data,
+        });
+      }
+      action = "report_selected";
+      matched = true;
+    } else if (allReports.length > 0) {
+      const reportsPdfLinks = allReports
+        .map((r: any, i: number) => {
+          const pdfUrl = (r.assetLink && (r.assetLink.startsWith("http://") || r.assetLink.startsWith("https://")))
+            ? r.assetLink
+            : `${protocol}://${reqHost}/api/reports/download/${r.id}`;
+          const isPanchayat = isReportMarkedWithTag(r, ['a. panchayat reports']);
+          const isDeep = isReportMarkedWithTag(r, ['b. deep details report']);
+          const isWater = isReportMarkedWithTag(r, ['c. waterworks reports']);
+          const tagsList: string[] = [];
+          if (isPanchayat) tagsList.push("a. Panchayat");
+          if (isDeep) tagsList.push("b. Deep Details");
+          if (isWater) tagsList.push("c. Waterworks");
+          const tagBadge = tagsList.length > 0 ? `🏷️ [${tagsList.join(" & ")}]` : "";
+          const dateStr = r.createdAt ? new Date(r.createdAt).toLocaleDateString("en-GB") : "";
+          return `${i + 1}. *${r.title}* ${tagBadge}${dateStr ? ` _(${dateStr})_` : ""}\n📥 *PDF Link:* ${pdfUrl}`;
+        })
+        .join("\n\n");
+
+      replyText = `📄 *Gram Panchayat & Waterworks Reports:*\n\n${reportsPdfLinks}\n\n🌐 *Reports Portal:*\n${protocol}://${reqHost}/?portal=true&section=reports\n\n💡 *Tip:* Reply with *Panchayat Reports*, *Deep Details Report*, or *Waterworks Reports* to view specific categories.`;
+
+      const latestReport = allReports[0];
+      const firstFile = latestReport?.files && latestReport.files.length > 0 ? latestReport.files[0] : null;
+      if (firstFile && firstFile.data && firstFile.data.startsWith("data:")) {
+        const base64Data = firstFile.data.split(",")[1] || firstFile.data;
+        attachments.push({
+          type: "file",
+          name: firstFile.name || `${latestReport.title || "Report"}.pdf`,
+          data: base64Data,
+        });
+      }
+
+      action = "report_selected";
+      matched = true;
+    } else {
+      replyText = `📋 *Reports Archive:*\n\nCurrently, no reports are tagged under Panchayat Reports, Deep Details Report, or Waterworks Reports in the system records.\n\n🌐 *Reports Section:* ${protocol}://${reqHost}/?portal=true&section=reports`;
+      action = "reports_none";
       matched = true;
     }
   } else if (
@@ -2785,20 +3098,20 @@ async function startServer() {
       if (!customTemplateName) {
         if (templateCategory === "billing") {
           templateName =
-            settings.metaTemplateBilling || "monthly_bill_notification";
+            settings.metaTemplateBilling || "payment_due_reminder";
         } else if (templateCategory === "receipt") {
-          templateName = settings.metaTemplateReceipt || "payment_ack_v3";
+          templateName = settings.metaTemplateReceipt || "invoice_bill";
         } else if (templateCategory === "broadcast") {
           templateName =
-            settings.metaTemplateBroadcast || "mass_broadcast_generic";
+            settings.metaTemplateBroadcast || "operation_disruption_2";
         } else if (templateCategory === "welcome") {
-          templateName = settings.metaTemplateWelcome || "welcome_customer_v1";
+          templateName = settings.metaTemplateWelcome || "welcome";
         } else if (templateCategory === "overdue") {
-          templateName = settings.metaTemplateOverdue || "penalty_alert_v1";
+          templateName = settings.metaTemplateOverdue || "payment_overdue_1";
         } else if (templateCategory === "suspension") {
-          templateName = settings.metaTemplateSuspension || "service_suspended";
+          templateName = settings.metaTemplateSuspension || "autopay";
         } else if (templateCategory === "custom") {
-          templateName = settings.metaTemplateCustom || "custom_alert";
+          templateName = settings.metaTemplateCustom || "general_notification";
         }
       }
 
@@ -2834,10 +3147,7 @@ async function startServer() {
           components.push({
             type: "body",
             parameters: bodyParams.map((p) => {
-              let textVal = String(p.value || p);
-              if (textVal.length > 30) {
-                textVal = textVal.substring(0, 27) + "...";
-              }
+              const textVal = String(p.value !== undefined ? p.value : p);
               return {
                 type: "text",
                 text: textVal,
@@ -2862,7 +3172,10 @@ async function startServer() {
 
       let lang = "en_US";
       if (settings?.metaCustomTemplates) {
-        const matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.templateName === templateName);
+        let matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.templateName === templateName);
+        if (!matchedTmpl && templateCategory) {
+          matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.id === `def_${templateCategory}`);
+        }
         if (matchedTmpl && matchedTmpl.language) {
           lang = matchedTmpl.language;
         }
@@ -2991,11 +3304,14 @@ async function startServer() {
         let userMsg = latestData.error?.error_user_msg || "";
         let detailsStr = latestData.error?.error_data?.details?.toLowerCase() || "";
         const errCode = latestData.error?.code;
+        const fullErrText = `${errMsg} ${userTitle} ${userMsg} ${detailsStr}`.toLowerCase();
         
-        const isParamCountError = errMsg.toLowerCase().includes("132000") || errCode === 132000 || detailsStr.includes("does not match the expected number of params");
-        const isHeaderIssue = errMsg.toLowerCase().includes("132018") || errCode === 132018 || detailsStr.includes("title component") || detailsStr.includes("header") || detailsStr.includes("no parameters allowed");
-        const isButtonNoParamAllowed = detailsStr.includes("button") && detailsStr.includes("no parameters allowed");
-        const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || errCode === 131008 || (detailsStr.includes("button") && detailsStr.includes("requires a parameter"));
+        const isParamCountError = errMsg.toLowerCase().includes("132000") || errCode === 132000 || fullErrText.includes("does not match the expected number of params") || fullErrText.includes("expected number of params") || fullErrText.includes("has ") && fullErrText.includes("expected");
+        const isHeaderIssue = errMsg.toLowerCase().includes("132018") || errCode === 132018 || fullErrText.includes("title component") || fullErrText.includes("header") || fullErrText.includes("no parameters allowed");
+        const isHeaderDocRequired = errCode === 132012 || fullErrText.includes("format mismatch") || fullErrText.includes("expected document");
+        const isButtonNoParamAllowed = fullErrText.includes("button") && (fullErrText.includes("no parameters allowed") || fullErrText.includes("not supported"));
+        const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || errCode === 131008 || (fullErrText.includes("button") && fullErrText.includes("requires a parameter"));
+        const isLanguageMismatch = errCode === 132001 || fullErrText.includes("does not exist in language") || fullErrText.includes("param template['language']") || (fullErrText.includes("language") && fullErrText.includes("exist"));
         
         const isRateLimit =
           lastStatus === 429 ||
@@ -3018,13 +3334,44 @@ async function startServer() {
           await new Promise(r => setTimeout(r, backoffMs));
           madeChanges = true;
         }
+
+        if (isLanguageMismatch && bodyPayload.type === "template" && bodyPayload.template) {
+          const currentLang = bodyPayload.template.language?.code || "en_US";
+          let nextLang = "en";
+          if (currentLang === "en_US") nextLang = "en";
+          else if (currentLang === "en") nextLang = "hi";
+          else if (currentLang === "hi") nextLang = "pa";
+          else nextLang = "en_US";
+
+          console.warn(`[WhatsApp] Language code '${currentLang}' failed for template '${bodyPayload.template.name}'. Retrying with language '${nextLang}'...`);
+          bodyPayload.template.language = { code: nextLang };
+          madeChanges = true;
+        }
+
+        if (!madeChanges && isHeaderDocRequired && bodyPayload.type === "template" && bodyPayload.template) {
+          console.warn("[WhatsApp] Retrying message by injecting required document header...");
+          const dummyDocUrl = `${settings?.publicPortalBaseUrl || 'https://automated-billing-system-1.onrender.com'}/api/documents/invoice.pdf`;
+          bodyPayload.template.components = (bodyPayload.template.components || []).filter((c: any) => c.type !== "header");
+          bodyPayload.template.components.unshift({
+            type: "header",
+            parameters: [{
+              type: "document",
+              document: {
+                link: mediaUrl || dummyDocUrl,
+                filename: mediaName || "Document.pdf"
+              }
+            }]
+          });
+          madeChanges = true;
+        }
         
-        if (bodyPayload.type === "template" && bodyPayload.template.components) {
+        if (!madeChanges && bodyPayload.type === "template" && bodyPayload.template) {
+          bodyPayload.template.components = bodyPayload.template.components || [];
           if (isHeaderIssue || isButtonNoParamAllowed || isButtonMissingParam) {
             const hasHeader = bodyPayload.template.components.some((c: any) => c.type === "header");
             const hasButton = bodyPayload.template.components.some((c: any) => c.type === "button");
             
-            if (hasHeader && (detailsStr.includes("header") || (!isButtonNoParamAllowed && !isButtonMissingParam))) {
+            if (hasHeader && (fullErrText.includes("header") || (!isButtonNoParamAllowed && !isButtonMissingParam))) {
               console.warn("[WhatsApp] Retrying message without header component as template may not support it...");
               bodyPayload.template.components = bodyPayload.template.components.filter((c: any) => c.type !== "header");
               madeChanges = true;
@@ -3057,7 +3404,7 @@ async function startServer() {
           }
           
           if (!madeChanges && isParamCountError) {
-            const match = detailsStr.match(/expected number of params \((\d+)\)/);
+            const match = fullErrText.match(/expected (?:number of )?params? \(?(\d+)\)?/) || fullErrText.match(/has \d+ elements, expected (\d+)/) || fullErrText.match(/expected (\d+)/);
             if (match && match[1]) {
               const expectedCount = parseInt(match[1], 10);
               console.warn(`[WhatsApp] Retrying message with exactly ${expectedCount} body parameters...`);
@@ -3970,6 +4317,35 @@ async function startServer() {
     }
   });
 
+  // 3. Periodic Background Template Registry Pruning Trigger
+  // Runs periodically to prune drifted templateRegistry entries and prevent configuration drift
+  const templatePruneSchedule = process.env.TEMPLATE_PRUNE_CRON_SCHEDULE || "0 2 * * *"; // Daily at 2:00 AM UTC
+  cron.schedule(templatePruneSchedule, async () => {
+    console.log("[Background Cron] Triggering periodic Template Registry pruning...");
+    if (!admin.apps.length) return;
+    const db = getAdminDb();
+    if (!db) return;
+
+    const lock = new DistributedLock(() => getAdminDb());
+    const lockName = "cron_template_prune_ALL";
+    const workerId = `template_prune_${process.env.HOSTNAME || process.pid}`;
+    const lockResult = await lock.acquire(lockName, 300000, workerId); // 5-minute lock TTL
+
+    if (!lockResult.acquired) {
+      console.log(`[Background Cron] Skipping template pruning: Lock held by worker (${lockResult.existingWorkerId})`);
+      return;
+    }
+
+    try {
+      const report = await pruneTemplateRegistry({ dryRun: false });
+      console.log(`[Background Cron] Periodic template pruning completed: ${report.totalPruned} pruned, ${report.totalRetained} retained across ${report.totalTenants} tenants.`);
+    } catch (pruneErr) {
+      console.error("[Background Cron] Periodic template pruning failed:", pruneErr);
+    } finally {
+      await lock.release(lockName, workerId);
+    }
+  });
+
   // Send Individual Message API (Protected by requireAuth)
   app.post("/api/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
@@ -4026,13 +4402,12 @@ async function startServer() {
           if (resolvedSettings) {
             settings = {
               ...resolvedSettings,
-              ...settings
+              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
+              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
+              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
+              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
+              ...(method ? { preferredNotificationMethod: method } : {}),
             };
-            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
-            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
-            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
-            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
-            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
@@ -4095,16 +4470,15 @@ async function startServer() {
           if (resolvedSettings) {
             settings = {
               ...resolvedSettings,
-              ...settings
+              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
+              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
+              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
+              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
+              ...(method ? { preferredNotificationMethod: method } : {}),
             };
             if (resolvedOwnerId) {
               effectiveOwnerId = resolvedOwnerId;
             }
-            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
-            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
-            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
-            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
-            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn(
@@ -4232,13 +4606,12 @@ async function startServer() {
           if (resolvedSettings) {
             settings = {
               ...resolvedSettings,
-              ...settings
+              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
+              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
+              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
+              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
+              ...(method ? { preferredNotificationMethod: method } : {}),
             };
-            if (apiKey) settings.metaWhatsAppApiKey = apiKey;
-            if (phoneId) settings.metaWhatsAppPhoneNumberId = phoneId;
-            if (watiAccessToken) settings.watiAccessToken = watiAccessToken;
-            if (watiApiEndpoint) settings.watiApiEndpoint = watiApiEndpoint;
-            if (method) settings.preferredNotificationMethod = method;
           }
         } catch (e) {
           console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/test:", e);
@@ -4751,6 +5124,325 @@ async function startServer() {
     } catch (err: any) {
       console.error("[audit-logs] Error reading audit logs:", err);
       return res.status(500).json({ error: err.message || "Failed to read audit logs" });
+    }
+  });
+
+  // Dedicated Meta Template Diagnostic Report Endpoint (Protected by requireAuth)
+  app.get("/api/wa/template-diagnostics", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const effectiveOwnerId = req.ownerId || (req.query.ownerId as string) || "system";
+      const { settings: resolvedSettings, ownerId: resolvedOwnerId } = await resolveOwnerIdForWebhook(effectiveOwnerId);
+      const settings = resolvedSettings;
+
+      if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
+        return res.status(400).json({
+          success: false,
+          error: "WhatsApp API credentials are not configured in settings."
+        });
+      }
+
+      const apiKey = settings.metaWhatsAppApiKey;
+      const phoneId = settings.metaWhatsAppPhoneNumberId;
+
+      // 1. Fetch Phone Node Information from Meta
+      let phoneInfo: any = {};
+      try {
+        const phoneRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}?fields=id,verified_name,display_phone_number,quality_rating,account_mode,status,platform_type`, {
+          headers: { Authorization: `Bearer ${apiKey}` }
+        });
+        phoneInfo = await phoneRes.json();
+      } catch (e: any) {
+        phoneInfo = { error: e.message };
+      }
+
+      // 2. Define Template Categories and Current Registry Configuration
+      const templateCategories = [
+        {
+          key: "welcome",
+          label: "Welcome / Onboarding",
+          settingField: "metaTemplateWelcome",
+          defaultFallback: "welcome",
+          expectedParams: ["customer_name"],
+          supportsButton: false,
+          requiresDocHeader: false
+        },
+        {
+          key: "billing",
+          label: "Cyclic Invoice / Billing",
+          settingField: "metaTemplateBilling",
+          defaultFallback: "payment_due_reminder",
+          expectedParams: ["customer_name", "billing_amount", "new_balance", "date", "button_param"],
+          supportsButton: true,
+          requiresDocHeader: false
+        },
+        {
+          key: "receipt",
+          label: "Success Payment Receipt",
+          settingField: "metaTemplateReceipt",
+          defaultFallback: "invoice_bill",
+          expectedParams: ["customer_name", "payment_amount", "button_param"],
+          supportsButton: true,
+          requiresDocHeader: true
+        },
+        {
+          key: "broadcast",
+          label: "Bulk Broadcast / Outage",
+          settingField: "metaTemplateBroadcast",
+          defaultFallback: "operation_disruption_2",
+          expectedParams: ["customer_name", "billing_amount", "new_balance", "date", "overdue_amount", "penalty_amount", "button_param"],
+          supportsButton: true,
+          requiresDocHeader: false
+        },
+        {
+          key: "overdue",
+          label: "Overdue Penalty Alert",
+          settingField: "metaTemplateOverdue",
+          defaultFallback: "payment_overdue_1",
+          expectedParams: ["customer_name", "overdue_amount", "date", "penalty_amount", "button_param"],
+          supportsButton: true,
+          requiresDocHeader: false
+        },
+        {
+          key: "suspension",
+          label: "Service Suspension / Autopay",
+          settingField: "metaTemplateSuspension",
+          defaultFallback: "autopay",
+          expectedParams: ["customer_name", "customer_balance", "date"],
+          supportsButton: false,
+          requiresDocHeader: false
+        },
+        {
+          key: "custom",
+          label: "Custom / General Alert",
+          settingField: "metaTemplateCustom",
+          defaultFallback: "general_notification",
+          expectedParams: ["customer_name", "billing_amount", "new_balance", "date", "overdue_amount", "button_param"],
+          supportsButton: true,
+          requiresDocHeader: false
+        }
+      ];
+
+      const customTemplatesList = settings.metaCustomTemplates || [];
+      const selfNumber = phoneInfo.display_phone_number?.replace(/\D/g, '') || '';
+      let testMobile = '918683968672';
+      try {
+        const db = getAdminDb();
+        if (db) {
+          const sampleCust = await db.collection("customers").where("ownerId", "==", effectiveOwnerId).limit(1).get();
+          if (!sampleCust.empty) {
+            const raw = (sampleCust.docs[0].data().mobileNumber || sampleCust.docs[0].data().phone || '').replace(/\D/g, '');
+            if (raw && raw !== selfNumber && raw.length >= 10) {
+              testMobile = raw;
+            }
+          }
+        }
+      } catch (custErr) {
+        // Fallback default customer mobile
+      }
+
+      // 3. Inspect each template
+      const diagnosticResults = [];
+      for (const cat of templateCategories) {
+        const configuredToken = (settings as any)[cat.settingField] || cat.defaultFallback;
+        const matchedCustom = customTemplatesList.find((t: any) => t.templateName === configuredToken || t.id === `def_${cat.key}`);
+        const configuredParamsStr = matchedCustom ? matchedCustom.parameters : cat.expectedParams.join(', ');
+        const configuredParamList = configuredParamsStr.split(',').map((s: string) => s.trim());
+
+        // Probe Meta Graph API
+        let metaStatus = "UNKNOWN";
+        let metaDetails = "";
+        let metaLanguage = matchedCustom?.language || "en_US";
+        let liveVerified = false;
+
+        try {
+          const probeComponents: any[] = [];
+          if (cat.requiresDocHeader) {
+            probeComponents.push({
+              type: "header",
+              parameters: [{
+                type: "document",
+                document: {
+                  link: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+                  filename: "Invoice.pdf"
+                }
+              }]
+            });
+          }
+          const bodyCount = configuredParamList.filter((p: string) => p !== "button_param" && p !== "portal_link").length;
+          if (bodyCount > 0) {
+            probeComponents.push({
+              type: "body",
+              parameters: Array.from({ length: bodyCount }, (_, i) => ({ type: "text", text: `Sample_${i+1}` }))
+            });
+          }
+          if (cat.supportsButton && configuredParamList.includes("button_param")) {
+            probeComponents.push({
+              type: "button",
+              sub_type: "url",
+              index: "0",
+              parameters: [{ type: "text", text: "?portal=true&customerId=1" }]
+            });
+          }
+
+          const probeRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              messaging_product: "whatsapp",
+              to: testMobile,
+              type: "template",
+              template: {
+                name: configuredToken,
+                language: { code: metaLanguage },
+                components: probeComponents.length > 0 ? probeComponents : undefined
+              }
+            })
+          });
+
+          const probeData = await probeRes.json();
+          if (probeRes.ok) {
+            metaStatus = "ACTIVE_VERIFIED";
+            metaDetails = "Template accepted by Meta Cloud API (HTTP 200). Parameters match active specification.";
+            liveVerified = true;
+          } else {
+            const err = probeData.error;
+            const msg = err?.message || "Unknown Meta error";
+            const errCode = err?.code;
+            const details = err?.error_data?.details || "";
+
+            if (errCode === 132000) {
+              metaStatus = "PARAM_COUNT_MISMATCH";
+              metaDetails = details || msg;
+            } else if (errCode === 131008) {
+              metaStatus = "BUTTON_PARAM_MISSING";
+              metaDetails = details || msg;
+            } else if (errCode === 132018) {
+              metaStatus = "BUTTON_NOT_ALLOWED";
+              metaDetails = details || msg;
+            } else if (errCode === 132012) {
+              metaStatus = "HEADER_FORMAT_MISMATCH";
+              metaDetails = details || msg;
+            } else if (errCode === 132001 || msg.includes("does not exist in language")) {
+              metaStatus = "LANGUAGE_NOT_FOUND";
+              metaDetails = details || msg;
+            } else if (errCode === 100 && (details.includes("Invalid parameter") || msg.includes("Invalid parameter"))) {
+              metaStatus = "TOKEN_NOT_REGISTERED";
+              metaDetails = `Token "${configuredToken}" was not found or is inactive on Meta Dashboard.`;
+            } else {
+              metaStatus = `META_ERROR_${errCode || "UNKNOWN"}`;
+              metaDetails = details ? `${msg} (${details})` : msg;
+            }
+          }
+        } catch (callErr: any) {
+          metaStatus = "PROBE_NETWORK_ERROR";
+          metaDetails = callErr.message;
+        }
+
+        diagnosticResults.push({
+          category: cat.key,
+          label: cat.label,
+          settingField: cat.settingField,
+          configuredToken,
+          status: metaStatus,
+          liveVerified,
+          details: metaDetails,
+          expectedParameters: cat.expectedParams.join(', '),
+          currentConfiguredParameters: configuredParamsStr,
+          supportsButton: cat.supportsButton,
+          requiresDocHeader: cat.requiresDocHeader
+        });
+      }
+
+      const totalActive = diagnosticResults.filter(r => r.liveVerified || r.status === "ACTIVE_VERIFIED").length;
+
+      return res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        ownerId: effectiveOwnerId,
+        phoneInfo: {
+          id: phoneInfo.id || phoneId,
+          verifiedName: phoneInfo.verified_name || "N/A",
+          displayPhoneNumber: phoneInfo.display_phone_number || "N/A",
+          qualityRating: phoneInfo.quality_rating || "N/A",
+          status: phoneInfo.status || "CONNECTED",
+          accountMode: phoneInfo.account_mode || "LIVE"
+        },
+        summary: {
+          totalCategories: templateCategories.length,
+          verifiedActive: totalActive,
+          healthyPercentage: Math.round((totalActive / templateCategories.length) * 100),
+          allGreen: totalActive === templateCategories.length
+        },
+        templates: diagnosticResults
+      });
+    } catch (err: any) {
+      console.error("[template-diagnostics] Error:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Manual / On-demand Template Registry Pruning Endpoint (Protected by requireAuth)
+  app.post("/api/wa/templates/prune", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const effectiveOwnerId = req.ownerId || (req.body.ownerId as string) || "system";
+      const dryRun = Boolean(req.body.dryRun);
+
+      console.log(`[API /api/wa/templates/prune] Triggering pruning for owner "${effectiveOwnerId}" (dryRun: ${dryRun})`);
+      const report = await pruneTemplateRegistry({
+        ownerId: effectiveOwnerId === "system" ? undefined : effectiveOwnerId,
+        dryRun
+      });
+
+      return res.json({
+        success: true,
+        dryRun,
+        timestamp: new Date().toISOString(),
+        summary: {
+          totalTenants: report.totalTenants,
+          totalInspected: report.totalInspected,
+          totalPruned: report.totalPruned,
+          totalRetained: report.totalRetained
+        },
+        report
+      });
+    } catch (err: any) {
+      console.error("[API /api/wa/templates/prune] Error:", err);
+      return res.status(500).json({ success: false, error: err.message || "Failed to prune template registry" });
+    }
+  });
+
+  // Template Prune Audit History Endpoint (Protected by requireAuth)
+  app.get("/api/wa/templates/prune-history", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const effectiveOwnerId = req.ownerId || (req.query.ownerId as string) || "system";
+      const db = getAdminDb();
+      if (!db) {
+        return res.json({ success: true, logs: [] });
+      }
+
+      let query = db.collection("template_prune_logs");
+      let snapshot;
+      if (effectiveOwnerId && effectiveOwnerId !== "system" && effectiveOwnerId !== "ALL") {
+        snapshot = await query.where("ownerId", "==", effectiveOwnerId).limit(25).get();
+      } else {
+        snapshot = await query.limit(25).get();
+      }
+
+      const logs = snapshot.docs.map(d => d.data());
+      // Sort descending by timestamp in memory to avoid index requirements
+      logs.sort((a: any, b: any) => (new Date(b.timestamp || 0).getTime()) - (new Date(a.timestamp || 0).getTime()));
+
+      return res.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        logs
+      });
+    } catch (err: any) {
+      console.error("[API /api/wa/templates/prune-history] Error:", err);
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -5435,7 +6127,8 @@ async function startServer() {
                       
                       if (
                         matchedCustomer.pendingReportSelection ||
-                        matchedCustomer.pendingMonthlyReport
+                        matchedCustomer.pendingMonthlyReport ||
+                        matchedCustomer.pendingWaterworksReport
                       ) {
                         const isExit =
                           msgLower.startsWith("hi") ||
@@ -5450,9 +6143,11 @@ async function startServer() {
                             await dbInstance.collection("customers").doc(matchedCustomer.id).update({
                               pendingReportSelection: false,
                               pendingMonthlyReport: false,
+                              pendingWaterworksReport: false,
                             });
                             matchedCustomer.pendingReportSelection = false;
                             matchedCustomer.pendingMonthlyReport = false;
+                            matchedCustomer.pendingWaterworksReport = false;
                           } catch (e) {}
                         } else {
                           try {
@@ -5467,10 +6162,11 @@ async function startServer() {
                             );
 
                             if (intentRes.matched) {
-                              if (intentRes.action === "report_selected") {
+                              if (intentRes.action === "report_selected" || intentRes.action === "waterworks_report_selected" || intentRes.action === "deep_report_selected") {
                                 await dbInstance.collection("customers").doc(matchedCustomer.id).update({
                                   pendingReportSelection: false,
                                   pendingMonthlyReport: false,
+                                  pendingWaterworksReport: false,
                                 });
                               }
 
@@ -5750,17 +6446,28 @@ async function startServer() {
                              pendingMonthlyReport: false,
                            });
                         } catch (e) {}
-                      } else if (intentRes.action === "report_selected" && dbInstance) {
+                      } else if ((intentRes.action === "report_selected" || intentRes.action === "waterworks_report_selected" || intentRes.action === "deep_report_selected") && dbInstance) {
                         try {
                            await dbInstance.collection("customers").doc(matchedCustomer.id).update({
                              pendingReportSelection: false,
                              pendingMonthlyReport: false,
+                             pendingWaterworksReport: false,
                            });
                         } catch (e) {}
                       } else if (intentRes.action === "monthly_report" && dbInstance) {
                         try {
                            await dbInstance.collection("customers").doc(matchedCustomer.id).update({
-                             pendingMonthlyReport: true
+                             pendingMonthlyReport: true,
+                             pendingReportSelection: false,
+                             pendingWaterworksReport: false,
+                           });
+                        } catch (e) {}
+                      } else if (intentRes.action === "waterworks_report" && dbInstance) {
+                        try {
+                           await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                             pendingWaterworksReport: true,
+                             pendingReportSelection: false,
+                             pendingMonthlyReport: false,
                            });
                         } catch (e) {}
                       } else if (intentRes.action === "deep_report" && dbInstance) {
@@ -6509,6 +7216,7 @@ To link your connection or update your registered number, please contact the Gra
       const inputMobile = req.body.mobile ? String(req.body.mobile).replace(/\D/g, "") : "";
       const customerId = req.body.customerId as string | undefined;
       const casePreset = req.body.casePreset as string | undefined; // "active_with_due" | "advance_paid" | "suspended" | "unregistered" | "custom"
+      const simulateOutsideHours = Boolean(req.body.simulateOutsideHours);
 
       const settings = resolvedSettings || (await getSettings(effectiveOwnerId));
       const chatbotSettings = await getChatbotSettings(effectiveOwnerId);
@@ -6615,6 +7323,9 @@ To link your connection or update your registered number, please contact the Gra
       }
 
       // Real Registered Customer Execution Flow
+      if (simulateOutsideHours && matchedCustomer) {
+        matchedCustomer.simulateOutsideHours = true;
+      }
       if (req.body.pendingReportSelection !== undefined) {
         matchedCustomer.pendingReportSelection = Boolean(req.body.pendingReportSelection);
       }
@@ -7181,11 +7892,25 @@ To link your connection or update your registered number, please contact the Gra
       }
     }
     console.log(`[Production] Serving static files from: ${distPath}`);
-    app.use(express.static(distPath, { maxAge: "1d" }));
+    app.use(express.static(distPath, {
+      maxAge: 0,
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        } else {
+          res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+        }
+      }
+    }));
     app.get("*", (req, res, next) => {
       if (req.path.startsWith("/api/") || req.path === "/health") {
         return next();
       }
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       res.sendFile(path.join(distPath, "index.html"));
     });
   } else {

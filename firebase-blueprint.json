@@ -151,7 +151,9 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
         "folderId": { "type": "string", "description": "Associated folder ID" },
         "ownerId": { "type": "string", "description": "Owner ID", "maxLength": 128 },
-        "assetLink": { "type": "string", "description": "Public asset link" }
+        "assetLink": { "type": "string", "description": "Public asset link" },
+        "tags": { "type": "array", "items": { "type": "string" }, "description": "WhatsApp dispatch tags: panchayat_report, deep_details_report, waterworks_report" },
+        "reportType": { "type": "string", "description": "Report category classification" }
       },
       "required": ["id", "title", "content", "createdAt", "ownerId"]
     },

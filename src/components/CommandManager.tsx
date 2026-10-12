@@ -125,6 +125,7 @@ function CommandManager({ settings, onUpdate, isCompact, ownerId }: CommandManag
       { id: 'sysdlinvoice', buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Here is your latest official invoice.'), isActive: true },
       { id: 'sysmonthly', buttonLabel: `📊 ${t('Panchayat Reports')}`, triggerWord: t('Panchayat Reports'), response: t('Here are the direct PDF download links for Gram Panchayat reports.'), isActive: true },
       { id: 'sysdeepreport', buttonLabel: `📑 ${t('Deep Details Report')}`, triggerWord: t('Deep Details Report'), response: t('Here are the deep detailed itemized expenditure reports and vouchers.'), isActive: true },
+      { id: 'syswaterworks', buttonLabel: `💧 ${t('Waterworks Reports')}`, triggerWord: t('Waterworks Reports'), response: t('Here are the direct PDF download links for Waterworks & Water Supply reports.'), isActive: true },
       { id: 'syscomplaint', buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('Please describe your complaint in the next message.'), isActive: true },
     ];
     

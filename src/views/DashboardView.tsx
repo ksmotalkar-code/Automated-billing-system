@@ -13,6 +13,17 @@ export function DashboardView() {
   const { customers, transactions, complaints, settings, automationErrors } = useData();
 
   const [whatsappWebStatus, setWhatsappWebStatus] = useState<any>(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  useEffect(() => {
+    const handleManualRefresh = () => {
+      setRefreshTrigger(prev => prev + 1);
+    };
+    window.addEventListener('showroom_manual_refresh', handleManualRefresh);
+    return () => {
+      window.removeEventListener('showroom_manual_refresh', handleManualRefresh);
+    };
+  }, []);
 
   useEffect(() => {
     // Fetch WhatsApp Web Status
@@ -58,7 +69,7 @@ export function DashboardView() {
       overdueAccounts: customers.filter(c => c.status === 'Active' && c.balance > 2000).length,
       pendingComplaints: complaints.filter(c => c.status === 'Pending')
     };
-  }, [customers, transactions, complaints]);
+  }, [customers, transactions, complaints, refreshTrigger]);
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-IN', {
@@ -94,7 +105,7 @@ export function DashboardView() {
       }
       return acc;
     }, []).slice(-7);
-  }, [transactions, settings?.billingAmount]);
+  }, [transactions, settings?.billingAmount, refreshTrigger]);
 
   const displayData = chartData;
 

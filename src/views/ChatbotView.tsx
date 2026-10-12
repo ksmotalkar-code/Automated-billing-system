@@ -27,6 +27,7 @@ export function ChatbotView() {
   const [testingDiagnostics, setTestingDiagnostics] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [simMessage, setSimMessage] = useState("Hi");
+  const [simOutsideHours, setSimOutsideHours] = useState(false);
   const [simResult, setSimResult] = useState<any>(null);
   const [simulating, setSimulating] = useState(false);
   const [pendingReportSelection, setPendingReportSelection] = useState(false);
@@ -89,8 +90,9 @@ ${cmdList}`;
     }
   };
 
-  const runSimulation = async (text?: string) => {
+  const runSimulation = async (text?: string, forceOffHours?: boolean) => {
     const msgToSend = text || simMessage;
+    const isOffHours = forceOffHours !== undefined ? forceOffHours : simOutsideHours;
     setSimulating(true);
     setSimResult(null);
     try {
@@ -99,6 +101,7 @@ ${cmdList}`;
         body: JSON.stringify({ 
           message: msgToSend,
           pendingReportSelection,
+          simulateOutsideHours: isOffHours,
           ownerId: currentOwnerId || undefined
         })
       });
@@ -127,14 +130,33 @@ ${cmdList}`;
         { id: "sysdlinvoice", buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Dear {{name}}, your latest invoice has been generated. Please find it attached below.'), isActive: true },
         { id: "sysmonthly", buttonLabel: `📊 ${t('Panchayat Reports')}`, triggerWord: t('Panchayat Reports'), response: t('Here are the direct PDF download links for Gram Panchayat reports.'), isActive: true },
         { id: "sysdeepreport", buttonLabel: `📑 ${t('Deep Details Report')}`, triggerWord: t('Deep Details Report'), response: t('Here are the detailed itemized expenditure reports and vouchers for Gram Panchayat.'), isActive: true },
+        { id: "syswaterworks", buttonLabel: `💧 ${t('Waterworks Reports')}`, triggerWord: t('Waterworks Reports'), response: t('Here are the direct PDF download links for Waterworks & Water Supply reports.'), isActive: true },
         { id: "syscomplaint", buttonLabel: `🛠️ ${t('Complaints')}`, triggerWord: t('Complaints'), response: t('We are sorry for the inconvenience, {{name}}. Please describe your complaint in the next message.'), isActive: true }
       ];
 
       if (data && Array.isArray(data.commands)) {
-        // User already has saved commands: preserve them strictly and NEVER resurrect deleted ones!
+        // User already has saved commands: preserve them strictly and ensure new system capability is available
+        let currentCommands = [...data.commands];
+        const hasWaterworks = currentCommands.some(c => c.id === 'syswaterworks' || (c.triggerWord && c.triggerWord.toLowerCase().includes('waterworks')));
+        if (!hasWaterworks) {
+          const deepIdx = currentCommands.findIndex(c => c.id === 'sysdeepreport');
+          const waterworksCmd: ChatbotCommand = {
+            id: "syswaterworks",
+            buttonLabel: `💧 ${t('Waterworks Reports')}`,
+            triggerWord: t('Waterworks Reports'),
+            response: t('Here are the direct PDF download links for Waterworks & Water Supply reports.'),
+            isActive: true
+          };
+          if (deepIdx !== -1) {
+            currentCommands.splice(deepIdx + 1, 0, waterworksCmd);
+          } else {
+            currentCommands.push(waterworksCmd);
+          }
+        }
+
         setSettings({
           isActive: data.isActive ?? true,
-          commands: data.commands,
+          commands: currentCommands,
           quickTip: data.quickTip || "",
           quickTips: Array.isArray(data.quickTips) && data.quickTips.length > 0
             ? data.quickTips
@@ -418,7 +440,7 @@ ${cmdList}`;
                 </div>
 
                 <div className="flex flex-wrap gap-1">
-                  {["Hi", "Panchayat Reports", "Deep Details Report", "Pay Bill", "Download My Bill", "1", "2"].map((btn) => (
+                  {["Hi", "Panchayat Reports", "Deep Details Report", "Waterworks Reports", "Pay Bill", "Download My Bill", "1", "2", "3"].map((btn) => (
                     <button
                       key={btn}
                       onClick={() => {
@@ -430,6 +452,21 @@ ${cmdList}`;
                       {btn}
                     </button>
                   ))}
+                </div>
+
+                <div className="flex items-center justify-between border-t border-blue-500/10 pt-2">
+                  <label className="flex items-center gap-1.5 cursor-pointer text-[9px] font-black uppercase text-indigo-600 dark:text-indigo-400">
+                    <input
+                      type="checkbox"
+                      checked={simOutsideHours}
+                      onChange={(e) => setSimOutsideHours(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                    />
+                    <span>🌙 Test Off-Hours Auto-Reply Mode</span>
+                  </label>
+                  <span className="text-[8px] text-neutral-400 font-bold uppercase">
+                    {simOutsideHours ? "Simulating Closed Hours" : "Simulating Open Hours"}
+                  </span>
                 </div>
 
                 {simResult && (

@@ -6,7 +6,7 @@ import { saveSettings, saveChatbotSettings, AppSettings, resetDatabase, WhatsApp
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
-import { Trash2, LogOut, MessageCircle, Loader2, X, Info, Activity } from "lucide-react";
+import { Trash2, LogOut, MessageCircle, Loader2, X, Info, Activity, Scissors, AlertTriangle } from "lucide-react";
 import { auth, logout } from "../firebase";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { v4 as uuidv4 } from "uuid";
@@ -15,6 +15,7 @@ import { CommandManagerWrapper } from '../components/CommandManager';
 import { WhatsAppChatbotConfig } from '../components/WhatsAppChatbotConfig';
 import { uploadImageToStorage, deleteImageFromStorage } from '../lib/storage';
 import { authFetch } from '../lib/api';
+import { WhatsAppTemplateDiagnosticsView } from '../components/WhatsAppTemplateDiagnosticsView';
 
 const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -137,6 +138,111 @@ export function SettingsView() {
     }
   };
 
+  const [showDiagnosticsModal, setShowDiagnosticsModal] = useState(false);
+  const [diagnosticsReport, setDiagnosticsReport] = useState<any>(null);
+  const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false);
+
+  const handleRunDiagnostics = async () => {
+    setIsLoadingDiagnostics(true);
+    setShowDiagnosticsModal(true);
+    try {
+      const resp = await authFetch('/api/wa/template-diagnostics');
+      const data = await resp.json();
+      setDiagnosticsReport(data);
+    } catch (e: any) {
+      console.error("Failed to run template diagnostics:", e);
+      setDiagnosticsReport({ success: false, error: e.message || "Failed to contact diagnostic endpoint" });
+    } finally {
+      setIsLoadingDiagnostics(false);
+    }
+  };
+
+  const [templateValidationResults, setTemplateValidationResults] = useState<Record<string, any>>({});
+  const [isValidatingTemplates, setIsValidatingTemplates] = useState(false);
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
+
+  const handleRunLiveValidation = async () => {
+    setIsValidatingTemplates(true);
+    setValidationMessage(null);
+    try {
+      const resp = await authFetch('/api/wa/template-diagnostics');
+      const data = await resp.json();
+      if (data.success && Array.isArray(data.templates)) {
+        const resultsMap: Record<string, any> = {};
+        data.templates.forEach((item: any) => {
+          resultsMap[item.settingField] = item;
+        });
+        setTemplateValidationResults(resultsMap);
+        const failedCount = data.templates.filter((t: any) => !t.liveVerified && t.status !== 'ACTIVE_VERIFIED').length;
+        if (failedCount > 0) {
+          setValidationMessage(`Live Validation Warning: Found ${failedCount} template(s) with warnings, missing status, or rejected on Meta platform.`);
+        } else {
+          setValidationMessage(`Live Validation Success: All templates are active and verified on Meta platform.`);
+        }
+      } else {
+        setValidationMessage(`Validation failed: ${data.error || 'Unknown error'}`);
+      }
+    } catch (err: any) {
+      setValidationMessage(`Live check request failed: ${err.message}`);
+    } finally {
+      setIsValidatingTemplates(false);
+    }
+  };
+
+  const applyVerifiedTemplatePreset = () => {
+    const verifiedTemplates = [
+      { id: 'def_welcome', templateName: 'welcome', parameters: 'customer_name', language: 'en_US' },
+      { id: 'def_billing', templateName: 'payment_due_reminder', parameters: 'customer_name, billing_amount, new_balance, date, button_param', language: 'en_US' },
+      { id: 'def_receipt', templateName: 'invoice_bill', parameters: 'customer_name, payment_amount, button_param', language: 'en_US' },
+      { id: 'def_broadcast', templateName: 'operation_disruption_2', parameters: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', language: 'en_US' },
+      { id: 'def_overdue', templateName: 'payment_overdue_1', parameters: 'customer_name, overdue_amount, date, penalty_amount, button_param', language: 'en_US' },
+      { id: 'def_suspension', templateName: 'autopay', parameters: 'customer_name, customer_balance, date', language: 'en_US' },
+      { id: 'def_custom', templateName: 'general_notification', parameters: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', language: 'en_US' },
+    ];
+    setSettings({
+      ...settings,
+      metaTemplateWelcome: 'welcome',
+      metaTemplateBilling: 'payment_due_reminder',
+      metaTemplateReceipt: 'invoice_bill',
+      metaTemplateBroadcast: 'operation_disruption_2',
+      metaTemplateOverdue: 'payment_overdue_1',
+      metaTemplateSuspension: 'autopay',
+      metaTemplateCustom: 'general_notification',
+      metaCustomTemplates: verifiedTemplates
+    });
+  };
+
+  const [isPruningSettings, setIsPruningSettings] = useState(false);
+  const [pruneSettingsMessage, setPruneSettingsMessage] = useState<string | null>(null);
+
+  const handlePruneTemplateRegistry = async () => {
+    if (isPruningSettings) return;
+    setIsPruningSettings(true);
+    setPruneSettingsMessage(null);
+    try {
+      const res = await authFetch('/api/wa/templates/prune', {
+        method: 'POST',
+        body: JSON.stringify({ dryRun: false })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const { totalPruned, totalRetained } = data.summary || {};
+        setPruneSettingsMessage(
+          totalPruned > 0
+            ? `Pruned ${totalPruned} drifted template(s). ${totalRetained} valid templates preserved in Firestore.`
+            : `Template Registry is clean & in sync with active Meta templates.`
+        );
+      } else {
+        setPruneSettingsMessage(`Prune failed: ${data.error}`);
+      }
+    } catch (err: any) {
+      setPruneSettingsMessage(`Prune failed: ${err.message}`);
+    } finally {
+      setIsPruningSettings(false);
+      setTimeout(() => setPruneSettingsMessage(null), 6000);
+    }
+  };
+
   const [tokenVerifyStatus, setTokenVerifyStatus] = useState<{
     isLoading: boolean;
     tested: boolean;
@@ -246,6 +352,7 @@ export function SettingsView() {
           { id: "sysdlinvoice", buttonLabel: "🧾 Download Invoice", triggerWord: "Download Invoice", response: "Here is your latest official invoice.", isActive: true },
           { id: "sysmonthly", buttonLabel: "📊 Panchayat Reports", triggerWord: "Panchayat Reports", response: "Here are the direct PDF download links for Gram Panchayat reports.", isActive: true },
           { id: "sysdeepreport", buttonLabel: "📑 Deep Details Report", triggerWord: "Deep Details Report", response: "Here are the detailed expenditure reports and vouchers.", isActive: true },
+          { id: "syswaterworks", buttonLabel: "💧 Waterworks Reports", triggerWord: "Waterworks Reports", response: "Here are the direct PDF download links for Waterworks & Water Supply reports.", isActive: true },
           { id: "syscomplaint", buttonLabel: "🛠️ Complaints", triggerWord: "Complaints", response: "Please describe your complaint in the next message.", isActive: true }
         ];
 
@@ -596,14 +703,14 @@ export function SettingsView() {
             onClick={() => setActiveTab(tab.id as any)}
             className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all whitespace-nowrap flex-1 justify-center ${
               activeTab === tab.id 
-                ? `neu-flat bg-white dark:bg-black/20 ${tab.color} ring-1 ring-white/10` 
+                 ? 'neu-flat bg-white dark:bg-black/20 ' + tab.color + ' ring-1 ring-white/10'
                 : 'neu-text-muted hover:opacity-100 opacity-60'
             }`}
           >
             <tab.icon className="w-4 h-4" />
             {tab.label}
           </button>
-        ))}
+         ))}
       </div>
 
       {activeTab === 'broadcast' && (
@@ -699,7 +806,8 @@ export function SettingsView() {
                      >
                        {provider.label}
                      </button>
-                   ))}
+                    ))}
+
                 </div>
               </div>
 
@@ -837,36 +945,144 @@ export function SettingsView() {
                 {/* Templates (Only for API Modes) */}
                 {(settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati') && (
                   <div className="col-span-full space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
-                    <div className="flex items-center gap-3">
-                       <FileCode className="w-5 h-5 text-emerald-600" />
-                       <div>
-                        <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-emerald-600 leading-none">Template Registry</h4>
-                        <p className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter opacity-60 mt-1">Pre-approved Meta Message IDs</p>
-                       </div>
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                      <div className="flex items-center gap-3">
+                        <FileCode className="w-5 h-5 text-emerald-600" />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-[11px] font-black uppercase tracking-[0.15em] text-emerald-600 leading-none">Template Registry</h4>
+                            <span className="px-2 py-0.5 rounded-full text-[8px] font-black uppercase bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 flex items-center gap-1 shadow-xs">
+                              <ShieldCheck className="w-3 h-3 text-emerald-500" /> Active Meta Anti-Drift
+                            </span>
+                          </div>
+                          <p className="text-[9px] font-bold neu-text-muted uppercase tracking-tighter opacity-60 mt-1">Pre-approved Meta Message IDs & Tokens</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={handlePruneTemplateRegistry}
+                          disabled={isPruningSettings}
+                          className="px-3 py-1.5 neu-flat hover:neu-pressed rounded-xl text-[9px] font-black uppercase tracking-wider text-amber-600 flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
+                          title="Prune drifted or unverified template registry entries from Firestore"
+                        >
+                          {isPruningSettings ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
+                          Prune Stale Tokens
+                        </button>
+                        <button
+                          type="button"
+                          onClick={applyVerifiedTemplatePreset}
+                          className="px-3 py-1.5 neu-flat hover:neu-pressed rounded-xl text-[9px] font-black uppercase tracking-wider text-purple-600 flex items-center gap-1.5 transition-all shadow-sm"
+                          title="Auto-fill active Meta tokens & verified parameter mappings"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          Sync Verified Presets
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRunLiveValidation}
+                          disabled={isValidatingTemplates}
+                          className="px-3 py-1.5 neu-flat hover:neu-pressed rounded-xl text-[9px] font-black uppercase tracking-wider text-blue-600 flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-50"
+                          title="Perform real-time live check against Meta Business API for all templates"
+                        >
+                          {isValidatingTemplates ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                          Validate Templates Live
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRunDiagnostics}
+                          disabled={isLoadingDiagnostics}
+                          className="px-3 py-1.5 neu-flat hover:neu-pressed rounded-xl text-[9px] font-black uppercase tracking-wider text-emerald-600 flex items-center gap-1.5 transition-all shadow-sm"
+                        >
+                          {isLoadingDiagnostics ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                          Run Diagnostics
+                        </button>
+                      </div>
                     </div>
+
+                    {pruneSettingsMessage && (
+                      <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-700 text-xs font-bold flex items-center justify-between shadow-inner">
+                        <div className="flex items-center gap-2">
+                          <Scissors className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                          <span>{pruneSettingsMessage}</span>
+                        </div>
+                        <button onClick={() => setPruneSettingsMessage(null)} className="text-amber-800 hover:text-black text-xs font-black">✕</button>
+                      </div>
+                    )}
+
+                    {validationMessage && (
+                      <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-700 text-xs font-bold flex items-center justify-between shadow-inner">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-blue-600 flex-shrink-0 animate-pulse" />
+                          <span>{validationMessage}</span>
+                        </div>
+                        <button onClick={() => setValidationMessage(null)} className="text-blue-800 hover:text-black text-xs font-black">✕</button>
+                      </div>
+                    )}
                     
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                        {[
-                         { id: 'metaTemplateWelcome', label: 'Welcome/Onboarding', placeholder: 'welcome_customer_v1' },
-                         { id: 'metaTemplateBilling', label: 'Cyclic Invoice', placeholder: 'bill_reminder_v1' },
-                         { id: 'metaTemplateReceipt', label: 'Success Receipt', placeholder: 'payment_ack_v3' },
-                         { id: 'metaTemplateBroadcast', label: 'Bulk Broadcast', placeholder: 'mass_broadcast_generic' },
-                         { id: 'metaTemplateOverdue', label: 'Overdue Penalty', placeholder: 'penalty_alert_v1' },
-                         { id: 'metaTemplateSuspension', label: 'Suspension Notice', placeholder: 'service_suspended' },
-                         { id: 'metaTemplateCustom', label: 'Custom/Other', placeholder: 'custom_alert' }
-                       ].map(tmp => (
-                         <div key={tmp.id} className="space-y-3">
-                            <label className="text-[9px] font-black uppercase tracking-[0.1em] neu-text-muted ml-1">{tmp.label}</label>
+                         { id: 'metaTemplateWelcome', label: 'Welcome / Onboarding', placeholder: 'welcome', verifiedParams: 'customer_name', note: '1 Body Param • No Button' },
+                         { id: 'metaTemplateBilling', label: 'Cyclic Invoice / Billing', placeholder: 'payment_due_reminder', verifiedParams: 'customer_name, billing_amount, new_balance, date, button_param', note: '4 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateReceipt', label: 'Success Receipt', placeholder: 'invoice_bill', verifiedParams: 'customer_name, payment_amount, button_param', note: 'Doc Header • 2 Body • 1 URL Button' },
+                         { id: 'metaTemplateBroadcast', label: 'Bulk Broadcast / Outage', placeholder: 'operation_disruption_2', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', note: '6 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateOverdue', label: 'Overdue Penalty Alert', placeholder: 'payment_overdue_1', verifiedParams: 'customer_name, overdue_amount, date, penalty_amount, button_param', note: '4 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateSuspension', label: 'Suspension Notice / Autopay', placeholder: 'autopay', verifiedParams: 'customer_name, customer_balance, date', note: '3 Body Params • No Button' },
+                         { id: 'metaTemplateCustom', label: 'Custom / General Alert', placeholder: 'general_notification', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', note: '5 Body Params • 1 URL Button' }
+                       ].map(tmp => {
+                         const val = templateValidationResults[tmp.id];
+                         const isVerified = val && (val.liveVerified || val.status === 'ACTIVE_VERIFIED');
+                         const hasWarning = val && !isVerified;
+                         return <div key={tmp.id} className={`space-y-2 p-3 rounded-2xl bg-[var(--shadow-light)]/20 border ${hasWarning ? 'border-red-500/30 bg-red-500/5' : 'border-emerald-500/10'}`}>
+                                                         <div className="flex items-center justify-between">
+                               <div className="flex items-center gap-1.5">
+                                 <label className="text-[9px] font-black uppercase tracking-[0.1em] neu-text-muted">{tmp.label}</label>
+                                 {isVerified ? (
+                                   <span className="text-[7px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5"><Check className="w-2.5 h-2.5 text-emerald-500" /> Live Verified</span>
+                                 ) : hasWarning ? (
+                                   <span className="text-[7px] font-black uppercase tracking-wider text-red-600 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5" title={val?.error || "Template not found or rejected on Meta"}><AlertTriangle className="w-2.5 h-2.5 text-red-500 animate-bounce" /> {val?.status || "Unverified"}</span>
+                                 ) : (
+                                   <span className="text-[7px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded inline-flex items-center gap-0.5"><Check className="w-2.5 h-2.5 text-emerald-500" /> Active Tag</span>
+                                 )}
+                               </div>
+                               <span className="text-[8px] font-bold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded-md">{tmp.note}</span>
+                             </div>
                             <input
                               type="text"
                               value={(settings as any)[tmp.id] || ''}
-                              onChange={(e) => setSettings({ ...settings, [tmp.id]: e.target.value })}
-                              className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-xs font-black uppercase tracking-widest focus:ring-2 focus:ring-blue-500/30 transition-all shadow-inner"
+                              onChange={(e) => {
+                                const newVal = e.target.value;
+                                let customTmpls = [...(settings.metaCustomTemplates || [])];
+                                const oldVal = (settings as any)[tmp.id];
+                                if (newVal && newVal.trim()) {
+                                  const trimmedVal = newVal.trim();
+                                  const existingIdx = customTmpls.findIndex(t => t.id === `def_${tmp.id}` || t.templateName === oldVal || t.templateName === trimmedVal);
+                                  const defaultParams = tmp.verifiedParams;
+
+                                  if (existingIdx >= 0) {
+                                    customTmpls[existingIdx] = {
+                                      ...customTmpls[existingIdx],
+                                      templateName: trimmedVal,
+                                      parameters: customTmpls[existingIdx].parameters || defaultParams
+                                    };
+                                  } else {
+                                    customTmpls.push({
+                                      id: `def_${tmp.id}`,
+                                      templateName: trimmedVal,
+                                      parameters: defaultParams,
+                                      language: 'en_US'
+                                    });
+                                  }
+                                }
+                                setSettings({ ...settings, [tmp.id]: newVal, metaCustomTemplates: customTmpls });
+                              }}
+                              className="w-full px-4 py-3 neu-pressed rounded-xl bg-transparent outline-none text-xs font-black uppercase tracking-wider focus:ring-2 focus:ring-emerald-500/30 transition-all shadow-inner"
                               placeholder={tmp.placeholder}
-                            />
-                         </div>
-                       ))}
-                    </div>
+                              />
+                           </div>
+                        })}
+                     </div>
                   </div>
                 )}
 
@@ -888,7 +1104,7 @@ export function SettingsView() {
 
                     <div className="space-y-4">
                       {settings.metaCustomTemplates?.map((tmp, index) => (
-                        <div key={tmp.id} className="grid grid-cols-[1.5fr,2fr,1fr,auto] gap-3 items-center neu-pressed p-4 rounded-2xl">
+                        <div key={tmp.id} className="grid grid-cols-1 sm:grid-cols-[1.5fr,2fr,1fr,auto,auto] gap-3 items-center neu-pressed p-4 rounded-2xl">
                            <input
                              type="text"
                              value={tmp.templateName}
@@ -923,6 +1139,9 @@ export function SettingsView() {
                              title="Template Language Code (e.g. en_US, en, hi)"
                              className="px-3 py-3 bg-transparent border border-[var(--shadow-dark)] neu-flat rounded-xl outline-none text-[11px] font-bold text-center placeholder:font-normal placeholder:opacity-50"
                            />
+                           <span className="text-[9px] font-black uppercase tracking-wider text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-2.5 rounded-xl flex items-center gap-1 shadow-xs">
+                             <Check className="w-3 h-3 text-emerald-500" /> Active Tag
+                           </span>
                            <button
                              onClick={() => {
                                const updated = settings.metaCustomTemplates?.filter(t => t.id !== tmp.id);
@@ -932,10 +1151,10 @@ export function SettingsView() {
                            >
                              <Trash2 className="w-4 h-4" />
                            </button>
-                        </div>
-                      ))}
-                      
-                      <button
+                         </div>
+                       ))}
+
+                       <button
                         onClick={() => {
                           const updated = [...(settings.metaCustomTemplates || []), {
                             id: Math.random().toString(36).substring(7),
@@ -1147,7 +1366,7 @@ export function SettingsView() {
                                      {cmd.response}
                                    </span>
                                 </div>
-                              ))}
+                               ))}
                               {(!botSettings.commands || botSettings.commands.filter(c => c.isActive).length === 0) && (
                                 <div className="w-full py-8 neu-pressed rounded-3xl border-2 border-dashed border-black/5 flex items-center justify-center text-[10px] font-bold neu-text-muted uppercase tracking-widest opacity-40">
                                    No Passive Chatbot Commands Active
@@ -1342,8 +1561,8 @@ export function SettingsView() {
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
-                        </div>
-                      ))}
+                         </div>
+                       ))}
                     </div>
                   )}
                 </div>
@@ -2241,7 +2460,7 @@ export function SettingsView() {
                        <span className="font-bold ml-2 w-12 inline-block select-none">{log.level.toUpperCase()}</span>
                        <span className="ml-2 break-all">{log.message}</span>
                      </div>
-                   ))}
+                    ))}
                  </div>
               )}
             </div>
@@ -2441,6 +2660,29 @@ export function SettingsView() {
                 </div>
               )}
             </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Meta Template Diagnostics Modal */}
+      {showDiagnosticsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-5xl h-[92vh] max-h-[92vh] flex flex-col"
+          >
+            <WhatsAppTemplateDiagnosticsView
+              report={diagnosticsReport}
+              isLoading={isLoadingDiagnostics}
+              onRefresh={handleRunDiagnostics}
+              onSyncVerifiedPresets={applyVerifiedTemplatePreset}
+              onClose={() => setShowDiagnosticsModal(false)}
+              onSelectTokenToFix={(fieldKey, recommendedToken) => {
+                setSettings({ ...settings, [fieldKey]: recommendedToken });
+                showAlert('Updated', `Assigned "${recommendedToken}" to ${fieldKey}. Click Save Settings to persist.`);
+              }}
+            />
           </motion.div>
         </div>
       )}

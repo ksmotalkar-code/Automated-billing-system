@@ -78,12 +78,22 @@ class WhatsAppService {
 
       if (params.attachment) {
          mediaName = params.attachmentName || (params.attachment instanceof File ? params.attachment.name : 'attachment');
-         mediaBase64 = await new Promise((resolve, reject) => {
-           const reader = new FileReader();
-           reader.onloadend = () => resolve(reader.result as string);
-           reader.onerror = reject;
-           reader.readAsDataURL(params.attachment!);
-         });
+         try {
+           const rawBase64 = await new Promise<string>((resolve, reject) => {
+             const reader = new FileReader();
+             reader.onloadend = () => resolve(reader.result as string);
+             reader.onerror = reject;
+             reader.readAsDataURL(params.attachment!);
+           });
+           // Limit base64 payload size to 10MB to prevent browser fetch stream allocation drops
+           if (rawBase64 && rawBase64.length < 10 * 1024 * 1024) {
+             mediaBase64 = rawBase64;
+           } else {
+             console.warn('Attachment exceeds 10MB limit; sending template message without embedded base64 payload.');
+           }
+         } catch (attachErr) {
+           console.warn('Could not read attachment file for WhatsApp message:', attachErr);
+         }
       }
 
       const { authFetch } = await import('../lib/api');
@@ -114,16 +124,23 @@ class WhatsAppService {
       }
 
       if (!response.ok) {
-        return { success: false, error: data.error || data.message || `Server error (${response.status})` };
+        return { 
+          success: false, 
+          error: data.error || data.message || `Server HTTP ${response.status}`,
+          fellBackToManual: true
+        };
       }
 
-      return { success: true, messageId: data.messageId };
+      return { success: true, messageId: data.messageId || data.messages?.[0]?.id };
     } catch (error: any) {
       console.warn('WhatsApp Service Warning (Network or API issue):', error);
       const errDetail = error?.message || String(error);
       return { 
         success: false, 
-        error: errDetail.includes('fetch') ? 'Network connection issue while contacting WhatsApp API server.' : errDetail 
+        error: errDetail.includes('fetch') 
+          ? 'Network connection issue while contacting app server (/api/wa/send).' 
+          : errDetail,
+        fellBackToManual: true
       };
     }
   }

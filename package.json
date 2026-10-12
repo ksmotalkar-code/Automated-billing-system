@@ -12,7 +12,8 @@
     "start": "tsx server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "prune-templates": "tsx scripts/prune-template-registry.ts"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",
