@@ -87,11 +87,11 @@ class WhatsAppService {
              reader.onerror = reject;
              reader.readAsDataURL(params.attachment!);
            });
-           // Limit base64 payload size to 10MB to prevent browser fetch stream allocation drops
-           if (rawBase64 && rawBase64.length < 10 * 1024 * 1024) {
+           // Limit base64 payload size to 4MB to prevent browser fetch stream allocation drops
+           if (rawBase64 && rawBase64.length < 4 * 1024 * 1024) {
              mediaBase64 = rawBase64;
            } else {
-             console.warn('Attachment exceeds 10MB limit; sending template message without embedded base64 payload.');
+             console.warn('Attachment exceeds 4MB limit; sending template message without embedded base64 payload.');
            }
          } catch (attachErr) {
            console.warn('Could not read attachment file for WhatsApp message:', attachErr);

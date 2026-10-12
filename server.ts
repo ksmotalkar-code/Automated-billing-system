@@ -6657,6 +6657,25 @@ async function startServer() {
                       const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
                       responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏\n\nI could not understand that request. Please reply with any service below:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* to see all services.`;
                       handled = true;
+                      
+                      // Log as unhandled in audit trail
+                      if (dbInstance) {
+                        try {
+                          await dbInstance.collection("billing_audit").add({
+                            ownerId: ownerId,
+                            type: 'chatbot_unhandled',
+                            description: `Unhandled chatbot message: "${msgBody}"`,
+                            affectedCustomersCount: 1,
+                            totalAmount: 0,
+                            timestamp: FieldValue.serverTimestamp(),
+                            executedBy: 'system',
+                            customerId: matchedCustomer.id,
+                            customerName: matchedCustomer.name
+                          });
+                        } catch (e) {
+                          console.error("Failed to log unhandled chatbot message:", e);
+                        }
+                      }
                     }
 
                     if (

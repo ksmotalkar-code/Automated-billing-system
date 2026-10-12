@@ -123,6 +123,8 @@ export function BillingAuditView() {
         return <ShieldAlert className="w-5 h-5 text-orange-500" />;
       case 'inquiry':
         return <ClipboardList className="w-5 h-5 text-emerald-500" />;
+      case 'chatbot_unhandled':
+        return <MessageCircle className="w-5 h-5 text-purple-500" />;
       default:
         return <ClipboardList className="w-5 h-5 text-gray-500" />;
     }

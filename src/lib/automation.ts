@@ -394,9 +394,25 @@ export const sendWhatsAppNotification = async (
           formattedTo = mobile.startsWith('91') ? mobile : `91${mobile}`;
         }
         const url = `https://wa.me/${formattedTo}?text=${encodeURIComponent(finalMessage)}`;
+        let popupOpened = false;
         if (typeof window !== 'undefined' && window.open) {
-          window.open(url, '_blank');
+          try {
+            const win = window.open(url, '_blank');
+            if (win && !win.closed) {
+              popupOpened = true;
+            }
+          } catch (e) {
+            console.warn("window.open failed:", e);
+          }
+        }
+        if (popupOpened) {
           return { success: true, fellBackToManual: true };
+        } else {
+          return { 
+            success: false, 
+            error: `Automated dispatch failed (${result.error || 'Network connection error'}). Pop-up was blocked. Click to open manual WhatsApp: ${url}`, 
+            fellBackToManual: true 
+          };
         }
       }
       return { success: false, error: result.error };

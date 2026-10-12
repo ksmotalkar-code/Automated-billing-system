@@ -145,7 +145,7 @@ export interface Complaint {
 export interface BillingAuditLog {
   id?: string;
   ownerId: string;
-  type: 'bill_generation' | 'penalty_application' | 'auto_suspend' | 'inquiry';
+  type: 'bill_generation' | 'penalty_application' | 'auto_suspend' | 'inquiry' | 'chatbot_unhandled';
   description: string;
   affectedCustomersCount: number;
   totalAmount: number;

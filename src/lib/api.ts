@@ -50,7 +50,7 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
     }
   }
 
-  const maxRetries = options.method === 'GET' ? 2 : 0; // Only retry safe GET requests by default
+  const maxRetries = options.method === 'GET' ? 2 : 1; // Retry once for POST if network drop occurs
   let attempt = 0;
 
   while (true) {
