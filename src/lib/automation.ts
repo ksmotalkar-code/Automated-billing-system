@@ -6,6 +6,8 @@ import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/fir
 import { whatsappService } from '../services/whatsappService';
 import { createPortalLink } from './portal';
 import { DEFAULT_VWSC_LOGO_BASE64 } from './sealLogo';
+import { isQuotaExceeded } from './db';
+import { authFetchJson } from './api';
 
 export const generateInvoicePDF = (customer: Customer, settings: AppSettings, isReceiptMode: boolean = false, paymentAmount: number = 0) => {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' });
@@ -426,7 +428,6 @@ export const runAutomationCycle = async (_customers: Customer[], settings: AppSe
   if (!settings.automation) return;
   if ((window as any)._automationRunning) return;
   
-  const { isQuotaExceeded } = await import('./db');
   if (isQuotaExceeded()) {
     console.log("Automation skipped: Quota Limit Exceeded");
     return;
@@ -435,7 +436,6 @@ export const runAutomationCycle = async (_customers: Customer[], settings: AppSe
   (window as any)._automationRunning = true;
 
   try {
-    const { authFetchJson } = await import('./api');
     console.log("[Client Automation] Delegating daily automation check to authoritative server engine...");
     await authFetchJson('/api/cron/daily', {
       method: 'POST',

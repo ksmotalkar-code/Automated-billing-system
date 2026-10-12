@@ -122,7 +122,8 @@ export function SettingsView() {
     setShowAuditModal(true);
     try {
       const resp = await authFetch('/api/wa/audit-logs?limit=50');
-      const data = await resp.json();
+      let data: any = {};
+      try { data = await resp.json(); } catch {}
       if (resp.ok && data.entries) {
         setAuditLogsList(data.entries);
       }
@@ -147,7 +148,8 @@ export function SettingsView() {
     setShowDiagnosticsModal(true);
     try {
       const resp = await authFetch('/api/wa/template-diagnostics');
-      const data = await resp.json();
+      let data: any = {};
+      try { data = await resp.json(); } catch { data = { success: false, error: `Server returned non-JSON (${resp.status})` }; }
       setDiagnosticsReport(data);
     } catch (e: any) {
       console.error("Failed to run template diagnostics:", e);
@@ -166,7 +168,8 @@ export function SettingsView() {
     setValidationMessage(null);
     try {
       const resp = await authFetch('/api/wa/template-diagnostics');
-      const data = await resp.json();
+      let data: any = {};
+      try { data = await resp.json(); } catch {}
       if (data.success && Array.isArray(data.templates)) {
         const resultsMap: Record<string, any> = {};
         data.templates.forEach((item: any) => {
@@ -273,7 +276,8 @@ export function SettingsView() {
           phoneId: settings.metaWhatsAppPhoneNumberId,
         })
       });
-      const data = await resp.json();
+      let data: any = {};
+      try { data = await resp.json(); } catch {}
       if (resp.ok && data.connected) {
         setTokenVerifyStatus({
           isLoading: false,
@@ -402,8 +406,9 @@ export function SettingsView() {
           templateToTest
         })
       });
-      const data = await resp.json();
-      if (resp.ok) {
+      let data: any = {};
+      try { data = await resp.json(); } catch { data = { error: `Server returned non-JSON (${resp.status})` }; }
+      if (resp.ok && data.info) {
         showAlert("Test Successful", data.info);
       } else {
         showAlert("Test Failed", data.error || "Check your API credentials.");
@@ -629,8 +634,9 @@ export function SettingsView() {
                method: settings.preferredNotificationMethod
             })
           });
-          const data = await resp.json();
-          if (resp.ok) {
+          let data: any = {};
+          try { data = await resp.json(); } catch { data = { error: `Server returned non-JSON (${resp.status})` }; }
+          if (resp.ok && data.success !== undefined) {
             showAlert("Broadcast Completed", `Sent to ${data.success} customers. Failed for ${data.failed}.`);
             setBroadcastMessage('');
           } else {

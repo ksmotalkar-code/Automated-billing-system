@@ -62,8 +62,15 @@ export function DraggableOrb({ onSettingsClick, onAdminClick }: { onSettingsClic
         throw new Error("Unable to reach assistant service.");
       }
 
-      const data = await response.json();
-      const replyText = data.reply || "I have received your query. How can I assist you with water billing or connections today?";
+      let replyText = "I have received your query. How can I assist you with water billing or connections today?";
+      try {
+        if (response.headers.get('content-type')?.includes('application/json')) {
+          const data = await response.json();
+          if (data.reply) replyText = data.reply;
+        }
+      } catch (e) {
+        console.warn("[DraggableOrb] Non-JSON response received:", e);
+      }
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: replyText }]);
     } catch (error: any) {
       console.error("AI Assistant error:", error);

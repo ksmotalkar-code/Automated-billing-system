@@ -50,25 +50,44 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
     }
   }
 
-  try {
-    const response = await fetch(targetUrl, {
-      ...options,
-      headers,
-      signal,
-    });
-    return response;
-  } catch (netErr: any) {
-    console.warn(`[authFetch] Network connection failure on ${targetUrl}:`, netErr);
-    if (netErr.name === 'AbortError') {
-      throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
+  const maxRetries = options.method === 'GET' ? 2 : 0; // Only retry safe GET requests by default
+  let attempt = 0;
+
+  while (true) {
+    try {
+      const response = await fetch(targetUrl, {
+        ...options,
+        headers,
+        signal,
+      });
+      return response;
+    } catch (netErr: any) {
+      const isNetworkError = 
+        netErr.name === 'TypeError' && 
+        (netErr.message?.includes('Failed to fetch') || netErr.message?.includes('NetworkError'));
+      
+      if (isNetworkError && attempt < maxRetries) {
+        attempt++;
+        const delay = 1000 * Math.pow(2, attempt - 1);
+        console.warn(`[authFetch] Network retry ${attempt}/${maxRetries} for ${targetUrl} after ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
+      console.warn(`[authFetch] Network connection failure on ${targetUrl}:`, netErr);
+      if (netErr.name === 'AbortError') {
+        throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
+      }
+      const msg = netErr.message || String(netErr);
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+        throw new Error(`Network connection error while contacting server (${url}). This usually happens if the server is restarting or the network is unstable.`);
+      }
+      throw netErr;
+    } finally {
+      if (attempt >= maxRetries) {
+        clearTimeout(timeoutId);
+      }
     }
-    const msg = netErr.message || String(netErr);
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      throw new Error(`Network connection error while contacting server (${url}). This usually happens if the server is restarting or the network is unstable.`);
-    }
-    throw netErr;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -77,23 +96,37 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
  */
 export async function authFetchJson<T = any>(url: string, options: AuthFetchOptions = {}): Promise<T> {
   const res = await authFetch(url, options);
-  
+  const contentType = res.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+
   if (!res.ok) {
-    let errorDetail = `Request failed: ${res.status} ${res.statusText}`;
-    try {
-      const errorJson = await res.json();
-      errorDetail = errorJson.error || errorJson.message || errorDetail;
-    } catch {
-      // response was not JSON
+    let errorDetail = `Request failed: HTTP ${res.status} ${res.statusText}`;
+    if (isJson) {
+      try {
+        const errorJson = await res.json();
+        errorDetail = errorJson.error || errorJson.message || errorDetail;
+      } catch {
+        // response was not JSON
+      }
+    } else {
+      try {
+        const text = await res.text();
+        if (text && text.length < 200 && !text.includes('<!doctype') && !text.includes('<html')) {
+          errorDetail = text;
+        }
+      } catch {}
     }
     throw new Error(errorDetail);
   }
 
+  if (!isJson) {
+    throw new Error(`Server returned non-JSON response from ${url} (HTTP ${res.status}).`);
+  }
+
   try {
-    const cloned = res.clone(); // Clone to allow fallback parsing if needed
     return await res.json() as T;
   } catch (jsonErr: any) {
     console.warn(`[authFetchJson] JSON parse failure on ${url}:`, jsonErr);
-    throw new Error(`Server returned non-JSON response (HTTP ${res.status}). It might be a server error or redirection.`);
+    throw new Error(`Server returned invalid JSON response from ${url} (HTTP ${res.status}).`);
   }
 }

@@ -75,10 +75,14 @@ export const uploadImageToStorage = async (
       })
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.imageUrl) {
-        return data.imageUrl;
+    if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
+      try {
+        const data = await res.json();
+        if (data.imageUrl) {
+          return data.imageUrl;
+        }
+      } catch (e) {
+        console.warn('[Storage] Could not parse upload-image response JSON:', e);
       }
     }
   } catch (apiErr) {

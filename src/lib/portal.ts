@@ -64,7 +64,7 @@ export const createPortalLink = async (customer: Customer, settings: AppSettings
 export const getPortalData = async (portalId: string): Promise<PublicPortalData | null> => {
   try {
     const response = await fetch(`/api/portal-data/${portalId}`);
-    if (response.ok) {
+    if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
       return await response.json() as PublicPortalData;
     }
   } catch (err) {

@@ -16,7 +16,11 @@ export const analyzeMeterImage = async (base64Image: string): Promise<MeterReadi
     });
 
     if (!response.ok) {
-      throw new Error(`Server returned ${response.status}`);
+      throw new Error(`Server returned HTTP ${response.status}`);
+    }
+
+    if (!response.headers.get('content-type')?.includes('application/json')) {
+      throw new Error(`Server returned non-JSON response (${response.status})`);
     }
 
     const result = await response.json();

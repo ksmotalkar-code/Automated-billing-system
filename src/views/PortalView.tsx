@@ -261,7 +261,16 @@ export function PortalView() {
           ownerId: portalData.ownerId
         })
       });
-      const data = await response.json();
+      let data: any = {};
+      try {
+        if (response.headers.get('content-type')?.includes('application/json')) {
+          data = await response.json();
+        } else {
+          data = { error: `Server returned unexpected response format (${response.status})` };
+        }
+      } catch (e) {
+        data = { error: "Failed to parse server response" };
+      }
       if (data.error) {
         addBotMessage(`❌ Output Error: ${data.error}`);
       } else {
