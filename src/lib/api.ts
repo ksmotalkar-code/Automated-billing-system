@@ -40,7 +40,13 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
   let targetUrl = url;
   if (targetUrl.startsWith('/')) {
     if (typeof window !== 'undefined' && window.location && window.location.origin) {
-      targetUrl = `${window.location.origin}${targetUrl}`;
+      // Use URL constructor for robust normalization (handles double slashes etc)
+      try {
+        const base = window.location.origin;
+        targetUrl = new URL(url, base).href;
+      } catch (e) {
+        targetUrl = `${window.location.origin}${targetUrl}`;
+      }
     }
   }
 
@@ -56,8 +62,9 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
     if (netErr.name === 'AbortError') {
       throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
     }
-    if (netErr.message && netErr.message.includes('Failed to fetch')) {
-      throw new Error(`Network connection error while contacting server (${url}). Please check connection.`);
+    const msg = netErr.message || String(netErr);
+    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+      throw new Error(`Network connection error while contacting server (${url}). This usually happens if the server is restarting or the network is unstable.`);
     }
     throw netErr;
   } finally {
@@ -70,6 +77,7 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
  */
 export async function authFetchJson<T = any>(url: string, options: AuthFetchOptions = {}): Promise<T> {
   const res = await authFetch(url, options);
+  
   if (!res.ok) {
     let errorDetail = `Request failed: ${res.status} ${res.statusText}`;
     try {
@@ -80,5 +88,12 @@ export async function authFetchJson<T = any>(url: string, options: AuthFetchOpti
     }
     throw new Error(errorDetail);
   }
-  return res.json() as Promise<T>;
+
+  try {
+    const cloned = res.clone(); // Clone to allow fallback parsing if needed
+    return await res.json() as T;
+  } catch (jsonErr: any) {
+    console.warn(`[authFetchJson] JSON parse failure on ${url}:`, jsonErr);
+    throw new Error(`Server returned non-JSON response (HTTP ${res.status}). It might be a server error or redirection.`);
+  }
 }

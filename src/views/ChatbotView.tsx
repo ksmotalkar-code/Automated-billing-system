@@ -81,7 +81,12 @@ ${cmdList}`;
     try {
       const url = currentOwnerId ? `/api/chatbot/diagnostics?ownerId=${encodeURIComponent(currentOwnerId)}` : "/api/chatbot/diagnostics";
       const res = await authFetch(url);
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { ok: false, error: "Failed to parse server response" };
+      }
       setDiagnostics(data);
     } catch (e: any) {
       setDiagnostics({ ok: false, error: e.message });
@@ -105,7 +110,12 @@ ${cmdList}`;
           ownerId: currentOwnerId || undefined
         })
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { ok: false, error: "Failed to parse server response" };
+      }
       setSimResult(data);
       if (data?.pendingReportSelection !== undefined) {
         setPendingReportSelection(data.pendingReportSelection);

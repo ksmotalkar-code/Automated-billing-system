@@ -1,3 +1,6 @@
+import { auth } from '../firebase';
+import { authFetch } from '../lib/api';
+
 /**
  * WhatsApp API Service
  * This service handles automated message sending via a WhatsApp Business API provider.
@@ -70,7 +73,6 @@ class WhatsAppService {
   public async sendMessage(params: WhatsAppMessage): Promise<{ success: boolean; messageId?: string; error?: string; fellBackToManual?: boolean }> {
     // We now use our backend proxy to send messages safely (avoiding CORS and keeping keys server-side)
     try {
-      const { auth } = await import('../firebase');
       const ownerId = params.ownerId || auth.currentUser?.uid || 'system';
 
       let mediaBase64: string | undefined = undefined;
@@ -96,7 +98,6 @@ class WhatsAppService {
          }
       }
 
-      const { authFetch } = await import('../lib/api');
       const response = await authFetch('/api/wa/send', {
         method: 'POST',
         body: JSON.stringify({
@@ -117,13 +118,15 @@ class WhatsAppService {
       });
 
       let data: any = {};
+      let parseError = false;
       try {
         data = await response.json();
       } catch (jsonErr) {
-        data = { error: `Server HTTP ${response.status}: ${response.statusText}` };
+        parseError = true;
+        data = { error: `Server returned non-JSON response (HTTP ${response.status}: ${response.statusText})` };
       }
 
-      if (!response.ok) {
+      if (!response.ok || parseError) {
         return { 
           success: false, 
           error: data.error || data.message || `Server HTTP ${response.status}`,
@@ -131,14 +134,23 @@ class WhatsAppService {
         };
       }
 
-      return { success: true, messageId: data.messageId || data.messages?.[0]?.id };
+      const messageId = data.messageId || data.messages?.[0]?.id || data.id;
+      if (!messageId && !data.success) {
+         return {
+           success: false,
+           error: data.error || "Server reported failure without specific error message.",
+           fellBackToManual: true
+         };
+      }
+
+      return { success: true, messageId };
     } catch (error: any) {
       console.warn('WhatsApp Service Warning (Network or API issue):', error);
       const errDetail = error?.message || String(error);
       return { 
         success: false, 
-        error: errDetail.includes('fetch') 
-          ? 'Network connection issue while contacting app server (/api/wa/send).' 
+        error: errDetail.includes('fetch') || errDetail.includes('Network')
+          ? 'Network connection issue while contacting app server (/api/wa/send). Please ensure the server is online.' 
           : errDetail,
         fellBackToManual: true
       };

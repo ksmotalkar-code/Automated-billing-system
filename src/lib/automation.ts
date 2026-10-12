@@ -300,7 +300,10 @@ export const sendWhatsAppNotification = async (
     let matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
     if (!matchedConfig && templateCategory) {
       // Fallback matching by default template category IDs or names
-      matchedConfig = settings.metaCustomTemplates.find(t => t.id === `def_${templateCategory}`);
+      matchedConfig = settings.metaCustomTemplates.find(t => 
+        t.id === `def_${templateCategory}` || 
+        t.id === `def_metaTemplate${templateCategory.charAt(0).toUpperCase() + templateCategory.slice(1)}`
+      );
     }
     if (matchedConfig && matchedConfig.parameters) {
       const paramKeys = matchedConfig.parameters.split(',').map(s => s.trim());

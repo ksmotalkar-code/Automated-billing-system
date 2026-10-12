@@ -224,7 +224,13 @@ export function SettingsView() {
         method: 'POST',
         body: JSON.stringify({ dryRun: false })
       });
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        data = { success: false, error: "Failed to parse server response" };
+      }
+      
       if (data.success) {
         const { totalPruned, totalRetained } = data.summary || {};
         setPruneSettingsMessage(
@@ -1023,13 +1029,13 @@ export function SettingsView() {
                     
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                        {[
-                         { id: 'metaTemplateWelcome', label: 'Welcome / Onboarding', placeholder: 'welcome', verifiedParams: 'customer_name', note: '1 Body Param • No Button' },
-                         { id: 'metaTemplateBilling', label: 'Cyclic Invoice / Billing', placeholder: 'payment_due_reminder', verifiedParams: 'customer_name, billing_amount, new_balance, date, button_param', note: '4 Body Params • 1 URL Button' },
-                         { id: 'metaTemplateReceipt', label: 'Success Receipt', placeholder: 'invoice_bill', verifiedParams: 'customer_name, payment_amount, button_param', note: 'Doc Header • 2 Body • 1 URL Button' },
-                         { id: 'metaTemplateBroadcast', label: 'Bulk Broadcast / Outage', placeholder: 'operation_disruption_2', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', note: '6 Body Params • 1 URL Button' },
-                         { id: 'metaTemplateOverdue', label: 'Overdue Penalty Alert', placeholder: 'payment_overdue_1', verifiedParams: 'customer_name, overdue_amount, date, penalty_amount, button_param', note: '4 Body Params • 1 URL Button' },
-                         { id: 'metaTemplateSuspension', label: 'Suspension Notice / Autopay', placeholder: 'autopay', verifiedParams: 'customer_name, customer_balance, date', note: '3 Body Params • No Button' },
-                         { id: 'metaTemplateCustom', label: 'Custom / General Alert', placeholder: 'general_notification', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', note: '5 Body Params • 1 URL Button' }
+                         { id: 'metaTemplateWelcome', category: 'welcome', label: 'Welcome / Onboarding', placeholder: 'welcome', verifiedParams: 'customer_name', note: '1 Body Param • No Button' },
+                         { id: 'metaTemplateBilling', category: 'billing', label: 'Cyclic Invoice / Billing', placeholder: 'payment_due_reminder', verifiedParams: 'customer_name, billing_amount, new_balance, date, button_param', note: '4 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateReceipt', category: 'receipt', label: 'Success Receipt', placeholder: 'invoice_bill', verifiedParams: 'customer_name, payment_amount, button_param', note: 'Doc Header • 2 Body • 1 URL Button' },
+                         { id: 'metaTemplateBroadcast', category: 'broadcast', label: 'Bulk Broadcast / Outage', placeholder: 'operation_disruption_2', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', note: '6 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateOverdue', category: 'overdue', label: 'Overdue Penalty Alert', placeholder: 'payment_overdue_1', verifiedParams: 'customer_name, overdue_amount, date, penalty_amount, button_param', note: '4 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateSuspension', category: 'suspension', label: 'Suspension Notice / Autopay', placeholder: 'autopay', verifiedParams: 'customer_name, customer_balance, date', note: '3 Body Params • No Button' },
+                         { id: 'metaTemplateCustom', category: 'custom', label: 'Custom / General Alert', placeholder: 'general_notification', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', note: '5 Body Params • 1 URL Button' }
                        ].map(tmp => {
                          const val = templateValidationResults[tmp.id];
                          const isVerified = val && (val.liveVerified || val.status === 'ACTIVE_VERIFIED');
@@ -1057,7 +1063,7 @@ export function SettingsView() {
                                 const oldVal = (settings as any)[tmp.id];
                                 if (newVal && newVal.trim()) {
                                   const trimmedVal = newVal.trim();
-                                  const existingIdx = customTmpls.findIndex(t => t.id === `def_${tmp.id}` || t.templateName === oldVal || t.templateName === trimmedVal);
+                                  const existingIdx = customTmpls.findIndex(t => t.id === `def_${(tmp as any).category || tmp.id}` || t.templateName === oldVal || t.templateName === trimmedVal);
                                   const defaultParams = tmp.verifiedParams;
 
                                   if (existingIdx >= 0) {
@@ -1068,7 +1074,7 @@ export function SettingsView() {
                                     };
                                   } else {
                                     customTmpls.push({
-                                      id: `def_${tmp.id}`,
+                                      id: `def_${(tmp as any).category || tmp.id}`,
                                       templateName: trimmedVal,
                                       parameters: defaultParams,
                                       language: 'en_US'

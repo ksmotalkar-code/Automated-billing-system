@@ -236,10 +236,26 @@ export async function resolveOwnerIdForWebhook(
   const adminDb = getAdminDb();
   let masterSettings: AppSettings | null = null;
 
-  // 1. First, locate working WhatsApp settings across all settings docs
+  // 1. Direct Lookup: If we have a specific ownerId, fetch it directly (Most Efficient)
+  if (adminDb && requestedOwnerId && requestedOwnerId !== "system") {
+    try {
+      const doc = await adminDb.collection("settings").doc(requestedOwnerId).get();
+      if (doc.exists) {
+        const data = doc.data() as AppSettings;
+        if (data?.metaWhatsAppApiKey && data?.metaWhatsAppPhoneNumberId) {
+          return { ownerId: requestedOwnerId, settings: data };
+        }
+      }
+    } catch (e) {
+      console.warn(`[Webhook] Direct lookup failed for ${requestedOwnerId}:`, e);
+    }
+  }
+
+  // 1.5 Fallback to master settings lookup (Limited)
   if (adminDb) {
     try {
-      const allSettingsSnap = await adminDb.collection("settings").get();
+      // Fetch only first 5 to find a working master account instead of entire collection
+      const allSettingsSnap = await adminDb.collection("settings").limit(5).get();
       for (const doc of allSettingsSnap.docs) {
         const data = doc.data() as AppSettings;
         if (data?.metaWhatsAppApiKey && data?.metaWhatsAppPhoneNumberId) {
@@ -260,24 +276,19 @@ export async function resolveOwnerIdForWebhook(
   // 2. Determine target ownerId
   let targetOwnerId = requestedOwnerId && requestedOwnerId !== "system" ? requestedOwnerId : "";
 
-  // If phoneNumberId is available, see which tenant matching this phoneNumberId owns customer records
+  // 2. Targeted Query: If phoneNumberId is available, query for the matching tenant
   if (phoneNumberId && adminDb) {
     try {
       const snap = await adminDb
         .collection("settings")
         .where("metaWhatsAppPhoneNumberId", "==", phoneNumberId)
+        .limit(1)
         .get();
       
-      for (const doc of snap.docs) {
-        // Check if this doc owns customers
-        const custSnap = await adminDb.collection("customers").where("ownerId", "==", doc.id).limit(1).get();
-        if (!custSnap.empty) {
-          targetOwnerId = doc.id;
-          break;
-        }
-        if (!targetOwnerId) {
-          targetOwnerId = doc.id;
-        }
+      if (!snap.empty) {
+        const doc = snap.docs[0];
+        const data = doc.data() as AppSettings;
+        return { ownerId: doc.id, settings: data };
       }
     } catch (e) {
       console.warn("[Webhook] Error checking settings by phoneNumberId:", e);
@@ -2225,6 +2236,97 @@ async function startServer() {
     }
   });
 
+  // Send Individual Message API (Protected by requireAuth)
+  app.post("/api/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || req.body.ownerId;
+      const {
+        to,
+        message,
+        apiKey,
+        phoneId,
+        watiAccessToken,
+        watiApiEndpoint,
+        method,
+        mediaBase64,
+        mediaName,
+        templateCategory,
+        templateParams,
+        customTemplateName,
+      } = req.body;
+      if (!to || !message)
+        return res.status(400).json({ error: "Missing required fields" });
+
+      let settings: any = {
+        metaWhatsAppApiKey: apiKey,
+        metaWhatsAppPhoneNumberId: phoneId,
+        watiAccessToken: watiAccessToken,
+        watiApiEndpoint: watiApiEndpoint,
+        preferredNotificationMethod: method,
+      };
+
+      // Clean up whitespace or empty/null/undefined string values to ensure fallback
+      if (settings.metaWhatsAppApiKey && typeof settings.metaWhatsAppApiKey === 'string') {
+        settings.metaWhatsAppApiKey = settings.metaWhatsAppApiKey.trim();
+        if (settings.metaWhatsAppApiKey === "" || settings.metaWhatsAppApiKey === "null" || settings.metaWhatsAppApiKey === "undefined") {
+          settings.metaWhatsAppApiKey = null;
+        }
+      }
+      if (settings.metaWhatsAppPhoneNumberId && typeof settings.metaWhatsAppPhoneNumberId === 'string') {
+        settings.metaWhatsAppPhoneNumberId = settings.metaWhatsAppPhoneNumberId.trim();
+        if (settings.metaWhatsAppPhoneNumberId === "" || settings.metaWhatsAppPhoneNumberId === "null" || settings.metaWhatsAppPhoneNumberId === "undefined") {
+          settings.metaWhatsAppPhoneNumberId = null;
+        }
+      }
+      if (settings.watiAccessToken && typeof settings.watiAccessToken === 'string') {
+        settings.watiAccessToken = settings.watiAccessToken.trim();
+        if (settings.watiAccessToken === "" || settings.watiAccessToken === "null" || settings.watiAccessToken === "undefined") {
+          settings.watiAccessToken = null;
+        }
+      }
+
+      if (admin.apps.length) {
+        try {
+          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+            await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
+          if (resolvedSettings) {
+            settings = {
+              ...resolvedSettings,
+              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
+              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
+              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
+              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
+              ...(method ? { preferredNotificationMethod: method } : {}),
+            };
+          }
+        } catch (e) {
+          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
+        }
+      }
+
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
+        return res
+          .status(400)
+          .json({ error: "WhatsApp API not configured in settings" });
+      }
+
+      const data = await sendMessageUtil({
+        settings,
+        to,
+        message,
+        mediaBase64,
+        mediaName,
+        isTestMessage: false,
+        templateCategory,
+        templateParams,
+        customTemplateName,
+      });
+      res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Mount Persistent Cloud Storage API
   app.use("/api", createStorageRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
 
@@ -3174,7 +3276,10 @@ async function startServer() {
       if (settings?.metaCustomTemplates) {
         let matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.templateName === templateName);
         if (!matchedTmpl && templateCategory) {
-          matchedTmpl = settings.metaCustomTemplates.find((t: any) => t.id === `def_${templateCategory}`);
+          matchedTmpl = settings.metaCustomTemplates.find((t: any) => 
+            t.id === `def_${templateCategory}` || 
+            t.id === `def_metaTemplate${templateCategory.charAt(0).toUpperCase() + templateCategory.slice(1)}`
+          );
         }
         if (matchedTmpl && matchedTmpl.language) {
           lang = matchedTmpl.language;
@@ -4343,97 +4448,6 @@ async function startServer() {
       console.error("[Background Cron] Periodic template pruning failed:", pruneErr);
     } finally {
       await lock.release(lockName, workerId);
-    }
-  });
-
-  // Send Individual Message API (Protected by requireAuth)
-  app.post("/api/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
-    try {
-      const ownerId = req.ownerId || req.body.ownerId;
-      const {
-        to,
-        message,
-        apiKey,
-        phoneId,
-        watiAccessToken,
-        watiApiEndpoint,
-        method,
-        mediaBase64,
-        mediaName,
-        templateCategory,
-        templateParams,
-        customTemplateName,
-      } = req.body;
-      if (!to || !message)
-        return res.status(400).json({ error: "Missing required fields" });
-
-      let settings: any = {
-        metaWhatsAppApiKey: apiKey,
-        metaWhatsAppPhoneNumberId: phoneId,
-        watiAccessToken: watiAccessToken,
-        watiApiEndpoint: watiApiEndpoint,
-        preferredNotificationMethod: method,
-      };
-
-      // Clean up whitespace or empty/null/undefined string values to ensure fallback
-      if (settings.metaWhatsAppApiKey && typeof settings.metaWhatsAppApiKey === 'string') {
-        settings.metaWhatsAppApiKey = settings.metaWhatsAppApiKey.trim();
-        if (settings.metaWhatsAppApiKey === "" || settings.metaWhatsAppApiKey === "null" || settings.metaWhatsAppApiKey === "undefined") {
-          settings.metaWhatsAppApiKey = null;
-        }
-      }
-      if (settings.metaWhatsAppPhoneNumberId && typeof settings.metaWhatsAppPhoneNumberId === 'string') {
-        settings.metaWhatsAppPhoneNumberId = settings.metaWhatsAppPhoneNumberId.trim();
-        if (settings.metaWhatsAppPhoneNumberId === "" || settings.metaWhatsAppPhoneNumberId === "null" || settings.metaWhatsAppPhoneNumberId === "undefined") {
-          settings.metaWhatsAppPhoneNumberId = null;
-        }
-      }
-      if (settings.watiAccessToken && typeof settings.watiAccessToken === 'string') {
-        settings.watiAccessToken = settings.watiAccessToken.trim();
-        if (settings.watiAccessToken === "" || settings.watiAccessToken === "null" || settings.watiAccessToken === "undefined") {
-          settings.watiAccessToken = null;
-        }
-      }
-
-      if (admin.apps.length) {
-        try {
-          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
-            await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
-          if (resolvedSettings) {
-            settings = {
-              ...resolvedSettings,
-              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
-              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
-              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
-              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
-              ...(method ? { preferredNotificationMethod: method } : {}),
-            };
-          }
-        } catch (e) {
-          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
-        }
-      }
-
-      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
-        return res
-          .status(400)
-          .json({ error: "WhatsApp API not configured in settings" });
-      }
-
-      const data = await sendMessageUtil({
-        settings,
-        to,
-        message,
-        mediaBase64,
-        mediaName,
-        isTestMessage: false,
-        templateCategory,
-        templateParams,
-        customTemplateName,
-      });
-      res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
     }
   });
 
@@ -7873,6 +7887,14 @@ To link your connection or update your registered number, please contact the Gra
       res.status(500).json({ error: e.message });
     }
   });
+
+  // API 404 Handler (JSON)
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `Not Found: ${req.method} ${req.path}` });
+  });
+
+  // Global Error Handler (must be registered after all routes to catch all unhandled errors)
+  app.use(errorHandler);
 
   // Serve production build if dist/index.html exists or NODE_ENV is production
   const hasDist =

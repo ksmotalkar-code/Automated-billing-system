@@ -171,7 +171,13 @@ export function PortalView() {
 
           const res = await fetch(`/api/portal-chat/init/${portalId}`);
           if (res.ok) {
-            const initData = await res.json();
+            let initData: any = {};
+            try {
+              initData = await res.json();
+            } catch (e) {
+              console.warn("Failed to parse chat init response");
+            }
+            
             if (initData.commands) {
                setCommands(initData.commands);
             }

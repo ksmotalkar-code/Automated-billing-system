@@ -181,5 +181,67 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     }
   });
 
+  // Fetch Live WhatsApp Message Logs (Protected by requireAuth)
+  router.get("/chatbot/live-logs", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || (req.query.ownerId as string) || "system";
+      const admin = (globalThis as any).admin;
+      if (!admin || !admin.apps || !admin.apps.length) {
+        return res.json({ ok: true, logs: [] });
+      }
+
+      const db = admin.firestore();
+      const logsSnap = await db.collection("whatsapp_logs")
+        .where("ownerId", "==", ownerId)
+        .orderBy("createdAt", "desc")
+        .limit(20)
+        .get();
+
+      const logs = logsSnap.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      return res.json({ ok: true, logs });
+    } catch (e: any) {
+      console.warn("[WhatsAppRouter] /chatbot/live-logs error:", e);
+      return res.json({ ok: false, error: e.message, logs: [] });
+    }
+  });
+
+  // Send Quick Live Test Message (Protected by requireAuth)
+  router.post("/chatbot/send-live-test", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || (req.body.ownerId as string) || "system";
+      const { mobile, message } = req.body;
+
+      if (!mobile || !message) {
+        return res.status(400).json({ ok: false, error: "Missing mobile or message" });
+      }
+
+      let settings = await deps.getSettings(ownerId);
+      if (deps.resolveOwnerIdForWebhook && (!settings?.metaWhatsAppApiKey || ownerId === "system")) {
+        const resolved = await deps.resolveOwnerIdForWebhook(ownerId);
+        if (resolved?.settings) settings = resolved.settings;
+      }
+
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
+        return res.status(400).json({ ok: false, error: "WhatsApp not configured for this tenant" });
+      }
+
+      const result = await deps.sendMessageUtil({
+        to: mobile,
+        message,
+        settings,
+        isTestMessage: true
+      });
+
+      return res.json({ ok: true, success: true, result });
+    } catch (e: any) {
+      console.error("[WhatsAppRouter] /chatbot/send-live-test error:", e);
+      return res.status(500).json({ ok: false, error: e.message });
+    }
+  });
+
   return router;
 }

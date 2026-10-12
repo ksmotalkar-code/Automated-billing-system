@@ -70,7 +70,12 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
         ? `/api/chatbot/diagnostics?ownerId=${encodeURIComponent(currentOwnerId)}` 
         : "/api/chatbot/diagnostics";
       const res = await authFetch(url);
-      const json = await res.json();
+      let json: any = {};
+      try {
+        json = await res.json();
+      } catch (e) {
+        json = { ok: false, error: `Server returned ${res.status} ${res.statusText}` };
+      }
       setData(json);
       if (Array.isArray(json.recentLogs)) {
         setRecentLogs(json.recentLogs.slice(0, 5));
@@ -91,7 +96,12 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
         ? `/api/chatbot/live-logs?ownerId=${encodeURIComponent(currentOwnerId)}` 
         : "/api/chatbot/live-logs";
       const res = await authFetch(url);
-      const json = await res.json();
+      let json: any = {};
+      try {
+        json = await res.json();
+      } catch (e) {
+        json = { ok: false };
+      }
       if (json.ok && Array.isArray(json.logs)) {
         setRecentLogs(json.logs.slice(0, 5));
       }
@@ -123,7 +133,12 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
           active: newTarget
         })
       });
-      const json = await res.json();
+      let json: any = {};
+      try {
+        json = await res.json();
+      } catch (e) {
+        json = { ok: false };
+      }
       if (json.ok) {
         setData(prev => prev ? { ...prev, botActive: json.botActive } : prev);
       }
@@ -151,7 +166,12 @@ export function ChatbotDiagnosticWidget({ className = "" }: { className?: string
           ownerId: currentOwnerId || undefined
         })
       });
-      const json = await res.json();
+      let json: any = {};
+      try {
+        json = await res.json();
+      } catch (e) {
+        json = { ok: false, error: `Server returned ${res.status} ${res.statusText}` };
+      }
       if (json.ok || json.success) {
         setTestResult({
           ok: true,
