@@ -119,11 +119,17 @@ class WhatsAppService {
 
       let data: any = {};
       let parseError = false;
-      const contentType = response.headers.get('content-type') || '';
+      let responseText = '';
+      try {
+        responseText = await response.text();
+      } catch (e) {
+        responseText = '';
+      }
 
-      if (contentType.includes('application/json')) {
+      const trimmedText = responseText.trim();
+      if (trimmedText.startsWith('{') || trimmedText.startsWith('[')) {
         try {
-          data = await response.json();
+          data = JSON.parse(trimmedText);
         } catch (jsonErr) {
           parseError = true;
           data = { error: `Server returned invalid JSON response (HTTP ${response.status})` };
@@ -131,12 +137,9 @@ class WhatsAppService {
       } else {
         parseError = true;
         let textSummary = '';
-        try {
-          const text = await response.text();
-          if (text && !text.includes('<!doctype') && !text.includes('<html')) {
-            textSummary = text.slice(0, 150);
-          }
-        } catch (e) {}
+        if (trimmedText && !trimmedText.includes('<!doctype') && !trimmedText.includes('<html')) {
+          textSummary = trimmedText.slice(0, 150);
+        }
         data = { error: textSummary ? `Server error (HTTP ${response.status}): ${textSummary}` : `Server returned non-JSON response (HTTP ${response.status}: ${response.statusText || 'Error'})` };
       }
 

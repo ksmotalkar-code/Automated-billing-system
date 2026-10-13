@@ -2345,7 +2345,7 @@ async function startServer() {
           .json({ error: "WhatsApp API not configured in settings" });
       }
 
-      const response = await sendMessageUtil({
+      const data = await sendMessageUtil({
         settings,
         to,
         message,
@@ -2356,10 +2356,10 @@ async function startServer() {
         templateParams,
         customTemplateName,
       });
-      const data = await response.json();
-      res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
+      const messageId = data?.messages?.[0]?.id || data?.id || data?.messageId || "sent";
+      res.json({ success: true, messageId, data });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message || "Failed to send WhatsApp message" });
     }
   });
 
