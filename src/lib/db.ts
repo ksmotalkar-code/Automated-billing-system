@@ -28,9 +28,59 @@ export interface FirestoreErrorInfo {
   }
 }
 
+// Simple Read Cache
+const readCache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_DURATION = 300000; // 5 minutes
+
+export const getCachedData = (key: string) => {
+  // 1. Check in-memory
+  const cached = readCache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    return cached.data;
+  }
+  
+  // 2. Check localStorage
+  try {
+    const stored = localStorage.getItem(`cache_${key}`);
+    if (stored) {
+      const { data, timestamp } = JSON.parse(stored);
+      if (Date.now() - timestamp < CACHE_DURATION) {
+        readCache.set(key, { data, timestamp }); // Warm memory cache
+        return data;
+      }
+    }
+  } catch (e) {}
+
+  return null;
+};
+
+export const setCachedData = (key: string, data: any) => {
+  const timestamp = Date.now();
+  readCache.set(key, { data, timestamp });
+  try {
+    localStorage.setItem(`cache_${key}`, JSON.stringify({ data, timestamp }));
+  } catch (e) {}
+};
+
+export const invalidateCache = (keyPrefix: string) => {
+  for (const k of Array.from(readCache.keys())) {
+    if (k.startsWith(keyPrefix)) {
+      readCache.delete(k);
+    }
+  }
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith(`cache_${keyPrefix}`) || k === `cache_${keyPrefix}`)) {
+        localStorage.removeItem(k);
+      }
+    }
+  } catch (e) {}
+};
+
 let quotaExceededUntil = 0;
 
-export const setQuotaLock = (durationMs = 45000) => {
+export const setQuotaLock = (durationMs = 90000) => {
   quotaExceededUntil = Date.now() + durationMs;
   try {
     localStorage.setItem('firestore_quota_expiry', String(quotaExceededUntil));
@@ -83,16 +133,22 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     errorMessage.includes('EXCEEDED')
   ) {
     console.warn('[WARNING] Firestore Quota / Rate Limit Exceeded.', errInfo);
-    setQuotaLock(45000); // 45 seconds cooling-off lock
+    setQuotaLock(90000); // INCREASED cooling-off lock to 90 seconds
+    try { localStorage.setItem('quota_error', 'true'); } catch (e) {} // Set UI flag
     if (operationType === OperationType.LIST || operationType === OperationType.GET) {
       return; // Do NOT throw on read/list subscriptions so the UI stays stable and cached data displays
     }
     throw new Error('Rate limit temporarily reached. Please wait a few seconds before retrying.');
   }
 
-  if (errorMessage.includes('client is offline')) {
-    console.warn(`\n[WARNING] Firestore Connection Failed (Client is Offline). Request to ${path || 'unknown path'} failed. Ensure your connection is stable and Firestore is provisioned.\n`, errInfo);
-    return; // Do NOT throw, so we can fall back to null/default and not break the UI
+  if (
+    errorMessage.includes('client is offline') || 
+    errorMessage.includes('Could not reach Cloud Firestore backend') ||
+    errorMessage.includes('didn\'t respond within 10 seconds') ||
+    errorMessage.includes('Could not reach')
+  ) {
+    console.warn(`\n[WARNING] Firestore Connection Delayed/Offline. Request to ${path || 'unknown path'} will retry automatically via long-polling.\n`, errInfo);
+    return; // Do NOT throw, so we can fall back to null/default and allow automatic long-polling retry
   }
 
   if (errorMessage.includes('Disconnecting idle stream') || errorMessage.includes('Timed out waiting for new targets') || errorMessage.includes('CANCELLED')) {
@@ -153,6 +209,8 @@ export interface BillingAuditLog {
   executedBy: 'system' | 'admin';
   customerId?: string;
   customerName?: string;
+  phoneNumber?: string;
+  mobileNumber?: string;
 }
 
 export const saveBillingAuditLog = async (log: Omit<BillingAuditLog, 'id'>, explicitOwnerId?: string) => {
@@ -543,6 +601,7 @@ export const addCustomer = async (
 
   try {
     await setDoc(doc(db, 'customers', docId), newCustomer);
+    invalidateCache(`customers_${uid}`);
     return newCustomer;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'customers');
@@ -832,6 +891,7 @@ export const updateCustomer = async (
           await batch.commit();
       }
     }
+    invalidateCache(`customers_${uid}`);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `customers/${updatedCustomer.id}`);
     throw error;
@@ -874,6 +934,8 @@ export const deleteCustomer = async (id: string, docId?: string, explicitOwnerId
     snapshot.docs.forEach(doc => batch.delete(doc.ref));
     
     await batch.commit();
+    invalidateCache(`customers_${uid}`);
+    invalidateCache(`transactions_${uid}`);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `customers/${id}`);
   }
@@ -1005,6 +1067,7 @@ export const addTransaction = async (
         createdAt: new Date().toISOString(),
       });
     }
+    invalidateCache(`transactions_${uid}`);
     return newTransaction;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'transactions');
@@ -1085,6 +1148,7 @@ export const saveSettings = async (settings: AppSettings, explicitOwnerId?: stri
     }
 
     await setDoc(doc(db, 'settings', uid), payload, { merge: true });
+    invalidateCache(`settings_${uid}`);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `settings/${uid}`);
   }
@@ -1254,25 +1318,7 @@ function parseSubArgs<T>(
   return { ownerId, callback };
 }
 
-export function subscribeToBillingAuditLogs(
-  arg1: string | ((logs: BillingAuditLog[]) => void),
-  arg2?: ((logs: BillingAuditLog[]) => void) | string
-) {
-  const { ownerId, callback } = parseSubArgs<BillingAuditLog[]>(arg1, arg2);
-  if (!ownerId) return () => {};
-  const q = query(
-    collection(db, 'billing_audit'),
-    where('ownerId', '==', ownerId)
-  );
-  return onSnapshot(q, (snapshot) => {
-    const logsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillingAuditLog));
-    logsData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-    callback(logsData);
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, 'billing_audit');
-    callback([]);
-  });
-}
+
 
 export const deleteAuditLog = async (logId: string) => {
   try {
@@ -1298,38 +1344,7 @@ export const clearAllAuditLogs = async (explicitOwnerId?: string) => {
   }
 };
 
-export function subscribeToCustomers(
-  arg1: string | ((customers: Customer[]) => void),
-  arg2?: ((customers: Customer[]) => void) | string
-) {
-  const { ownerId, callback } = parseSubArgs<Customer[]>(arg1, arg2);
-  if (!ownerId) return () => {};
-  
-  const processDocs = (snapshot: any) => {
-    return snapshot.docs.map((doc: any) => {
-      const data = doc.data() as Customer;
-      if (data.status !== 'Suspended') {
-        const cleanMobile = data.mobileNumber ? data.mobileNumber.replace(/\D/g, '') : '';
-        if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
-          data.status = 'Suspended';
-        }
-      }
-      return data;
-    });
-  };
 
-  const q = query(
-    collection(db, 'customers'), 
-    where('ownerId', '==', ownerId)
-  );
-
-  return onSnapshot(q, (snapshot) => {
-    callback(processDocs(snapshot));
-  }, (error) => {
-    handleFirestoreError(error, OperationType.LIST, 'customers');
-    callback([]);
-  });
-}
 
 export function subscribeToTransactions(
   arg1: string | ((transactions: Transaction[]) => void),
@@ -2245,5 +2260,210 @@ export const resolveAutomationError = async (id: string, notify: boolean = false
     await updateDoc(doc(db, 'automation_errors', id), { resolved: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'automation_errors');
+  }
+};
+
+export const getSettings = async (ownerId: string): Promise<AppSettings | null> => {
+  try {
+    const docSnap = await getDoc(doc(db, 'settings', ownerId));
+    if (!docSnap.exists()) return null;
+    const data = docSnap.data() as AppSettings;
+
+    // Normalization logic
+    if (!data.metaCustomTemplates) {
+      data.metaCustomTemplates = [];
+    }
+    const existingNames = new Set(data.metaCustomTemplates.map(t => t.templateName));
+    const categoryDefaults = [
+      { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
+      { key: 'metaTemplateBilling', defaultName: 'payment_due_reminder', params: 'customer_name, billing_amount, new_balance, date, button_param', id: 'def_billing' },
+      { key: 'metaTemplateReceipt', defaultName: 'invoice_bill', params: 'customer_name, payment_amount, button_param', id: 'def_receipt' },
+      { key: 'metaTemplateBroadcast', defaultName: 'operation_disruption_2', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', id: 'def_broadcast' },
+      { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
+      { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
+      { key: 'metaTemplateCustom', defaultName: 'general_notification', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', id: 'def_custom' },
+    ];
+    for (const def of categoryDefaults) {
+      const templateName = (data as any)[def.key] || def.defaultName;
+      if (!existingNames.has(templateName)) {
+        data.metaCustomTemplates.push({ templateName, parameters: def.params, id: def.id });
+        existingNames.add(templateName);
+      }
+    }
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, 'settings');
+    return null;
+  }
+};
+
+export const getBillingAuditLogs = async (ownerId: string): Promise<BillingAuditLog[]> => {
+  try {
+    const q = query(collection(db, 'billing_audit'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const logsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as BillingAuditLog));
+    logsData.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return logsData;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'billing_audit');
+    return [];
+  }
+};
+
+export function subscribeToCustomers(
+  arg1: string | ((customers: Customer[]) => void),
+  arg2?: ((customers: Customer[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<Customer[]>(arg1, arg2);
+  if (!ownerId) return () => {};
+  const q = query(
+    collection(db, 'customers'),
+    where('ownerId', '==', ownerId)
+  );
+  return onSnapshot(q, (snapshot) => {
+    const customers = snapshot.docs.map(doc => {
+      const data = { id: doc.id, ...doc.data() } as Customer;
+      if (data.status !== 'Suspended') {
+        const cleanMobile = data.mobileNumber ? data.mobileNumber.replace(/\D/g, '') : '';
+        if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
+          data.status = 'Suspended';
+        }
+      }
+      return data;
+    });
+    setCachedData(`customers_${ownerId}`, customers);
+    callback(customers);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'customers');
+    const cached = getCachedData(`customers_${ownerId}`);
+    if (cached) callback(cached);
+  });
+}
+
+export const getCustomers = async (ownerId: string): Promise<Customer[]> => {
+  const cacheKey = `customers_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'customers'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => {
+      const data = { id: doc.id, ...doc.data() } as Customer;
+      if (data.status !== 'Suspended') {
+        const cleanMobile = data.mobileNumber ? data.mobileNumber.replace(/\D/g, '') : '';
+        if (!cleanMobile || cleanMobile.length < 10 || cleanMobile === '0000000000') {
+          data.status = 'Suspended';
+        }
+      }
+      return data;
+    });
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'customers');
+    return getCachedData(cacheKey) || [];
+  }
+};
+
+export const getTransactions = async (ownerId: string): Promise<Transaction[]> => {
+  const cacheKey = `transactions_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'transactions'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Transaction));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'transactions');
+    return getCachedData(cacheKey) || [];
+  }
+};
+
+export const getComplaints = async (ownerId: string): Promise<Complaint[]> => {
+  const cacheKey = `complaints_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'complaints'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Complaint));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'complaints');
+    return getCachedData(cacheKey) || [];
+  }
+};
+
+export const getReports = async (ownerId: string): Promise<Report[]> => {
+  const cacheKey = `reports_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'reports'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Report));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'reports');
+    return getCachedData(cacheKey) || [];
+  }
+};
+
+export const getWhatsappMessages = async (ownerId: string): Promise<WhatsappMessage[]> => {
+  const cacheKey = `whatsapp_messages_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'whatsapp_messages'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsappMessage));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'whatsapp_messages');
+    return [];
+  }
+};
+
+export const getAutomationErrors = async (ownerId: string): Promise<AutomationError[]> => {
+  const cacheKey = `automation_errors_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'automation_errors'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as AutomationError));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'automation_errors');
+    return [];
+  }
+};
+
+export const getPendingReceipts = async (ownerId: string): Promise<any[]> => {
+  const cacheKey = `pending_receipts_${ownerId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const q = query(collection(db, 'pending_receipts'), where('ownerId', '==', ownerId));
+    const snapshot = await getDocs(q);
+    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setCachedData(cacheKey, data);
+    return data;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.LIST, 'pending_receipts');
+    return [];
   }
 };

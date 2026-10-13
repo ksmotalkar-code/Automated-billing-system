@@ -15,7 +15,15 @@ import {
   subscribeToReports,
   subscribeToWhatsappMessages,
   subscribeToAutomationErrors,
-  subscribeToPendingReceipts
+  subscribeToPendingReceipts,
+  getSettings,
+  getCustomers,
+  getTransactions,
+  getComplaints,
+  getReports,
+  getWhatsappMessages,
+  getAutomationErrors,
+  getPendingReceipts
 } from '../lib/db';
 
 export interface DataContextType {
@@ -30,6 +38,7 @@ export interface DataContextType {
   automationErrors: AutomationError[];
   pendingReceipts: any[];
   isLoading: boolean;
+  quotaExceeded: boolean;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -45,6 +54,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [automationErrors, setAutomationErrors] = useState<AutomationError[]>([]);
   const [pendingReceipts, setPendingReceipts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
+
+  useEffect(() => {
+    // Check for quota error flag on mount
+    const checkQuota = () => {
+        if (localStorage.getItem('quota_error') === 'true') {
+            setQuotaExceeded(true);
+        }
+    };
+    checkQuota();
+    const interval = setInterval(checkQuota, 5000); // Poll for changes
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let unsubs: (() => void)[] = [];
@@ -69,12 +91,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (currentOwnerId) {
       const activeUid = currentOwnerId;
+      setIsLoading(true);
 
-      // Attach scoped subscriptions with identity verification guards explicitly passing activeUid
-      unsubs.push(subscribeToCustomers(activeUid, (custs) => {
-        setCustomers(custs);
-      }));
+      // Warm initial state from cached/fast read
+      getSettings(activeUid).then((freshSettings) => {
+        if (freshSettings) setSettings(freshSettings);
+      });
+      getCustomers(activeUid).then(setCustomers);
+      getTransactions(activeUid).then(setTransactions);
+      getComplaints(activeUid).then(setComplaints);
+      getReports(activeUid).then(setReports);
+      getWhatsappMessages(activeUid).then(setMessages);
+      getAutomationErrors(activeUid).then(setAutomationErrors);
+      getPendingReceipts(activeUid).then(setPendingReceipts);
 
+      // Register live realtime subscriptions so ALL modifications, imports, and updates appear immediately
       unsubs.push(subscribeToSettings(activeUid, (freshSettings) => {
         if (freshSettings) {
           setSettings(freshSettings);
@@ -90,29 +121,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }));
 
-      unsubs.push(subscribeToTransactions(activeUid, (txns) => {
-        setTransactions(txns);
-      }));
-
-      unsubs.push(subscribeToComplaints(activeUid, (comps) => {
-        setComplaints(comps);
-      }));
-
-      unsubs.push(subscribeToReports(activeUid, (reps) => {
-        setReports(reps);
-      }));
-
-      unsubs.push(subscribeToWhatsappMessages(activeUid, (msgs) => {
-        setMessages(msgs);
-      }));
-
-      unsubs.push(subscribeToAutomationErrors(activeUid, (errs) => {
-        setAutomationErrors(errs);
-      }));
-
-      unsubs.push(subscribeToPendingReceipts(activeUid, (rcpts) => {
-        setPendingReceipts(rcpts);
-      }));
+      unsubs.push(subscribeToCustomers(activeUid, setCustomers));
+      unsubs.push(subscribeToTransactions(activeUid, setTransactions));
+      unsubs.push(subscribeToComplaints(activeUid, setComplaints));
+      unsubs.push(subscribeToReports(activeUid, setReports));
+      unsubs.push(subscribeToWhatsappMessages(activeUid, setMessages));
+      unsubs.push(subscribeToAutomationErrors(activeUid, setAutomationErrors));
+      unsubs.push(subscribeToPendingReceipts(activeUid, setPendingReceipts));
 
       // Immediate safety fallback for settings to prevent loading stall
       const settingsFallbackTimer = setTimeout(() => {
@@ -169,7 +184,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       messages,
       automationErrors,
       pendingReceipts,
-      isLoading
+      isLoading,
+      quotaExceeded
     }}>
       {children}
     </DataContext.Provider>

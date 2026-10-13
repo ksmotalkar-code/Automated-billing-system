@@ -11,6 +11,7 @@ import { useTenant } from "../contexts/TenantContext";
 import { db, auth } from '../firebase';
 import { disableNetwork, writeBatch, doc } from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
+import { authFetch } from '../lib/api';
 
 export function DataUploadView() {
   const { t } = useTranslation();
@@ -636,6 +637,52 @@ export function DataUploadView() {
               {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
               {isUploading ? "Importing..." : "Review and Add to Database"}
             </button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Restore System Data</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm neu-text-muted">
+              Select a previously exported JSON file to restore your customer and billing records.
+            </p>
+            <input 
+              type="file" 
+              accept=".json" 
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setIsUploading(true);
+                try {
+                  const text = await file.text();
+                  const data = JSON.parse(text);
+                  const resp = await authFetch('/api/import', {
+                    method: 'POST',
+                    body: JSON.stringify(data)
+                  });
+                  if (resp.ok) {
+                    setStatus({ type: 'success', message: 'Data restored successfully.' });
+                  } else {
+                    setStatus({ type: 'error', message: 'Failed to restore data.' });
+                  }
+                } catch (e) {
+                  console.error(e);
+                  setStatus({ type: 'error', message: 'Error restoring data.' });
+                } finally {
+                  setIsUploading(false);
+                }
+              }}
+              className="hidden"
+              id="import-json"
+            />
+            <label 
+              htmlFor="import-json"
+              className="w-full py-4 bg-purple-600 text-white rounded-xl font-bold shadow-lg shadow-purple-500/30 hover:bg-purple-700 transition-colors cursor-pointer flex items-center justify-center gap-2"
+            >
+              {isUploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Upload className="w-5 h-5" />}
+              {isUploading ? "Restoring..." : "Upload JSON File"}
+            </label>
           </CardContent>
         </Card>
       </div>

@@ -1,13 +1,15 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, AuthError, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
+import { initializeFirestore, enableMultiTabIndexedDbPersistence } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const dbId = (firebaseConfig.firestoreDatabaseId === '(default)' || firebaseConfig.firestoreDatabaseId === 'default') ? undefined : firebaseConfig.firestoreDatabaseId;
-export const db = getFirestore(app, dbId);
+export const db = initializeFirestore(app, {
+  experimentalAutoDetectLongPolling: true,
+}, dbId);
 export const storage = getStorage(app);
 
 // Enable offline persistence safely

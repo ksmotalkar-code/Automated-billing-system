@@ -17,6 +17,7 @@ import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
 import { createWhatsAppRouter, recordRawWebhookReceipt } from "./src/server/routes/whatsapp.ts";
+import { createImportRouter } from "./src/server/routes/import.ts";
 import { pruneTemplateRegistry } from "./src/server/services/templatePruner.ts";
 import { tenantMiddleware, errorHandler, requireAuth, cronAuth, AuthenticatedRequest, verifyHmacSignature, checkRateLimit, checkRateLimitPersistent, setRateLimitDbGetter, DistributedLock } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
@@ -2140,7 +2141,13 @@ async function startServer() {
     }),
   );
   app.use(compression());
-  app.use(cors());
+  app.use(cors({
+    origin: true,
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-owner-id", "x-cron-secret", "x-api-key"]
+  }));
+  app.options("*", cors());
   app.use(
     express.json({
       limit: "50mb",
@@ -2338,7 +2345,7 @@ async function startServer() {
           .json({ error: "WhatsApp API not configured in settings" });
       }
 
-      const data = await sendMessageUtil({
+      const response = await sendMessageUtil({
         settings,
         to,
         message,
@@ -2349,6 +2356,7 @@ async function startServer() {
         templateParams,
         customTemplateName,
       });
+      const data = await response.json();
       res.json({ success: true, messageId: data.messages?.[0]?.id || data.id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -2372,6 +2380,9 @@ async function startServer() {
     sendMessageUtil,
     resolveOwnerIdForWebhook: (ownerId, phoneId) => resolveOwnerIdForWebhook(ownerId, phoneId),
   }));
+
+  // Mount Import Router
+  app.use("/api", createImportRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
 
   // Server-side Gemini AI Client
   let geminiClient: GoogleGenAI | null = null;
@@ -6346,20 +6357,23 @@ async function startServer() {
                            });
                            
                            const auditId = Math.random().toString(36).substr(2, 9);
+                           const custPhone = matchedCustomer.mobileNumber || fromMobile || "N/A";
                            await dbInstance.collection("billing_audit").doc(auditId).set({
                              id: auditId,
                              ownerId: ownerId,
                              type: 'inquiry',
                              customerId: matchedCustomer.id,
-                             customerName: matchedCustomer.name,
-                             description: msgBody,
+                             customerName: matchedCustomer.name || "N/A",
+                             phoneNumber: custPhone,
+                             mobileNumber: custPhone,
+                             description: `Deep Detail Report Response: "${msgBody}"`,
                              affectedCustomersCount: 1,
                              totalAmount: 0,
                              timestamp: new Date().toISOString(),
                              executedBy: 'system'
                            });
                            
-                           const compResText = `Thank you. The request has been submitted. We will inform you of the next steps within 24 working hours.`;
+                           const compResText = `Thank you, we got your response. We will respond within 24hr to 48 hr.`;
                            
                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
                              role: "assistant",
@@ -6370,7 +6384,7 @@ async function startServer() {
                            
                            if (settings && settings.metaWhatsAppPhoneNumberId) {
                              try {
-                               await sendWhatsAppMessage(settings as any, matchedCustomer.mobileNumber, compResText);
+                               await sendWhatsAppMessage(settings as any, custPhone, compResText);
                              } catch (err) {}
                            }
                            continue; // skip further bot processing for this message
@@ -7445,6 +7459,53 @@ To link your connection or update your registered number, please contact the Gra
         matchedCustomer.pendingReportSelection = Boolean(req.body.pendingReportSelection);
       }
 
+      if (matchedCustomer.pendingDeepReportInquiry) {
+        if (dbInstance) {
+          try {
+            await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+              pendingDeepReportInquiry: false
+            });
+            const auditId = Math.random().toString(36).substr(2, 9);
+            const custPhone = matchedCustomer.mobileNumber || inputMobile || "N/A";
+            await dbInstance.collection("billing_audit").doc(auditId).set({
+              id: auditId,
+              ownerId: effectiveOwnerId,
+              type: 'inquiry',
+              customerId: matchedCustomer.id,
+              customerName: matchedCustomer.name || "N/A",
+              phoneNumber: custPhone,
+              mobileNumber: custPhone,
+              description: `Deep Detail Report Response: "${msgBody}"`,
+              affectedCustomersCount: 1,
+              totalAmount: 0,
+              timestamp: new Date().toISOString(),
+              executedBy: 'system'
+            });
+          } catch (e) {}
+        }
+        const reply = `Thank you, we got your response. We will respond within 24hr to 48 hr.`;
+        const elapsedMs = Date.now() - startTime;
+        return res.json({
+          ok: true,
+          isRealCase: true,
+          customer: {
+            id: matchedCustomer.id,
+            name: matchedCustomer.name,
+            mobileNumber: matchedCustomer.mobileNumber || "N/A",
+            balance: Number(matchedCustomer.balance) || 0,
+            advanceBalance: Number(matchedCustomer.advanceBalance) || 0,
+            status: matchedCustomer.status || "Active",
+            registered: true
+          },
+          inboundMessage: msgBody,
+          intentMatched: "Deep Detail Report Follow-Up Response",
+          botResponse: reply,
+          attachments: [],
+          action: "deep_report_response_submitted",
+          latencyMs: elapsedMs
+        });
+      }
+
       let responseText = "";
       let matched = false;
       let matchedRule = "";
@@ -7498,6 +7559,20 @@ To link your connection or update your registered number, please contact the Gra
         matchedRule = "Fallback Guidance";
       }
 
+      const isDeepCmd = 
+        intentRes.action === "deep_report" || 
+        intentRes.action === "deep_report_selected" ||
+        msgLower.includes("deep detail") ||
+        msgLower.includes("deep report");
+
+      if (isDeepCmd && dbInstance) {
+        try {
+          await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+            pendingDeepReportInquiry: true
+          });
+        } catch (e) {}
+      }
+
       const elapsedMs = Date.now() - startTime;
 
       res.json({
@@ -7522,6 +7597,7 @@ To link your connection or update your registered number, please contact the Gra
         })),
         action: intentRes.action || (matched ? "command_matched" : "fallback"),
         pendingReportSelection: intentRes.action === "pending_report_selection",
+        pendingDeepReportInquiry: isDeepCmd,
         latencyMs: elapsedMs
       });
     } catch (e: any) {
@@ -8003,7 +8079,7 @@ To link your connection or update your registered number, please contact the Gra
     fs.existsSync(path.resolve(currentDir, "dist", "index.html")) ||
     fs.existsSync(path.resolve(currentDir, "../dist", "index.html"));
 
-  const isProduction = process.env.NODE_ENV === "production" || hasDist || process.env.DISABLE_HMR === "true";
+  const isProduction = process.env.NODE_ENV === "production";
 
   if (hasDist && isProduction) {
     let distPath = path.join(process.cwd(), "dist");

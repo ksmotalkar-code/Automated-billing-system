@@ -6,7 +6,7 @@ import { useRef } from "react";
 import { sendWhatsAppNotification } from "../lib/automation";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
-import { subscribeToBillingAuditLogs, BillingAuditLog, deleteAuditLog, clearAllAuditLogs } from "../lib/db";
+import { getBillingAuditLogs, BillingAuditLog, deleteAuditLog, clearAllAuditLogs } from "../lib/db";
 import { useTranslation } from "react-i18next";
 import { ConfirmModal } from "../components/ConfirmModal";
 
@@ -34,11 +34,10 @@ export function BillingAuditView() {
       setIsLoading(false);
       return;
     }
-    const unsubscribe = subscribeToBillingAuditLogs(currentOwnerId, (fetchedLogs) => {
+    getBillingAuditLogs(currentOwnerId).then((fetchedLogs) => {
       setLogs(fetchedLogs);
       setIsLoading(false);
     });
-    return () => unsubscribe();
   }, [currentOwnerId]);
 
   const handleClearAll = async () => {
@@ -210,10 +209,26 @@ export function BillingAuditView() {
                               Amount: {formatCurrency(log.totalAmount)}
                             </span>
                           )}
-                          {log.type === 'inquiry' && log.customerName && (
+                          {log.type === 'inquiry' && (
                             <>
-                              <span>&bull;</span>
-                              <span className="font-semibold text-emerald-600">From: {log.customerName}</span>
+                              {log.customerName && (
+                                <>
+                                  <span>&bull;</span>
+                                  <span className="font-semibold text-emerald-600">From: {log.customerName}</span>
+                                </>
+                              )}
+                              {log.customerId && (
+                                <>
+                                  <span>&bull;</span>
+                                  <span className="font-semibold text-indigo-600">ID: {log.customerId}</span>
+                                </>
+                              )}
+                              {(log.phoneNumber || log.mobileNumber) && (
+                                <>
+                                  <span>&bull;</span>
+                                  <span className="font-semibold text-sky-600">Phone: {log.phoneNumber || log.mobileNumber}</span>
+                                </>
+                              )}
                             </>
                           )}
                         </div>

@@ -23,7 +23,7 @@ import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { useTranslation } from 'react-i18next';
-import { subscribeToCustomers, subscribeToSettings, cleanupOldData, Customer, AppSettings, saveSettings } from "./lib/db";
+import { cleanupOldData, Customer, AppSettings, saveSettings } from "./lib/db";
 import { useData } from "./contexts/DataContext";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { runAutomationCycle } from "./lib/automation";
@@ -34,7 +34,7 @@ import { DraggableOrb } from "./components/DraggableOrb";
 
 export default function App() {
   const [activeLayer, setActiveLayer] = useState("dashboard");
-  const { customers, settings, isLoading } = useData();
+  const { customers, settings, isLoading, quotaExceeded } = useData();
   const [theme, _setTheme] = useState(() => localStorage.getItem("app_theme") || "midnight");
   const [uiStyle, _setUiStyle] = useState(() => localStorage.getItem("app_uiStyle") || "glassmorphism"); // "neumorphism" or "glassmorphism"
   
@@ -464,6 +464,27 @@ export default function App() {
           >
             {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
+          
+          {/* Quota Exceeded Alert Banner */}
+          {quotaExceeded && (
+             <div className="flex-1 mx-4 p-3 bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 rounded-xl font-bold text-xs shadow-sm flex flex-col md:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>
+                    <strong>Database Free Tier Limit Reached:</strong> Your stored data is 100% safe. Firestore daily read quota has been exceeded for today and resets at midnight.
+                  </span>
+                </div>
+                <a
+                  href="https://console.firebase.google.com/project/project-1beef4b4-f94a-4f32-8ff/firestore/databases/ai-studio-d898234f-1e35-46d9-ad05-693a1286e0b0/data?openUpgradeDialog=true"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-black uppercase tracking-wider shrink-0 shadow-sm transition"
+                >
+                  Upgrade Database in Console
+                </a>
+             </div>
+          )}
+
           <div className="hidden md:flex items-center gap-4 ml-auto">
             <span className="text-sm font-medium">{user?.email || "Admin"}</span>
             <button 

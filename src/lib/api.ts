@@ -62,6 +62,7 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
       });
       return response;
     } catch (netErr: any) {
+      console.error(`[authFetch] FAILED to fetch ${targetUrl}:`, netErr);
       const isNetworkError = 
         netErr.name === 'TypeError' && 
         (netErr.message?.includes('Failed to fetch') || netErr.message?.includes('NetworkError'));
