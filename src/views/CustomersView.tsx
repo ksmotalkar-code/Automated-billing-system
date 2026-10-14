@@ -277,6 +277,7 @@ export function CustomersView() {
   const [individualNotifyCustomer, setIndividualNotifyCustomer] = useState<Customer | null>(null);
   const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
   const [notifyMessage, setNotifyMessage] = useState("");
+  const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState<string>("default");
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
@@ -684,9 +685,9 @@ export function CustomersView() {
       }, customers, currentOwnerId || undefined);
 
       // Send Welcome Message
-      if (settings && settings.automation && finalStatus === 'Active') {
+      if (settings && finalStatus === 'Active' && settings.automation?.welcome !== false) {
         const message = `Welcome ${newCustomer.name} to our service! We are happy to have you on board.`;
-        sendWhatsAppNotification({...added} as Customer, message, settings, undefined, undefined, false, true, 'welcome').catch(err => console.error("Auto notify welcome error:", err));
+        sendWhatsAppNotification({...added} as Customer, message, settings, undefined, undefined, false, false, 'welcome').catch(err => console.warn("Auto notify welcome note:", err?.message || err));
       }
 
       setIsAddModalOpen(false);
@@ -760,7 +761,7 @@ export function CustomersView() {
       
       if (statusChanged && settings && settings.automation && finalStatus !== 'Suspended') {
          let message = `Dear ${editingCustomer.name}, your account status has been updated to ${finalStatus}.`;
-         sendWhatsAppNotification({...editingCustomer, id: targetId, status: finalStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.error("Auto notify status error:", err));
+         sendWhatsAppNotification({...editingCustomer, id: targetId, status: finalStatus}, message, settings, undefined, undefined, false, true, 'broadcast').catch(err => console.warn("Auto notify status note:", err?.message || err));
       }
 
       setIsEditModalOpen(false);
@@ -790,7 +791,7 @@ export function CustomersView() {
         if (settings && settings.automation) {
            let message = `Dear ${customer.name}, your account status has been updated to ${newStatus}.`;
            if (newStatus === 'Suspended') message += ` Please contact support to resolve any outstanding issues.`;
-           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, false, true, newStatus === 'Suspended' ? 'suspension' : 'broadcast').catch(err => console.error("Auto notify isolate error:", err));
+           sendWhatsAppNotification({...customer, status: newStatus}, message, settings, undefined, undefined, false, true, newStatus === 'Suspended' ? 'suspension' : 'broadcast').catch(err => console.warn("Auto notify isolate note:", err?.message || err));
         }
         setIsEditModalOpen(false);
         setEditingCustomer(null);
@@ -1068,6 +1069,7 @@ export function CustomersView() {
 
     const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
     const deliveryRef = { current: hasAnyApi ? 'api' : 'broadcast' };
+    const templateRef = { current: selectedBroadcastTemplate };
 
     setConfirmConfig({
       isOpen: true,
@@ -1102,6 +1104,29 @@ export function CustomersView() {
               <option value="web">Manual: WhatsApp Web (Manual Prompts - 1 by 1)</option>
             </select>
           </div>
+          {hasAnyApi && (
+            <div className="space-y-2">
+              <label className="text-sm font-semibold">Meta Template</label>
+              <select 
+                className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
+                onChange={(e) => {
+                  templateRef.current = e.target.value;
+                  setSelectedBroadcastTemplate(e.target.value);
+                }}
+                defaultValue={templateRef.current}
+              >
+                <option value="default">
+                  {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast Template'}
+                </option>
+                {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
+                  <option key={t.id || t.templateName} value={t.templateName}>
+                    {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
+                  </option>
+                ))}
+                <option value="direct_text">Direct Text Message (No Template / Session Text)</option>
+              </select>
+            </div>
+          )}
         </div>
       ),
       onConfirm: async () => {
@@ -1130,6 +1155,9 @@ export function CustomersView() {
         // but 'preferredNotificationMethod' is enough for automation.ts route.
 
         let combinedMessage = notifyMessage;
+        const isDirectText = templateRef.current === 'direct_text';
+        const chosenTemplate = templateRef.current !== 'default' && !isDirectText ? templateRef.current : undefined;
+        const templateCategory = isDirectText ? undefined : (chosenTemplate ? 'custom' : 'broadcast');
 
         for (let i = 0; i < targetCustomers.length; i++) {
           const customer = targetCustomers[i];
@@ -1142,9 +1170,24 @@ export function CustomersView() {
             fileName = customAttachment.name;
           }
 
-          const result = await sendWhatsAppNotification(customer, finalMsg, tempSettings, attachment, fileName, false, true, 'broadcast');
-          if (!result.success) {
-            errors.push(`${customer.name}: ${result.error}`);
+          try {
+            const result = await sendWhatsAppNotification(
+              customer, 
+              finalMsg, 
+              tempSettings, 
+              attachment, 
+              fileName, 
+              true, 
+              false, 
+              templateCategory, 
+              undefined, 
+              chosenTemplate
+            );
+            if (!result.success) {
+              errors.push(`${customer.name}: ${result.error || 'Failed to deliver'}`);
+            }
+          } catch (sendErr: any) {
+            errors.push(`${customer.name}: ${sendErr?.message || 'Network error'}`);
           }
 
           setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
@@ -2213,6 +2256,34 @@ export function CustomersView() {
                     <span className="text-xs text-gray-500 ml-2">File will be sent along with your message</span>
                   </div>
                 </div>
+
+                {((settings?.metaWhatsAppApiKey && settings?.metaWhatsAppPhoneNumberId) || (settings?.metaCustomTemplates && settings.metaCustomTemplates.length > 0) || settings?.metaTemplateBroadcast) && (
+                  <div>
+                    <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                      WhatsApp Meta Template (API Delivery)
+                    </label>
+                    <select
+                      value={selectedBroadcastTemplate}
+                      onChange={(e) => setSelectedBroadcastTemplate(e.target.value)}
+                      className="w-full px-3 py-2.5 neu-pressed rounded-xl outline-none text-sm font-medium bg-transparent"
+                    >
+                      <option value="default">
+                        {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast Template'}
+                      </option>
+                      {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
+                        <option key={t.id || t.templateName} value={t.templateName}>
+                          {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
+                        </option>
+                      ))}
+                      <option value="direct_text">Direct Text Message (No Template / 24h Session)</option>
+                    </select>
+                    <p className="text-[11px] text-gray-500 mt-1">
+                      {selectedBroadcastTemplate === 'direct_text'
+                        ? 'Sends your typed message directly as plain text (requires active 24h customer window).'
+                        : 'Your typed or selected message is dynamically mapped into the template variables.'}
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between pt-4 border-t border-[var(--shadow-dark)]">
                   <div className="text-xs neu-text-muted">

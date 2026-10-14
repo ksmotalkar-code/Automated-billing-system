@@ -254,13 +254,14 @@ export const sendWhatsAppNotification = async (
   templateParams?: any[],
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
-  if (customer.status === 'Suspended') {
-    return { success: false, error: `Customer status is "${customer.status}". Automated billing notifications are disabled for this account.` };
-  }
-  if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
-    console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
-    return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
-  }
+  try {
+    if (customer.status === 'Suspended') {
+      return { success: false, error: `Customer status is "${customer.status}". Automated billing notifications are disabled for this account.` };
+    }
+    if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
+      console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
+      return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
+    }
 
   whatsappService.updateConfig(
     settings.metaWhatsAppApiKey || null, 
@@ -284,6 +285,16 @@ export const sendWhatsAppNotification = async (
 
   usePortalLink = usePortalLink && includePortalLink;
 
+  // Extract clean message without greeting for template variable mapping
+  let cleanMsg = message;
+  if (customer && customer.name) {
+    if (cleanMsg.startsWith(`Dear ${customer.name}, `)) {
+      cleanMsg = cleanMsg.slice(`Dear ${customer.name}, `.length);
+    } else if (cleanMsg.startsWith(`Hi ${customer.name}, `)) {
+      cleanMsg = cleanMsg.slice(`Hi ${customer.name}, `.length);
+    }
+  }
+
   // Determine Template Name
   let templateName = customTemplateName;
   if (!templateName) {
@@ -296,7 +307,35 @@ export const sendWhatsAppNotification = async (
     else if (templateCategory === 'custom') templateName = settings.metaTemplateCustom;
   }
 
-  // Look for custom parameters mapping
+  // Fallback to Template Registry (metaCustomTemplates) if category template not set
+  if ((!templateName || templateName.trim() === '') && settings.metaCustomTemplates && templateCategory) {
+    const cat = templateCategory.toLowerCase();
+    const matched = settings.metaCustomTemplates.find(t => {
+      const tName = (t.templateName || '').toLowerCase();
+      const tId = (t.id || '').toLowerCase();
+      if (tId === `def_${cat}` || tId === cat || tName === cat) return true;
+      if (cat === 'welcome' && (tName.includes('welcome') || tName.includes('join') || tId.includes('welcome'))) return true;
+      if (cat === 'receipt' && (tName.includes('receipt') || tName.includes('payment') || tId.includes('receipt'))) return true;
+      if (cat === 'billing' && (tName.includes('bill') || tId.includes('bill'))) return true;
+      if (cat === 'broadcast' && (tName.includes('broadcast') || tName.includes('notice') || tName.includes('announcement') || tId.includes('broadcast'))) return true;
+      if (cat === 'overdue' && (tName.includes('overdue') || tName.includes('due') || tId.includes('overdue'))) return true;
+      if (cat === 'suspension' && (tName.includes('suspen') || tName.includes('disconnect') || tId.includes('suspension'))) return true;
+      return false;
+    });
+    if (matched?.templateName) {
+      templateName = matched.templateName.trim();
+    }
+  }
+
+  // Final default template names by category if still missing
+  if (!templateName || templateName.trim() === '') {
+    if (templateCategory === 'welcome') templateName = 'welcome';
+    else if (templateCategory === 'broadcast') templateName = settings.metaCustomTemplates?.[0]?.templateName || 'broadcast';
+    else if (templateCategory === 'receipt') templateName = 'receipt';
+    else if (templateCategory === 'billing') templateName = 'billing';
+  }
+
+  // Look for custom parameters mapping in Template Registry
   let dynamicParamsResolved = false;
   if (templateName && settings.metaCustomTemplates) {
     let matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
@@ -307,23 +346,72 @@ export const sendWhatsAppNotification = async (
         t.id === `def_metaTemplate${templateCategory.charAt(0).toUpperCase() + templateCategory.slice(1)}`
       );
     }
-    if (matchedConfig && matchedConfig.parameters) {
-      const paramKeys = matchedConfig.parameters.split(',').map(s => s.trim());
-      templateParams = paramKeys.map(key => {
-        let val: any = '';
-        if (key === 'customer_name') val = customer.name;
-        else if (key === 'customer_balance') val = customer.balance;
-        else if (key === 'billing_amount') val = settings.billingAmount || 200;
-        else if (key === 'new_balance') val = customer.balance + (settings.billingAmount || 200);
-        else if (key === 'payment_amount') val = customer.balance; // Approximation if unknown
-        else if (key === 'overdue_amount') val = customer.balance + (settings.penaltyAmount || 50);
-        else if (key === 'penalty_amount') val = settings.penaltyAmount || 50;
-        else if (key === 'date') val = new Date().toLocaleDateString('en-GB');
-        else if (key === 'portal_link' || key === 'button_param') val = { isButtonParam: true, value: customer.id, index: '0' };
-        else val = key;
-        return val;
-      });
-      dynamicParamsResolved = true;
+    if (matchedConfig && typeof matchedConfig.parameters === 'string') {
+      const rawParamStr = matchedConfig.parameters.trim();
+      if (rawParamStr === '') {
+        // Explicitly 0 parameters defined for static template
+        templateParams = [];
+        dynamicParamsResolved = true;
+      } else {
+        const paramKeys = rawParamStr.split(',').map(s => s.trim()).filter(Boolean);
+        templateParams = paramKeys.map(key => {
+          const lowerKey = key.toLowerCase();
+          if (lowerKey === 'customer_name' || lowerKey === 'name' || lowerKey === 'customer') {
+            return customer.name;
+          }
+          if (lowerKey === 'customer_id' || lowerKey === 'id' || lowerKey === 'account_no') {
+            return customer.id;
+          }
+          if (lowerKey === 'customer_balance' || lowerKey === 'balance') {
+            return String(customer.balance ?? 0);
+          }
+          if (lowerKey === 'billing_amount' || lowerKey === 'amount' || lowerKey === 'bill_amount') {
+            return String(settings.billingAmount || 200);
+          }
+          if (lowerKey === 'new_balance' || lowerKey === 'total_balance') {
+            return String((customer.balance || 0) + (settings.billingAmount || 200));
+          }
+          if (lowerKey === 'payment_amount' || lowerKey === 'paid_amount') {
+            return String((customer as any).lastPaymentAmount || customer.balance || settings.billingAmount || 200);
+          }
+          if (lowerKey === 'overdue_amount' || lowerKey === 'pending_amount') {
+            return String((customer.balance || 0) + (settings.penaltyAmount || 50));
+          }
+          if (lowerKey === 'penalty_amount' || lowerKey === 'late_fee') {
+            return String(settings.penaltyAmount || 50);
+          }
+          if (lowerKey === 'date' || lowerKey === 'today' || lowerKey === 'due_date') {
+            return new Date().toLocaleDateString('en-GB');
+          }
+          if (lowerKey === 'portal_link' || lowerKey === 'button_param' || lowerKey === 'button') {
+            return { isButtonParam: true, value: customer.id, index: '0' };
+          }
+          if (
+            lowerKey === 'message' || 
+            lowerKey === 'broadcast_message' || 
+            lowerKey === 'custom_message' || 
+            lowerKey === 'announcement' || 
+            lowerKey === 'notice' || 
+            lowerKey === 'details' || 
+            lowerKey === 'text' || 
+            lowerKey === 'body' || 
+            lowerKey === 'content' || 
+            lowerKey === 'msg' || 
+            lowerKey === 'reason' || 
+            lowerKey === 'info' || 
+            lowerKey === 'var2' || 
+            lowerKey === '2' || 
+            lowerKey === '{{2}}'
+          ) {
+            return cleanMsg;
+          }
+          if (lowerKey === '1' || lowerKey === '{{1}}' || lowerKey === 'var1') {
+            return paramKeys.length > 1 ? customer.name : cleanMsg;
+          }
+          return key;
+        });
+        dynamicParamsResolved = true;
+      }
     }
   }
 
@@ -354,13 +442,23 @@ export const sendWhatsAppNotification = async (
    } else if (!dynamicParamsResolved) {
       templateParams = templateParams || [];
       if (templateParams.length === 0) {
-        templateParams.push(customer.name);
-        if (templateCategory === 'billing') {
-          templateParams.push(settings.billingAmount);
-          templateParams.push(customer.balance);
+        if (templateCategory === 'welcome') {
+          templateParams.push(customer.name);
+        } else if (templateCategory === 'broadcast' || templateCategory === 'custom') {
+          // Send customer name and clean message without button param
+          templateParams.push(customer.name);
+          templateParams.push(cleanMsg);
+        } else if (templateCategory === 'billing') {
+          templateParams.push(customer.name);
+          templateParams.push(settings.billingAmount || 200);
+          templateParams.push(customer.balance || 0);
           templateParams.push(new Date().toLocaleDateString('en-GB'));
+        } else if (templateCategory === 'receipt') {
+          templateParams.push(customer.name);
+          templateParams.push(customer.balance || settings.billingAmount || 200);
+        } else {
+          templateParams.push(customer.name);
         }
-        templateParams.push({ isButtonParam: true, value: customer.id, index: '0' });
       }
    }
   
@@ -437,7 +535,15 @@ export const sendWhatsAppNotification = async (
     return { success: true, fellBackToManual: true };
   }
   
-  return { success: false, error: usePortalLink ? "Bulk manual notifications disabled. Please enable Meta API for bulk messaging." : "API not configured and manual fallback disabled for bulk mode." };
+    return { success: false, error: usePortalLink ? "Bulk manual notifications disabled. Please enable Meta API for bulk messaging." : "API not configured and manual fallback disabled for bulk mode." };
+  } catch (notificationErr: any) {
+    console.warn(`[sendWhatsAppNotification] Notification delivery failed for ${customer?.name}:`, notificationErr?.message || notificationErr);
+    return {
+      success: false,
+      error: notificationErr?.message || "Failed to deliver WhatsApp message due to a network or service issue.",
+      fellBackToManual: true
+    };
+  }
 };
 
 export const runAutomationCycle = async (_customers: Customer[], settings: AppSettings) => {

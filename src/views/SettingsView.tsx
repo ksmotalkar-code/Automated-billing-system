@@ -304,7 +304,7 @@ export function SettingsView() {
         isLoading: false,
         tested: true,
         connected: false,
-        error: "Network error connecting to verification service.",
+        error: e?.message || "Network error connecting to verification service.",
       });
     }
   };
@@ -1439,6 +1439,7 @@ export function SettingsView() {
 
               <div className="grid gap-3">
                 {[
+                  { key: 'welcome', label: 'Welcome Greetings', desc: 'Auto-send welcome message to new customers', detailedDesc: 'Automatically triggers your approved WhatsApp welcome template whenever a new active customer is added to the system.' },
                   { key: 'billingLifecycle', label: 'Billing Lifecycle', desc: 'End-to-end invoice & overdue management', detailedDesc: 'Automatically generates bills based on meter readings and tracks their lifecycle from pending to paid or overdue.' },
                   { key: 'ruleBased', label: 'Rule Enforcement', desc: 'Strict business logic application', detailedDesc: 'Ensures bills strictly follow predefined rules. If turned off, you can override logic manually without warnings.' },
                   { key: 'lateFee', label: 'Auto Penalties', desc: 'Late fee injection on grace expiry', detailedDesc: 'Automatically applies configured penalty amount when a bill passes its grace period.' },

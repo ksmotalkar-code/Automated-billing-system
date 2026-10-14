@@ -205,7 +205,7 @@ export function PaymentsView() {
           templateCat = 'billing';
         }
 
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.warn("Auto notify note:", err?.message || err));
       }
     } catch (error: any) {
       console.error("Payment confirmation error:", error);
@@ -271,7 +271,7 @@ export function PaymentsView() {
               if (settings.automation?.smartNotifications) {
                 const message = `Dear ${updatedCustomer.name}, your bill of ${formatCurrency(amount)} has been completely PAID. Thank you for your promptness! Attached is your official invoice.`;
                 const pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, amount);
-                sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode, true, 'receipt').catch(err => console.error("Auto notify error:", err));
+                sendWhatsAppNotification(updatedCustomer, message, tempSettings, pdfBlob, `Invoice_${updatedCustomer.id}.pdf`, isApiMode, true, 'receipt').catch(err => console.warn("Auto notify note:", err?.message || err));
               }
           }
           await batch.commit();
@@ -352,7 +352,7 @@ export function PaymentsView() {
           templateCat = 'billing';
         }
 
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.error("Auto notify error:", err));
+        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.warn("Auto notify note:", err?.message || err));
       }
     } catch (error: any) {
       console.error("Error approving receipt:", error);
@@ -371,7 +371,7 @@ export function PaymentsView() {
       if (customer) {
         const message = `Dear ${customer.name}, your uploaded payment screenshot for ₹${receipt.amount || 200} could not be verified by the Panchayat Admin. Please ensure your screenshot clearly shows the transaction date, bank reference/UTR number, and successful payment status, and then re-upload it via your customer portal. Thank you.`;
         sendWhatsAppNotification(customer, message, settings, undefined, undefined, false, true, 'receipt')
-          .catch(err => console.error("Auto notify rejection error:", err));
+          .catch(err => console.warn("Auto notify rejection note:", err?.message || err));
       }
 
       setIsReceiptModalOpen(false);

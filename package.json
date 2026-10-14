@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "prune-templates": "tsx scripts/prune-template-registry.ts"
+    "prune-templates": "tsx scripts/prune-template-registry.ts",
+    "test:e2e": "tsx scripts/test-e2e-workflow.ts"
   },
   "dependencies": {
     "@google/genai": "^1.50.1",

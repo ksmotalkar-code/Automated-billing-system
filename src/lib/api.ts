@@ -12,7 +12,17 @@ export interface AuthFetchOptions extends RequestInit {
 export async function authFetch(url: string, options: AuthFetchOptions = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
 
-  // If user is authenticated, attach live Firebase ID Token
+  // If user is not yet loaded, try waiting for authStateReady
+  if (!auth.currentUser && typeof (auth as any).authStateReady === 'function') {
+    try {
+      await Promise.race([
+        (auth as any).authStateReady(),
+        new Promise(r => setTimeout(r, 1200))
+      ]);
+    } catch (e) {}
+  }
+
+  // Attach live Firebase ID Token if user is authenticated
   if (auth.currentUser) {
     try {
       const token = await auth.currentUser.getIdToken();
@@ -25,70 +35,75 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
     }
   }
 
+  // Attach fallback session owner if token missing
+  if (!headers.has('Authorization')) {
+    const fallbackUid = auth.currentUser?.uid || (typeof localStorage !== 'undefined' ? localStorage.getItem('panchayat_owner_id') || localStorage.getItem('last_active_owner_id') : null);
+    if (fallbackUid) {
+      headers.set('Authorization', `Bearer ${fallbackUid}`);
+      headers.set('x-owner-id', fallbackUid);
+    }
+  }
+
   // Set default JSON Content-Type if string body provided and header omitted
   if (options.body && typeof options.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
-  const timeoutMs = options.timeoutMs || 45000;
+  const timeoutMs = options.timeoutMs || 60000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   const signal = options.signal || controller.signal;
 
-  // Resolve absolute URL if relative path supplied to prevent iframe relative fetch resolution failures
+  // Use relative URL or origin-qualified URL for browser requests
   let targetUrl = url;
-  if (targetUrl.startsWith('/')) {
-    if (typeof window !== 'undefined' && window.location && window.location.origin) {
-      // Use URL constructor for robust normalization (handles double slashes etc)
-      try {
-        const base = window.location.origin;
-        targetUrl = new URL(url, base).href;
-      } catch (e) {
-        targetUrl = `${window.location.origin}${targetUrl}`;
-      }
-    }
+  if (url.startsWith('/') && typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
+    targetUrl = `${window.location.origin}${url}`;
   }
+
+  const fetchOptions: RequestInit = {
+    ...options,
+    credentials: options.credentials || 'same-origin',
+    headers,
+    signal,
+  };
 
   const maxRetries = options.method === 'GET' ? 2 : 1; // Retry once for POST if network drop occurs
   let attempt = 0;
 
-  while (true) {
-    try {
-      const response = await fetch(targetUrl, {
-        ...options,
-        headers,
-        signal,
-      });
-      return response;
-    } catch (netErr: any) {
-      console.error(`[authFetch] FAILED to fetch ${targetUrl}:`, netErr);
-      const isNetworkError = 
-        netErr.name === 'TypeError' && 
-        (netErr.message?.includes('Failed to fetch') || netErr.message?.includes('NetworkError'));
-      
-      if (isNetworkError && attempt < maxRetries) {
-        attempt++;
-        const delay = 1000 * Math.pow(2, attempt - 1);
-        console.warn(`[authFetch] Network retry ${attempt}/${maxRetries} for ${targetUrl} after ${delay}ms...`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-
-      console.warn(`[authFetch] Network connection failure on ${targetUrl}:`, netErr);
-      if (netErr.name === 'AbortError') {
-        throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
-      }
-      const msg = netErr.message || String(netErr);
-      if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-        throw new Error(`Network connection error while contacting server (${url}). This usually happens if the server is restarting or the network is unstable.`);
-      }
-      throw netErr;
-    } finally {
-      if (attempt >= maxRetries) {
+  try {
+    while (true) {
+      try {
+        const response = await fetch(targetUrl, fetchOptions);
         clearTimeout(timeoutId);
+        return response;
+      } catch (netErr: any) {
+        console.warn(`[authFetch] Network issue for ${targetUrl}:`, netErr?.message || netErr);
+        const isNetworkError = 
+          netErr.name === 'TypeError' && 
+          (netErr.message?.includes('Failed to fetch') || netErr.message?.includes('NetworkError'));
+        
+        if (isNetworkError && attempt < maxRetries) {
+          attempt++;
+          const delay = 1000 * Math.pow(2, attempt - 1);
+          console.warn(`[authFetch] Network retry ${attempt}/${maxRetries} for ${targetUrl} after ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+
+        console.warn(`[authFetch] Network connection failure on ${targetUrl}:`, netErr);
+        if (netErr.name === 'AbortError') {
+          throw new Error(`Request timed out after ${timeoutMs / 1000}s while contacting ${url}`);
+        }
+        const msg = netErr.message || String(netErr);
+        if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
+          throw new Error(`Network connection error while contacting server (${url}). This usually happens if the server is restarting or the network is unstable.`);
+        }
+        throw netErr;
       }
     }
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

@@ -296,6 +296,7 @@ export interface AutomationSettings {
   autoShareReports?: boolean;
   autoCreateComplaints?: boolean;
   enforceIstTimeWindow?: boolean; // Run 9AM-10AM IST
+  welcome?: boolean;
 }
 
 export interface WhatsAppProvider {
@@ -2273,21 +2274,18 @@ export const getSettings = async (ownerId: string): Promise<AppSettings | null> 
     if (!data.metaCustomTemplates) {
       data.metaCustomTemplates = [];
     }
-    const existingNames = new Set(data.metaCustomTemplates.map(t => t.templateName));
-    const categoryDefaults = [
-      { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
-      { key: 'metaTemplateBilling', defaultName: 'payment_due_reminder', params: 'customer_name, billing_amount, new_balance, date, button_param', id: 'def_billing' },
-      { key: 'metaTemplateReceipt', defaultName: 'invoice_bill', params: 'customer_name, payment_amount, button_param', id: 'def_receipt' },
-      { key: 'metaTemplateBroadcast', defaultName: 'operation_disruption_2', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', id: 'def_broadcast' },
-      { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
-      { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
-      { key: 'metaTemplateCustom', defaultName: 'general_notification', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', id: 'def_custom' },
-    ];
-    for (const def of categoryDefaults) {
-      const templateName = (data as any)[def.key] || def.defaultName;
-      if (!existingNames.has(templateName)) {
-        data.metaCustomTemplates.push({ templateName, parameters: def.params, id: def.id });
-        existingNames.add(templateName);
+    if (data.metaCustomTemplates.length === 0) {
+      const categoryDefaults = [
+        { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
+        { key: 'metaTemplateBilling', defaultName: 'billing', params: 'customer_name, billing_amount, new_balance, date', id: 'def_billing' },
+        { key: 'metaTemplateReceipt', defaultName: 'receipt', params: 'customer_name, payment_amount', id: 'def_receipt' },
+        { key: 'metaTemplateBroadcast', defaultName: 'broadcast', params: 'customer_name, message', id: 'def_broadcast' },
+        { key: 'metaTemplateOverdue', defaultName: 'overdue', params: 'customer_name, overdue_amount, date', id: 'def_overdue' },
+        { key: 'metaTemplateSuspension', defaultName: 'suspension', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
+      ];
+      for (const def of categoryDefaults) {
+        const templateName = (data as any)[def.key] || def.defaultName;
+        data.metaCustomTemplates.push({ templateName, parameters: def.params, id: def.id, language: 'en_US' });
       }
     }
     return data;

@@ -161,8 +161,7 @@ function getAdminDb() {
     if (
       firebaseConfig.firestoreDatabaseId &&
       firebaseConfig.firestoreDatabaseId !== "(default)" &&
-      firebaseConfig.firestoreDatabaseId !== "default" &&
-      (!saProjectId || saProjectId === firebaseConfig.projectId)
+      firebaseConfig.firestoreDatabaseId !== "default"
     ) {
       return getFirestore(adminApp, firebaseConfig.firestoreDatabaseId);
     } else {
@@ -2978,9 +2977,9 @@ async function startServer() {
   async function fetchWithRetry(
     url: string,
     options: RequestInit,
-    maxRetries = 4,
-    baseDelayMs = 1500,
-    factor = 2
+    maxRetries = 2,
+    baseDelayMs = 800,
+    factor = 1.5
   ): Promise<Response> {
     let attempt = 0;
     while (true) {
@@ -2995,7 +2994,7 @@ async function startServer() {
 
         if (isTransientError && attempt < maxRetries) {
           attempt++;
-          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 500;
+          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 300;
           console.warn(`[Retry Utility] Transient HTTP ${response.status} detected at ${url}. Retrying attempt ${attempt}/${maxRetries} in ${Math.round(delay)}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
@@ -3013,7 +3012,7 @@ async function startServer() {
 
         if (isNetworkError && attempt < maxRetries) {
           attempt++;
-          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 500;
+          const delay = baseDelayMs * Math.pow(factor, attempt - 1) + Math.random() * 300;
           console.warn(`[Retry Utility] Network error (${err.message || err.code}) at ${url}. Retrying attempt ${attempt}/${maxRetries} in ${Math.round(delay)}ms...`);
           await new Promise(resolve => setTimeout(resolve, delay));
           continue;
@@ -3021,6 +3020,30 @@ async function startServer() {
         throw err;
       }
     }
+  }
+
+  async function safeParseFetchResponse(res: Response): Promise<any> {
+    let rawText = "";
+    try {
+      rawText = await res.text();
+    } catch {
+      rawText = "";
+    }
+    const trimmed = rawText.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        // Fall through to error object below
+      }
+    }
+    const cleanSnippet = trimmed.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 200);
+    return {
+      error: {
+        message: cleanSnippet ? `HTTP ${res.status} (${res.statusText}): ${cleanSnippet}` : `HTTP ${res.status} ${res.statusText || "Non-JSON response"}`,
+        code: res.status
+      }
+    };
   }
 
   const AUDIT_LOG_DIR = path.join(process.cwd(), "logs");
@@ -3182,7 +3205,7 @@ async function startServer() {
             },
           );
 
-          const uploadData = await uploadRes.json();
+          const uploadData = await safeParseFetchResponse(uploadRes);
           console.log(`\n======================================================`);
           console.log(`[sendMessageUtil / Meta Media Upload Response]`);
           console.log(`Status Code: ${uploadRes.status} ${uploadRes.statusText}`);
@@ -3239,21 +3262,28 @@ async function startServer() {
       if (!customTemplateName) {
         if (templateCategory === "billing") {
           templateName =
-            settings.metaTemplateBilling || "payment_due_reminder";
+            settings.metaTemplateBilling || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_billing' || t.templateName?.toLowerCase().includes('bill'))?.templateName || "billing";
         } else if (templateCategory === "receipt") {
-          templateName = settings.metaTemplateReceipt || "invoice_bill";
+          templateName = settings.metaTemplateReceipt || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_receipt' || t.templateName?.toLowerCase().includes('receipt') || t.templateName?.toLowerCase().includes('payment'))?.templateName || "receipt";
         } else if (templateCategory === "broadcast") {
           templateName =
-            settings.metaTemplateBroadcast || "operation_disruption_2";
+            settings.metaTemplateBroadcast || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_broadcast' || t.templateName?.toLowerCase().includes('broadcast') || t.templateName?.toLowerCase().includes('notice') || t.templateName?.toLowerCase().includes('announcement'))?.templateName || settings.metaCustomTemplates?.[0]?.templateName || "broadcast";
         } else if (templateCategory === "welcome") {
-          templateName = settings.metaTemplateWelcome || "welcome";
+          templateName = settings.metaTemplateWelcome || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_welcome' || t.templateName?.toLowerCase().includes('welcome'))?.templateName || "welcome";
         } else if (templateCategory === "overdue") {
-          templateName = settings.metaTemplateOverdue || "payment_overdue_1";
+          templateName = settings.metaTemplateOverdue || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_overdue' || t.templateName?.toLowerCase().includes('overdue'))?.templateName || "overdue";
         } else if (templateCategory === "suspension") {
-          templateName = settings.metaTemplateSuspension || "autopay";
+          templateName = settings.metaTemplateSuspension || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_suspension' || t.templateName?.toLowerCase().includes('suspen'))?.templateName || "suspension";
         } else if (templateCategory === "custom") {
-          templateName = settings.metaTemplateCustom || "general_notification";
+          templateName = settings.metaTemplateCustom || settings.metaCustomTemplates?.[0]?.templateName || "custom";
         }
+      }
+
+      // If no template is configured for the category, fallback to direct text delivery
+      if (!templateName || templateName.trim() === "") {
+        console.warn(`[sendMessageUtil] No Meta template configured for category '${templateCategory}'. Falling back to direct text delivery.`);
+        bodyPayload.type = "text";
+        bodyPayload.text = { body: message && message.trim() ? message : "Notice from Water Billing System" };
       }
 
       if (mediaId || mediaUrl) {
@@ -3413,7 +3443,7 @@ async function startServer() {
       },
     );
 
-    let latestData = await response.json();
+    let latestData = await safeParseFetchResponse(response);
     const metaReqDuration = Date.now() - metaReqStartTime;
 
     console.log(`\n======================================================`);
@@ -3453,7 +3483,7 @@ async function startServer() {
         const isParamCountError = errMsg.toLowerCase().includes("132000") || errCode === 132000 || fullErrText.includes("does not match the expected number of params") || fullErrText.includes("expected number of params") || fullErrText.includes("has ") && fullErrText.includes("expected");
         const isHeaderIssue = errMsg.toLowerCase().includes("132018") || errCode === 132018 || fullErrText.includes("title component") || fullErrText.includes("header") || fullErrText.includes("no parameters allowed");
         const isHeaderDocRequired = errCode === 132012 || fullErrText.includes("format mismatch") || fullErrText.includes("expected document");
-        const isButtonNoParamAllowed = fullErrText.includes("button") && (fullErrText.includes("no parameters allowed") || fullErrText.includes("not supported"));
+        const isButtonNoParamAllowed = fullErrText.includes("button") && (fullErrText.includes("no parameters allowed") || fullErrText.includes("not supported") || fullErrText.includes("not accept parameters") || fullErrText.includes("does not have button") || fullErrText.includes("components'][1] is invalid") || fullErrText.includes("component not found") || fullErrText.includes("invalid sub_type"));
         const isButtonMissingParam = errMsg.toLowerCase().includes("131008") || errCode === 131008 || (fullErrText.includes("button") && fullErrText.includes("requires a parameter"));
         const isLanguageMismatch = errCode === 132001 || fullErrText.includes("does not exist in language") || fullErrText.includes("param template['language']") || (fullErrText.includes("language") && fullErrText.includes("exist"));
         
@@ -3548,32 +3578,45 @@ async function startServer() {
           }
           
           if (!madeChanges && isParamCountError) {
-            const match = fullErrText.match(/expected (?:number of )?params? \(?(\d+)\)?/) || fullErrText.match(/has \d+ elements, expected (\d+)/) || fullErrText.match(/expected (\d+)/);
-            if (match && match[1]) {
-              const expectedCount = parseInt(match[1], 10);
+            const match = fullErrText.match(/expected (?:number of )?params? \(?(\d+)\)?/) || 
+                          fullErrText.match(/has \d+ elements, expected (\d+)/) || 
+                          fullErrText.match(/expected (\d+)/) ||
+                          fullErrText.match(/\((\d+)\) does not match the expected number of parameters for template .* \((\d+)\)/);
+            let expectedCount: number | null = null;
+            if (match) {
+              expectedCount = parseInt(match[2] || match[1], 10);
+            }
+            if (expectedCount !== null && !isNaN(expectedCount)) {
               console.warn(`[WhatsApp] Retrying message with exactly ${expectedCount} body parameters...`);
-              
-              let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
-              bodyPayload.template.components = bodyPayload.template.components.map((c: any) => {
-                if (c.type === "body") {
-                  const currentParams = c.parameters || [];
-                  const paddedParams = [...currentParams];
-                  while (paddedParams.length < expectedCount) {
-                    paddedParams.push({ type: "text", text: "N/A" });
+              if (expectedCount === 0) {
+                bodyPayload.template.components = (bodyPayload.template.components || []).filter((c: any) => c.type !== "body");
+                madeChanges = true;
+              } else {
+                let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
+                bodyPayload.template.components = bodyPayload.template.components.map((c: any) => {
+                  if (c.type === "body") {
+                    const currentParams = c.parameters || [];
+                    const paddedParams = [...currentParams];
+                    while (paddedParams.length < expectedCount) {
+                      paddedParams.push({ type: "text", text: message || "Notice" });
+                    }
+                    if (paddedParams.length > expectedCount) {
+                      paddedParams.length = expectedCount;
+                    }
+                    return { ...c, parameters: paddedParams };
                   }
-                  if (paddedParams.length > expectedCount) {
-                    paddedParams.length = expectedCount;
-                  }
-                  return { ...c, parameters: paddedParams };
+                  return c;
+                });
+                
+                if (!bodyComponentOpt && expectedCount > 0) {
+                  const injectedParams = [
+                    { type: "text", text: message || "Notice" },
+                    ...Array(Math.max(0, expectedCount - 1)).fill({ type: "text", text: "N/A" })
+                  ].slice(0, expectedCount);
+                  bodyPayload.template.components.push({ type: "body", parameters: injectedParams });
                 }
-                return c;
-              });
-              
-              if (!bodyComponentOpt && expectedCount > 0) {
-                const injectedParams = Array(expectedCount).fill({ type: "text", text: "N/A" });
-                bodyPayload.template.components.push({ type: "body", parameters: injectedParams });
+                madeChanges = true;
               }
-              madeChanges = true;
             }
           }
         }
@@ -3618,7 +3661,7 @@ async function startServer() {
             }
           );
           lastStatus = retryResponse.status;
-          latestData = await retryResponse.json();
+          latestData = await safeParseFetchResponse(retryResponse);
           const retryDuration = Date.now() - retryStartTime;
 
           console.log(`[sendMessageUtil / Meta API Retry Response] Status: ${retryResponse.status} ${retryResponse.statusText}`);
@@ -3739,7 +3782,7 @@ async function startServer() {
       body: JSON.stringify(body),
     });
 
-    const data = await response.json();
+    const data = await safeParseFetchResponse(response);
     if (!response.ok) {
       console.error(`[WATI] API Error:`, data);
       throw new Error(data.message || data.result || "WATI API Error");
@@ -3989,11 +4032,14 @@ async function startServer() {
     let settingsSnap;
     if (specificOwnerId) {
       const doc = await db.collection("settings").doc(specificOwnerId).get();
-      if (!doc.exists) return;
+      if (!doc.exists) return { success: true, billedCustomersCount: 0, totalBilledAmount: 0, timestamp: new Date().toISOString(), ownerId: specificOwnerId };
       settingsSnap = { docs: [doc] };
     } else {
       settingsSnap = await db.collection("settings").get();
     }
+
+    let totalBilledCustomersCount = 0;
+    let totalBilledAmountSum = 0;
 
     for (const doc of settingsSnap.docs) {
       const settings = doc.data() as AppSettings;
@@ -4044,8 +4090,7 @@ async function startServer() {
         // Fetch active and advance-paid customers for billing
         const custRef = db
           .collection("customers")
-          .where("ownerId", "==", ownerId)
-          .where("status", "in", ["Active", "Advance Paid"]);
+          .where("ownerId", "==", ownerId);
 
         const customersSnap = await custRef.get();
 
@@ -4057,6 +4102,9 @@ async function startServer() {
 
           for (const cDoc of customersSnap.docs) {
             const customer = cDoc.data();
+            if (customer.status !== "Active" && customer.status !== "Advance Paid") {
+              continue;
+            }
 
             // SKIP if already billed in the last 24 hours to save quota
             if (
@@ -4165,6 +4213,29 @@ async function startServer() {
           console.log(
             `[Automation] Billed ${updatedCustomerIds.length} customers for ${ownerId}`,
           );
+
+          if (updatedCustomerIds.length > 0) {
+            const billingAmt = Number(settings.billingAmount) || 200;
+            const cycleBilledTotal = updatedCustomerIds.length * billingAmt;
+            totalBilledCustomersCount += updatedCustomerIds.length;
+            totalBilledAmountSum += cycleBilledTotal;
+
+            try {
+              const auditId = `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+              await db.collection("billing_audit").doc(auditId).set({
+                id: auditId,
+                ownerId: ownerId,
+                type: "bill_generation",
+                description: `Automated Billing Cycle: Generated bills for ${updatedCustomerIds.length} customer(s)`,
+                affectedCustomersCount: updatedCustomerIds.length,
+                totalAmount: cycleBilledTotal,
+                timestamp: new Date().toISOString(),
+                executedBy: "system",
+              });
+            } catch (auditErr) {
+              console.warn("[Automation] Failed to save billing_audit entry:", auditErr);
+            }
+          }
 
           // Send Automated WhatsApp Bill (only for the ones we actually updated in this run)
           if (
@@ -4327,6 +4398,22 @@ async function startServer() {
             console.log(
               `[Automation] Late fee applied to ${overdueSnap.size} customers for ${ownerId}`,
             );
+
+            try {
+              const penaltyAuditId = `penalty_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+              await db.collection("billing_audit").doc(penaltyAuditId).set({
+                id: penaltyAuditId,
+                ownerId: ownerId,
+                type: "penalty_application",
+                description: `Automated Penalty: Applied Rs. ${penaltyAmt} late fee to ${overdueSnap.size} overdue customer(s)`,
+                affectedCustomersCount: overdueSnap.size,
+                totalAmount: overdueSnap.size * penaltyAmt,
+                timestamp: new Date().toISOString(),
+                executedBy: "system",
+              });
+            } catch (pAuditErr) {
+              console.warn("[Automation] Failed to save penalty billing_audit entry:", pAuditErr);
+            }
           }
         }
       }
@@ -4334,6 +4421,8 @@ async function startServer() {
 
     return {
       success: true,
+      billedCustomersCount: totalBilledCustomersCount,
+      totalBilledAmount: totalBilledAmountSum,
       timestamp: new Date().toISOString(),
       ownerId: specificOwnerId || "ALL",
     };
@@ -4579,7 +4668,10 @@ async function startServer() {
         try {
           let finalTemplateParams: any[] = [message]; // Default parameter is just the message
           
-          const templateName = settings.metaTemplateBroadcast || "mass_broadcast_generic";
+          const templateName = settings.metaTemplateBroadcast || 
+            settings.metaCustomTemplates?.find((t: any) => t.id === 'def_broadcast' || t.templateName?.toLowerCase().includes('broadcast') || t.templateName?.toLowerCase().includes('notice') || t.templateName?.toLowerCase().includes('announcement'))?.templateName || 
+            settings.metaCustomTemplates?.[0]?.templateName || 
+            "broadcast";
           if (settings.metaCustomTemplates) {
             const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
             if (matchedConfig && matchedConfig.parameters) {
@@ -5078,7 +5170,7 @@ async function startServer() {
         },
       });
 
-      const phoneData = await phoneResp.json();
+      const phoneData = await safeParseFetchResponse(phoneResp);
       console.log(`[verify-token] Meta Response Status: ${phoneResp.status}`);
 
       if (!phoneResp.ok) {
@@ -5101,7 +5193,7 @@ async function startServer() {
       try {
         const debugResp = await fetch(`https://graph.facebook.com/v21.0/debug_token?input_token=${targetApiKey}&access_token=${targetApiKey}`);
         if (debugResp.ok) {
-          const debugData = await debugResp.json();
+          const debugData = await safeParseFetchResponse(debugResp);
           if (debugData.data) {
             tokenType = debugData.data.type || tokenType;
             isValidToken = debugData.data.is_valid ?? true;
@@ -5203,7 +5295,7 @@ async function startServer() {
         const phoneRes = await fetch(`https://graph.facebook.com/v21.0/${phoneId}?fields=id,verified_name,display_phone_number,quality_rating,account_mode,status,platform_type`, {
           headers: { Authorization: `Bearer ${apiKey}` }
         });
-        phoneInfo = await phoneRes.json();
+        phoneInfo = await safeParseFetchResponse(phoneRes);
       } catch (e: any) {
         phoneInfo = { error: e.message };
       }
