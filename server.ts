@@ -6510,7 +6510,7 @@ async function startServer() {
                              executedBy: 'system'
                            });
                            
-                           const compResText = `Thank you, we got your response. We will respond within 24hr to 48 hr.`;
+                                                       const compResText = "Deep detail report मांगने के लिए आपका बहुत-बहुत शुक्रिया, अगले 24 घंटे (Working Hours) में हम आपको आगे की प्रक्रिया बताते हैं, कृपया इंतजार कीजिए। धन्यवाद";
                            
                            await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
                              role: "assistant",
