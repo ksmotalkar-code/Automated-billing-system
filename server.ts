@@ -6803,30 +6803,31 @@ async function startServer() {
                       }
                       handled = true;
                     } else if (!handled) {
-                      // Guide customer with active menu commands instead of falling silent
-                      const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
-                      const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
-                      responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏\n\nI could not understand that request. Please reply with any service below:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* to see all services.`;
-                      handled = true;
-                      
-                      // Log as unhandled in audit trail
+                      // Register query and send fallback confirmation
+                      const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
                       if (dbInstance) {
                         try {
-                          await dbInstance.collection("billing_audit").add({
-                            ownerId: ownerId,
-                            type: 'chatbot_unhandled',
-                            description: `Unhandled chatbot message: "${msgBody}"`,
-                            affectedCustomersCount: 1,
-                            totalAmount: 0,
-                            timestamp: FieldValue.serverTimestamp(),
-                            executedBy: 'system',
+                          await saveComplaintData(complaintId, {
+                            id: complaintId,
                             customerId: matchedCustomer.id,
-                            customerName: matchedCustomer.name
+                            ownerId: ownerId,
+                            customerName: matchedCustomer.name,
+                            mobileNumber: matchedCustomer.mobileNumber || "",
+                            category: "Service Query",
+                            message: "WhatsApp Query",
+                            description: msgBody,
+                            billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
+                            status: "Pending",
+                            priority: "Medium",
+                            createdAt: new Date().toISOString(),
+                            expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
                           });
-                        } catch (e) {
-                          console.error("Failed to log unhandled chatbot message:", e);
+                        } catch (err) {
+                          console.error("Failed to save fallback query complaint:", err);
                         }
                       }
+                      responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏 We have registered your query and will respond you within 24 hour. Thank you.`;
+                      handled = true;
                     }
 
                     if (
@@ -7690,9 +7691,27 @@ To link your connection or update your registered number, please contact the Gra
         matched = true;
         matchedRule = intentRes.action || "System Intent: " + msgBody;
       } else if (!matched) {
-        const activeCommands = chatbotSettings?.commands?.filter((c: any) => c.isActive) || [];
-        const cmdList = activeCommands.map((c: any) => `🔹 *${c.triggerWord}* - ${c.buttonLabel}`).join("\n");
-        responseText = `Namaste ${matchedCustomer.name}! 🙏\n\nI could not understand that request. Please reply with any service below:\n\n${cmdList || "🔹 *Pay Bill*\n🔹 *Panchayat Reports*\n🔹 *Download My Bill*\n🔹 *Complaints*"}\n\nType *Menu* to see all services.`;
+        const complaintId = "COMP-" + Math.random().toString(36).substr(2, 8).toUpperCase();
+        if (dbInstance) {
+          try {
+            await saveComplaintData(complaintId, {
+              id: complaintId,
+              customerId: matchedCustomer.id,
+              ownerId: effectiveOwnerId,
+              customerName: matchedCustomer.name,
+              mobileNumber: matchedCustomer.mobileNumber || "",
+              category: "Service Query",
+              message: "WhatsApp Query",
+              description: msgBody,
+              billStatus: matchedCustomer.balance > 0 ? `Unpaid (₹${matchedCustomer.balance})` : "Paid",
+              status: "Pending",
+              priority: "Medium",
+              createdAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+            });
+          } catch (err) {}
+        }
+        responseText = `Namaste ${matchedCustomer.name || "Customer"}! 🙏 We have registered your query and will respond you within 24 hour. Thank you.`;
         matchedRule = "Fallback Guidance";
       }
 
