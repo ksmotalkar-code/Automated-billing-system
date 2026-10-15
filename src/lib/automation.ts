@@ -495,7 +495,9 @@ export const sendWhatsAppNotification = async (
    }
   
   // 2. Try automated API if configured
-  if (whatsappService.isConfigured() && settings.preferredNotificationMethod !== 'manual_link') {
+  const shouldTryApi = whatsappService.isConfigured() || settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati' || Boolean(settings.metaWhatsAppApiKey) || Boolean(settings.watiAccessToken);
+
+  if (shouldTryApi && settings.preferredNotificationMethod !== 'manual_link') {
     const result = await whatsappService.sendMessage({
       to: customer.mobileNumber,
       message: finalMessage,

@@ -61,9 +61,9 @@ class WhatsAppService {
    * Checks if the API is configured and ready to use
    */
   public isConfigured(): boolean {
-    const hasMeta = !!(this.apiKey && this.apiKey.trim() && this.phoneNumberId && this.phoneNumberId.trim() && /^\d+$/.test(this.phoneNumberId.trim()));
+    const hasMeta = !!((this.apiKey && this.apiKey.trim()) && (this.phoneNumberId && this.phoneNumberId.trim()));
     const hasWati = !!(this.watiAccessToken && this.watiAccessToken.trim());
-    return (hasMeta || hasWati) && this.preferredMethod !== 'manual_link';
+    return (hasMeta || hasWati || this.preferredMethod === 'api' || this.preferredMethod === 'wati') && this.preferredMethod !== 'manual_link';
   }
 
   /**

@@ -107,3 +107,13 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
   2. Wrapped each customer invoice generation and notification dispatch inside `BillingView.tsx` within an isolated `try...catch` block so individual connection hiccups are recorded without terminating the dispatch queue or crashing the UI modal.
   3. Hardened `WhatsAppService.sendMessage` in `src/services/whatsappService.ts` to guarantee that all network, timeout, and fetch errors are caught gracefully and returned as structured failures with manual fallback links instead of unhandled exceptions.
   4. Added an interactive, collapsible **"Meta Submission Guide"** right inside `WhatsAppTemplatesView.tsx` showing the exact template names, categories, languages, media headers, exact body copy, and value mappings (`{{1}}`, `{{2}}`, etc.) along with direct copy buttons and link to Meta WhatsApp Manager.
+
+---
+
+## 8. Render Production WhatsApp & Payment Approval Fixes
+- **Issue**: On Render production deployment, client-side environment variables (`VITE_WHATSAPP_API_KEY`) are not present in the browser bundle (since keys are stored securely in Firestore settings). Consequently, `whatsappService.isConfigured()` previously returned `false` in production, causing payment approvals (`PaymentsView.tsx`) and automated triggers to bypass API dispatch and fail or fall back to manual links.
+- **Fix Implemented**:
+  1. Relaxed `whatsappService.isConfigured()` in `src/services/whatsappService.ts` to recognize `preferredMethod === 'api'` or `'wati'` even if client env vars are absent, relying on server-side credential resolution.
+  2. Updated `sendWhatsAppNotification` in `src/lib/automation.ts` with `shouldTryApi` condition checking `settings.preferredNotificationMethod === 'api'` or `'wati'` and API key presence in settings.
+  3. Verified clean build (`npm run build`) and 0 lint errors (`npm run lint`).
+
