@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Customer, AppSettings, updateCustomer, saveSettings, Report, logAutomationError, saveBillingAuditLog } from './db';
+import { Customer, AppSettings, updateCustomer, saveSettings, Report, logAutomationError, saveBillingAuditLog, WhatsAppTemplate, getWhatsAppTemplates } from './db';
 import { db, auth } from '../firebase';
 import { collection, query, where, getDocs, writeBatch, doc } from 'firebase/firestore';
 import { whatsappService } from '../services/whatsappService';
@@ -295,8 +295,27 @@ export const sendWhatsAppNotification = async (
     }
   }
 
+  // Load templates from Firestore collection
+  let firestoreTemplates: WhatsAppTemplate[] = [];
+  try {
+    firestoreTemplates = await getWhatsAppTemplates(settings.ownerId || auth.currentUser?.uid);
+  } catch (err) {
+    // Graceful fallback to settings
+  }
+
+  // First priority: Check Firestore templates collection
+  let matchedFirestoreTemplate: WhatsAppTemplate | undefined = undefined;
+  if (customTemplateName) {
+    matchedFirestoreTemplate = firestoreTemplates.find(t => t.templateName === customTemplateName || t.id === customTemplateName);
+  }
+  if (!matchedFirestoreTemplate && templateCategory) {
+    matchedFirestoreTemplate = firestoreTemplates.find(t => t.category === templateCategory && t.isDefault && t.isActive)
+      || firestoreTemplates.find(t => t.category === templateCategory && t.isActive)
+      || firestoreTemplates.find(t => t.category === templateCategory);
+  }
+
   // Determine Template Name
-  let templateName = customTemplateName;
+  let templateName = customTemplateName || matchedFirestoreTemplate?.templateName;
   if (!templateName) {
     if (templateCategory === 'billing') templateName = settings.metaTemplateBilling;
     else if (templateCategory === 'receipt') templateName = settings.metaTemplateReceipt;
@@ -335,9 +354,19 @@ export const sendWhatsAppNotification = async (
     else if (templateCategory === 'billing') templateName = 'billing';
   }
 
-  // Look for custom parameters mapping in Template Registry
+  // Look for custom parameters mapping in Firestore template or Settings Registry
   let dynamicParamsResolved = false;
-  if (templateName && settings.metaCustomTemplates) {
+  let paramKeys: string[] = [];
+
+  if (matchedFirestoreTemplate) {
+    if (matchedFirestoreTemplate.parameterMappings && matchedFirestoreTemplate.parameterMappings.length > 0) {
+      paramKeys = matchedFirestoreTemplate.parameterMappings.map(m => m.key);
+    } else if (matchedFirestoreTemplate.parameters) {
+      paramKeys = matchedFirestoreTemplate.parameters.split(',').map(s => s.trim()).filter(Boolean);
+    }
+  }
+
+  if (paramKeys.length === 0 && templateName && settings.metaCustomTemplates) {
     let matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
     if (!matchedConfig && templateCategory) {
       // Fallback matching by default template category IDs or names
@@ -353,7 +382,12 @@ export const sendWhatsAppNotification = async (
         templateParams = [];
         dynamicParamsResolved = true;
       } else {
-        const paramKeys = rawParamStr.split(',').map(s => s.trim()).filter(Boolean);
+        paramKeys = rawParamStr.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+  }
+
+  if (paramKeys.length > 0) {
         templateParams = paramKeys.map(key => {
           const lowerKey = key.toLowerCase();
           if (lowerKey === 'customer_name' || lowerKey === 'name' || lowerKey === 'customer') {
@@ -412,8 +446,6 @@ export const sendWhatsAppNotification = async (
         });
         dynamicParamsResolved = true;
       }
-    }
-  }
 
   if (usePortalLink) {
     try {

@@ -4294,25 +4294,63 @@ async function startServer() {
                     { isButtonParam: true, value: customer.id || cDoc.id, index: "0" },
                 ];
                 
-                // Map Custom parameters for billing template
-                const templateName = isCoveredByAdvance ? (settings.metaTemplateReceipt || settings.metaTemplateBilling) : settings.metaTemplateBilling;
-                if (templateName && settings.metaCustomTemplates) {
+                // Map Custom parameters for billing template (checking Firestore whatsapp_templates collection first)
+                let templateName = isCoveredByAdvance ? (settings.metaTemplateReceipt || settings.metaTemplateBilling) : settings.metaTemplateBilling;
+                let activeFirestoreTemplate: any = null;
+                try {
+                  const targetCat = isCoveredByAdvance ? "receipt" : "billing";
+                  const wtSnap = await db.collection("whatsapp_templates")
+                    .where("ownerId", "==", ownerId)
+                    .where("category", "==", targetCat)
+                    .get();
+                  if (!wtSnap.empty) {
+                    activeFirestoreTemplate = wtSnap.docs.map(d => d.data()).find((t: any) => t.isDefault && t.isActive)
+                      || wtSnap.docs.map(d => d.data()).find((t: any) => t.isActive)
+                      || wtSnap.docs[0].data();
+                  }
+                } catch (wtErr) {
+                  // Fall back to settings
+                }
+
+                if (activeFirestoreTemplate?.templateName) {
+                  templateName = activeFirestoreTemplate.templateName;
+                }
+
+                let paramKeys: string[] = [];
+                if (activeFirestoreTemplate) {
+                  if (Array.isArray(activeFirestoreTemplate.parameterMappings) && activeFirestoreTemplate.parameterMappings.length > 0) {
+                    paramKeys = activeFirestoreTemplate.parameterMappings.map((m: any) => m.key);
+                  } else if (typeof activeFirestoreTemplate.parameters === 'string') {
+                    paramKeys = activeFirestoreTemplate.parameters.split(',').map((s: string) => s.trim()).filter(Boolean);
+                  }
+                }
+
+                if (paramKeys.length === 0 && templateName && settings.metaCustomTemplates) {
                   const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
                   if (matchedConfig && matchedConfig.parameters) {
-                    const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
-                    finalTemplateParams = paramKeys.map((key:string) => {
-                      if (key === 'customer_name') return customer.name;
-                      if (key === 'customer_balance') return customer.balance; // Old balance
-                      if (key === 'billing_amount') return billingAmt;
-                      if (key === 'new_balance') return newBalance;
-                      if (key === 'payment_amount') return isCoveredByAdvance ? billingAmt : 0;
-                      if (key === 'overdue_amount') return newBalance;
-                      if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                      if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id || cDoc.id}`;
-                      if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id || cDoc.id}`, index: "0" };
-                      return '';
-                    });
+                    paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim()).filter(Boolean);
                   }
+                }
+
+                if (paramKeys.length > 0) {
+                  finalTemplateParams = paramKeys.map((key:string) => {
+                    const lk = key.toLowerCase();
+                    if (lk === 'customer_name' || lk === 'name' || lk === 'customer') return customer.name;
+                    if (lk === 'customer_id' || lk === 'id' || lk === 'account_no') return customer.id || cDoc.id;
+                    if (lk === 'customer_balance' || lk === 'balance') return customer.balance;
+                    if (lk === 'billing_amount' || lk === 'amount' || lk === 'bill_amount') return billingAmt;
+                    if (lk === 'new_balance' || lk === 'total_balance') return newBalance;
+                    if (lk === 'payment_amount' || lk === 'paid_amount') return isCoveredByAdvance ? billingAmt : 0;
+                    if (lk === 'advance_balance') return newAdvance;
+                    if (lk === 'overdue_amount' || lk === 'pending_amount') return newBalance;
+                    if (lk === 'penalty_amount' || lk === 'late_fee') return settings.penaltyAmount || 40;
+                    if (lk === 'date' || lk === 'today') return new Date().toLocaleDateString('en-GB');
+                    if (lk === 'due_date') return new Date(Date.now() + (settings.penaltyDays || 10) * 86400000).toLocaleDateString('en-GB');
+                    if (lk === 'panchayat_name') return settings.organizationName || 'Gram Panchayat';
+                    if (lk === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id || cDoc.id}`;
+                    if (lk === 'button_param' || lk === 'button') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id || cDoc.id}`, index: "0" };
+                    return key;
+                  });
                 }
 
                 await sendWhatsAppMessage(
@@ -6361,13 +6399,20 @@ async function startServer() {
                             );
 
                             if (intentRes.matched) {
-                              if (intentRes.action === "report_selected" || intentRes.action === "waterworks_report_selected" || intentRes.action === "deep_report_selected") {
-                                await dbInstance.collection("customers").doc(matchedCustomer.id).update({
-                                  pendingReportSelection: false,
-                                  pendingMonthlyReport: false,
-                                  pendingWaterworksReport: false,
-                                });
-                              }
+                               if (intentRes.action === "report_selected" || intentRes.action === "waterworks_report_selected") {
+                                 await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                                   pendingReportSelection: false,
+                                   pendingMonthlyReport: false,
+                                   pendingWaterworksReport: false,
+                                 });
+                               } else if (intentRes.action === "deep_report" || intentRes.action === "deep_report_selected") {
+                                 await dbInstance.collection("customers").doc(matchedCustomer.id).update({
+                                   pendingDeepReportInquiry: true,
+                                   pendingReportSelection: false,
+                                   pendingMonthlyReport: false,
+                                   pendingWaterworksReport: false,
+                                 });
+                               }
 
                               await dbInstance.collection("customers").doc(matchedCustomer.id).collection("chat_history").add({
                                 role: "assistant",
@@ -6458,7 +6503,7 @@ async function startServer() {
                              customerName: matchedCustomer.name || "N/A",
                              phoneNumber: custPhone,
                              mobileNumber: custPhone,
-                             description: `Deep Detail Report Response: "${msgBody}"`,
+                             description: `Deep Detail Report Inquiry Response: "${msgBody}"`,
                              affectedCustomersCount: 1,
                              totalAmount: 0,
                              timestamp: new Date().toISOString(),

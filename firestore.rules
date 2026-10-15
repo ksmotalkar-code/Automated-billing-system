@@ -252,5 +252,14 @@ service cloud.firestore {
       allow read: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow write: if false; // Only written via Server Admin SDK
     }
+
+    // WhatsApp Message Templates: strictly isolated per tenant
+    match /whatsapp_templates/{templateId} {
+      allow read: if isOwner(existing());
+      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().ownerId == request.auth.uid;
+      allow update: if isOwner(existing()) && incoming().ownerId == request.auth.uid;
+      allow delete: if isOwner(existing());
+    }
   }
 }

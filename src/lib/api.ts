@@ -55,11 +55,8 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
 
   const signal = options.signal || controller.signal;
 
-  // Use relative URL or origin-qualified URL for browser requests
-  let targetUrl = url;
-  if (url.startsWith('/') && typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
-    targetUrl = `${window.location.origin}${url}`;
-  }
+  // Standard relative URL for browser requests prevents CORS preflight issues with iframe proxies
+  const targetUrl = url;
 
   const fetchOptions: RequestInit = {
     ...options,

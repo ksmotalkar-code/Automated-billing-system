@@ -244,9 +244,36 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
       },
       "required": ["id", "ownerId", "resourceType", "status", "createdAt"]
+    },
+    "WhatsAppTemplate": {
+      "title": "WhatsAppTemplate",
+      "description": "WhatsApp message template definition with category, parameters, and variable mappings",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Template Unique ID", "maxLength": 128 },
+        "templateName": { "type": "string", "description": "Template Name registered with Meta / WhatsApp", "maxLength": 128 },
+        "category": { "type": "string", "enum": ["billing", "receipt", "broadcast", "welcome", "overdue", "suspension", "custom"], "description": "Template Category" },
+        "language": { "type": "string", "description": "Template Language code", "maxLength": 16 },
+        "bodyText": { "type": "string", "description": "Template preview/sample body text with placeholders", "maxLength": 2048 },
+        "parameters": { "type": "string", "description": "Comma-separated parameter variable keys", "maxLength": 512 },
+        "parameterMappings": { "type": "string", "description": "Structured JSON mapping of variable indices to system keys", "maxLength": 2048 },
+        "headerType": { "type": "string", "description": "Header type: NONE, TEXT, DOCUMENT, IMAGE", "maxLength": 32 },
+        "supportsButton": { "type": "boolean", "description": "Whether template includes dynamic URL button" },
+        "buttonParamKey": { "type": "string", "description": "System parameter key for button dynamic URL suffix", "maxLength": 64 },
+        "isActive": { "type": "boolean", "description": "Whether template is enabled" },
+        "isDefault": { "type": "boolean", "description": "Whether this is default template for its category" },
+        "ownerId": { "type": "string", "description": "Tenant owner ID", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "templateName", "category", "ownerId"]
     }
   },
   "firestore": {
+    "/whatsapp_templates/{templateId}": {
+      "schema": { "$ref": "#/entities/WhatsAppTemplate" },
+      "description": "Custom and verified WhatsApp message templates with parameter mapping"
+    },
     "/customers/{customerId}": {
       "schema": { "$ref": "#/entities/Customer" },
       "description": "Customers collection"

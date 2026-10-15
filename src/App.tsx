@@ -17,6 +17,7 @@ import { ComplaintsView } from "./views/ComplaintsView";
 import { ReportsView } from "./views/ReportsView";
 import { ManualView } from "./views/ManualView";
 import { ChatbotView } from "./views/ChatbotView";
+import { WhatsAppTemplatesView } from "./views/WhatsAppTemplatesView";
 import { AnimatePresence, motion } from "motion/react";
 import { Menu, X, AlertTriangle, Loader2 } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
@@ -207,6 +208,7 @@ export default function App() {
       case "customers": return <CustomersView key="customers" />;
       case "alerts": return <AlertsView key="alerts" />;
       case "billing": return <BillingView key="billing" />;
+      case "templates": return <WhatsAppTemplatesView key="templates" />;
       case "audit": return <BillingAuditView key="audit" />;
       case "payments": return <PaymentsView key="payments" />;
       case "complaints": return <ComplaintsView key="complaints" />;

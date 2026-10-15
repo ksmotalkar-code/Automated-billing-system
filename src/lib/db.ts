@@ -373,6 +373,186 @@ export interface MetaTemplateDef {
   language?: string;
 }
 
+export interface TemplateParameterMapping {
+  index: number;
+  placeholder: string; // "{{1}}"
+  key: string; // e.g. "customer_name"
+  label: string;
+  defaultValue?: string;
+}
+
+export interface WhatsAppTemplate {
+  id: string;
+  templateName: string;
+  category: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
+  language?: string;
+  bodyText: string;
+  parameters: string; // Comma separated: e.g. "customer_name, billing_amount, new_balance, date, button_param"
+  parameterMappings?: TemplateParameterMapping[];
+  headerType?: 'NONE' | 'DOCUMENT' | 'IMAGE' | 'TEXT';
+  headerText?: string;
+  supportsButton?: boolean;
+  buttonParamKey?: string;
+  buttonText?: string;
+  isActive: boolean;
+  isDefault?: boolean;
+  ownerId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  description?: string;
+  verifiedWithMeta?: boolean;
+}
+
+export const SYSTEM_TEMPLATE_VARIABLES = [
+  { key: 'customer_name', label: 'Citizen Name', sample: 'Malook Singh', description: 'Name of the consumer / citizen' },
+  { key: 'customer_id', label: 'Consumer Account ID', sample: 'JK-001', description: 'Unique water account / consumer number' },
+  { key: 'billing_amount', label: 'Current Bill Amount (Rs.)', sample: '200', description: 'Tariff amount for the billing cycle' },
+  { key: 'new_balance', label: 'Total Payable Balance (Rs.)', sample: '400', description: 'Total outstanding balance including arrears' },
+  { key: 'customer_balance', label: 'Previous Arrears (Rs.)', sample: '200', description: 'Previous month unpaid arrears' },
+  { key: 'payment_amount', label: 'Amount Paid (Rs.)', sample: '200', description: 'Amount paid in payment receipt' },
+  { key: 'advance_balance', label: 'Prepaid Advance Credit (Rs.)', sample: '500', description: 'Credit balance deposited in advance' },
+  { key: 'overdue_amount', label: 'Overdue Amount with Late Fee (Rs.)', sample: '240', description: 'Bill balance plus penalty late fee' },
+  { key: 'penalty_amount', label: 'Late Fee / Surcharge (Rs.)', sample: '40', description: 'Grace period late payment fee' },
+  { key: 'date', label: 'Current Date / Bill Date', sample: '15/10/2026', description: 'Formatted as DD/MM/YYYY' },
+  { key: 'due_date', label: 'Payment Due Date', sample: '25/10/2026', description: 'Last date to pay before disconnection' },
+  { key: 'mobile_number', label: 'Citizen Phone Number', sample: '9876543210', description: 'Registered WhatsApp mobile number' },
+  { key: 'panchayat_name', label: 'Gram Panchayat Name', sample: 'GP. Jhanda Khurd', description: 'Department or Panchayat name' },
+  { key: 'broadcast_message', label: 'Broadcast / Notice Text', sample: 'Water supply will be suspended for 2 hours for repair', description: 'Dynamic body of public announcement' },
+  { key: 'portal_link', label: 'Citizen Portal Direct Link', sample: 'https://ais-dev-.../?portal=true&customerId=JK-001', description: 'Direct self-service invoice & payment link' },
+  { key: 'button_param', label: 'Dynamic Button Suffix', sample: 'JK-001', description: 'Dynamic URL suffix parameter for interactive button' }
+];
+
+export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
+  {
+    id: 'def_billing',
+    templateName: 'billing',
+    category: 'billing',
+    language: 'en_US',
+    headerType: 'DOCUMENT',
+    headerText: 'Water Consumption Bill',
+    bodyText: 'Dear {{1}}, your water bill of Rs. {{2}} has been generated for the recent cycle. Total balance due is Rs. {{3}} payable by {{4}}. You can view and pay your invoice online.',
+    parameters: 'customer_name, billing_amount, new_balance, date, button_param',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'billing_amount', label: 'Current Bill Amount' },
+      { index: 3, placeholder: '{{3}}', key: 'new_balance', label: 'Total Payable Balance' },
+      { index: 4, placeholder: '{{4}}', key: 'date', label: 'Bill Date' },
+      { index: 5, placeholder: '{{5}}', key: 'button_param', label: 'Dynamic Button Suffix' }
+    ],
+    supportsButton: true,
+    buttonParamKey: 'button_param',
+    buttonText: 'View & Pay Invoice',
+    isActive: true,
+    isDefault: true,
+    description: 'Official monthly/bi-monthly water consumption invoice dispatched to citizens.'
+  },
+  {
+    id: 'def_receipt',
+    templateName: 'receipt',
+    category: 'receipt',
+    language: 'en_US',
+    headerType: 'DOCUMENT',
+    headerText: 'Official Payment Receipt',
+    bodyText: 'Dear {{1}}, thank you! We have received your payment of Rs. {{2}} on {{3}}. Your updated balance is Rs. {{4}}. Gram Panchayat Water Department acknowledges your payment.',
+    parameters: 'customer_name, payment_amount, date, new_balance, button_param',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'payment_amount', label: 'Amount Paid' },
+      { index: 3, placeholder: '{{3}}', key: 'date', label: 'Payment Date' },
+      { index: 4, placeholder: '{{4}}', key: 'new_balance', label: 'Updated Balance' },
+      { index: 5, placeholder: '{{5}}', key: 'button_param', label: 'Dynamic Button Suffix' }
+    ],
+    supportsButton: true,
+    buttonParamKey: 'button_param',
+    buttonText: 'Download Official Receipt',
+    isActive: true,
+    isDefault: true,
+    description: 'Immediate payment receipt acknowledgment with official stamped PDF.'
+  },
+  {
+    id: 'def_overdue',
+    templateName: 'overdue',
+    category: 'overdue',
+    language: 'en_US',
+    headerType: 'TEXT',
+    headerText: 'Water Bill Payment Reminder',
+    bodyText: 'Dear {{1}}, reminder that your water bill payment of Rs. {{2}} is overdue. Please clear this by {{3}} to avoid disconnection and a late surcharge of Rs. {{4}}. Pay online easily below.',
+    parameters: 'customer_name, overdue_amount, due_date, penalty_amount, button_param',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'overdue_amount', label: 'Overdue Amount' },
+      { index: 3, placeholder: '{{3}}', key: 'due_date', label: 'Due Date' },
+      { index: 4, placeholder: '{{4}}', key: 'penalty_amount', label: 'Late Fee Surcharge' },
+      { index: 5, placeholder: '{{5}}', key: 'button_param', label: 'Dynamic Button Suffix' }
+    ],
+    supportsButton: true,
+    buttonParamKey: 'button_param',
+    buttonText: 'Pay Overdue Bill',
+    isActive: true,
+    isDefault: true,
+    description: 'Automated grace period and overdue payment reminder with late fee calculation.'
+  },
+  {
+    id: 'def_welcome',
+    templateName: 'welcome',
+    category: 'welcome',
+    language: 'en_US',
+    headerType: 'NONE',
+    bodyText: 'Dear {{1}}, welcome to Gram Panchayat Village Water Department! Your consumer ID is {{2}} and your monthly water tariff is Rs. {{3}}. You can monitor bills and payments anytime.',
+    parameters: 'customer_name, customer_id, billing_amount, button_param',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'customer_id', label: 'Consumer Account ID' },
+      { index: 3, placeholder: '{{3}}', key: 'billing_amount', label: 'Monthly Tariff' },
+      { index: 4, placeholder: '{{4}}', key: 'button_param', label: 'Dynamic Button Suffix' }
+    ],
+    supportsButton: true,
+    buttonParamKey: 'button_param',
+    buttonText: 'Citizen Portal',
+    isActive: true,
+    isDefault: true,
+    description: 'Welcome onboard message dispatched upon new citizen account registration.'
+  },
+  {
+    id: 'def_broadcast',
+    templateName: 'broadcast',
+    category: 'broadcast',
+    language: 'en_US',
+    headerType: 'NONE',
+    bodyText: 'Gram Panchayat Water Department Announcement: {{1}}. For assistance, contact the water operator or Gram Panchayat office.',
+    parameters: 'broadcast_message',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'broadcast_message', label: 'Broadcast Message' }
+    ],
+    supportsButton: false,
+    isActive: true,
+    isDefault: true,
+    description: 'Mass public service announcement for pipeline maintenance or clean water notices.'
+  },
+  {
+    id: 'def_suspension',
+    templateName: 'suspension',
+    category: 'suspension',
+    language: 'en_US',
+    headerType: 'TEXT',
+    headerText: 'Urgent: Service Suspension Notice',
+    bodyText: 'Urgent Notice for {{1}} (A/C: {{2}}): Your water supply connection is scheduled for temporary suspension due to an unpaid balance of Rs. {{3}}. Reconnection fee is Rs. 500. Clear your bill immediately.',
+    parameters: 'customer_name, customer_id, overdue_amount, button_param',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'customer_id', label: 'Consumer Account ID' },
+      { index: 3, placeholder: '{{3}}', key: 'overdue_amount', label: 'Overdue Amount' },
+      { index: 4, placeholder: '{{4}}', key: 'button_param', label: 'Dynamic Button Suffix' }
+    ],
+    supportsButton: true,
+    buttonParamKey: 'button_param',
+    buttonText: 'Clear Balance Now',
+    isActive: true,
+    isDefault: true,
+    description: 'Final pre-disconnection warning sent when arrears remain unaddressed.'
+  }
+];
+
 export interface AppSettings {
   organizationName?: string;
   appLogoImage?: string | null;
@@ -1524,6 +1704,163 @@ export function subscribeToComplaints(
     callback([]);
   });
 }
+
+export function subscribeToWhatsAppTemplates(
+  arg1: string | ((templates: WhatsAppTemplate[]) => void),
+  arg2?: ((templates: WhatsAppTemplate[]) => void) | string
+) {
+  const { ownerId, callback } = parseSubArgs<WhatsAppTemplate[]>(arg1, arg2);
+  if (!ownerId) {
+    callback(DEFAULT_WHATSAPP_TEMPLATES);
+    return () => {};
+  }
+  const q = query(
+    collection(db, 'whatsapp_templates'),
+    where('ownerId', '==', ownerId)
+  );
+  return onSnapshot(q, (snapshot) => {
+    if (snapshot.empty) {
+      callback(DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId })));
+    } else {
+      const templates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
+      callback(templates);
+    }
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'whatsapp_templates');
+    callback(DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId })));
+  });
+}
+
+export const getWhatsAppTemplates = async (explicitOwnerId?: string): Promise<WhatsAppTemplate[]> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) return DEFAULT_WHATSAPP_TEMPLATES;
+  try {
+    const q = query(collection(db, 'whatsapp_templates'), where('ownerId', '==', uid));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      return DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId: uid }));
+    }
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
+  } catch (error: any) {
+    handleFirestoreError(error, OperationType.GET, 'whatsapp_templates');
+    return DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId: uid }));
+  }
+};
+
+export const saveWhatsAppTemplate = async (template: WhatsAppTemplate, explicitOwnerId?: string): Promise<WhatsAppTemplate> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Save WhatsApp Template");
+  
+  const templateId = template.id && template.id.trim() !== '' 
+    ? template.id.trim() 
+    : `template_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const docId = templateId.startsWith(`${uid}_`) ? templateId : `${uid}_${templateId}`;
+
+  // Automatically derive parameterMappings if not already populated
+  let mappings = template.parameterMappings;
+  if (!mappings || mappings.length === 0) {
+    const paramKeys = (template.parameters || '').split(',').map(s => s.trim()).filter(Boolean);
+    mappings = paramKeys.map((key, idx) => {
+      const foundVar = SYSTEM_TEMPLATE_VARIABLES.find(v => v.key.toLowerCase() === key.toLowerCase());
+      return {
+        index: idx + 1,
+        placeholder: `{{${idx + 1}}}`,
+        key,
+        label: foundVar?.label || key
+      };
+    });
+  }
+
+  const payload: WhatsAppTemplate = {
+    ...template,
+    id: templateId,
+    parameterMappings: mappings,
+    ownerId: uid,
+    updatedAt: new Date().toISOString(),
+    createdAt: template.createdAt || new Date().toISOString()
+  };
+
+  try {
+    await setDoc(doc(db, 'whatsapp_templates', docId), payload, { merge: true });
+    
+    // Synchronize to settings metaCustomTemplates and active category template keys
+    try {
+      const settingsRef = doc(db, 'settings', uid);
+      const settingsSnap = await getDoc(settingsRef);
+      if (settingsSnap.exists()) {
+        const curSettings = settingsSnap.data() as AppSettings;
+        let customTemplates = [...(curSettings.metaCustomTemplates || [])];
+        const existingIdx = customTemplates.findIndex(t => t.id === templateId || t.templateName === template.templateName);
+        const metaDef: MetaTemplateDef = {
+          id: templateId,
+          templateName: template.templateName,
+          parameters: template.parameters || '',
+          language: template.language || 'en_US'
+        };
+        if (existingIdx >= 0) {
+          customTemplates[existingIdx] = metaDef;
+        } else {
+          customTemplates.push(metaDef);
+        }
+
+        const updates: any = { metaCustomTemplates: customTemplates };
+        if (template.isDefault) {
+          if (template.category === 'billing') updates.metaTemplateBilling = template.templateName;
+          if (template.category === 'receipt') updates.metaTemplateReceipt = template.templateName;
+          if (template.category === 'broadcast') updates.metaTemplateBroadcast = template.templateName;
+          if (template.category === 'welcome') updates.metaTemplateWelcome = template.templateName;
+          if (template.category === 'overdue') updates.metaTemplateOverdue = template.templateName;
+          if (template.category === 'suspension') updates.metaTemplateSuspension = template.templateName;
+          if (template.category === 'custom') updates.metaTemplateCustom = template.templateName;
+        }
+        await updateDoc(settingsRef, updates);
+      }
+    } catch (syncErr) {
+      console.warn("Non-fatal template sync to settings warning:", syncErr);
+    }
+
+    return payload;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `whatsapp_templates/${docId}`);
+    throw error;
+  }
+};
+
+export const deleteWhatsAppTemplate = async (id: string, explicitOwnerId?: string): Promise<void> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Delete WhatsApp Template");
+  const docId = id.startsWith(`${uid}_`) ? id : `${uid}_${id}`;
+  try {
+    await deleteDoc(doc(db, 'whatsapp_templates', docId));
+    if (docId !== id) {
+      try { await deleteDoc(doc(db, 'whatsapp_templates', id)); } catch(e) {}
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `whatsapp_templates/${docId}`);
+    throw error;
+  }
+};
+
+export const seedDefaultWhatsAppTemplates = async (explicitOwnerId?: string): Promise<WhatsAppTemplate[]> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  checkQuotaBeforeWrite("Seed WhatsApp Templates");
+  const seeded: WhatsAppTemplate[] = [];
+  for (const t of DEFAULT_WHATSAPP_TEMPLATES) {
+    const docId = `${uid}_${t.id}`;
+    const payload: WhatsAppTemplate = { 
+      ...t, 
+      ownerId: uid, 
+      createdAt: new Date().toISOString(), 
+      updatedAt: new Date().toISOString() 
+    };
+    await setDoc(doc(db, 'whatsapp_templates', docId), payload, { merge: true });
+    seeded.push(payload);
+  }
+  return seeded;
+};
 
 export const addReport = async (
   report: Omit<Report, 'id' | 'ownerId' | 'createdAt'>,

@@ -415,36 +415,41 @@ export function BillingView() {
 
         for (let i = 0; i < paidCustomers.length; i++) {
           const customer = paidCustomers[i];
-          const isAdv = getRealBillingStatus(customer) === "Advance Paid" || (customer.advanceBalance && customer.advanceBalance > 0);
-          const message = isAdv
-            ? `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit. Remaining advance balance: ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`
-            : `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
-          
-          // Generate PDF for attachment
-          const pdfBlob = generateInvoicePDF(customer, settings);
-          
-          const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode, true, 'receipt');
-          if (result.success) {
-             const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
-             batch.update(doc(db, 'customers', targetDocId), { 
-               invoiceSent: true, 
-               paymentNotified: true,
-               ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
-             });
-             updatesSkipped++;
+          try {
+            const isAdv = getRealBillingStatus(customer) === "Advance Paid" || (customer.advanceBalance && customer.advanceBalance > 0);
+            const message = isAdv
+              ? `Dear ${customer.name}, your water bill for ${currentMonth} (₹${settings.billingAmount}) has been automatically paid from your advance credit. Remaining advance balance: ₹${customer.advanceBalance || 0}. Thank you for paying in advance! Attached is your official statement.`
+              : `Dear ${customer.name}, your water bill for ${currentMonth} has been PAID. Thank you for your promptness! Attached is your official invoice.`;
+            
+            // Generate PDF for attachment
+            const pdfBlob = generateInvoicePDF(customer, settings);
+            
+            const result = await sendWhatsAppNotification(customer, message, tempSettings, pdfBlob, `Invoice_${customer.id}.pdf`, isApiMode, true, 'receipt');
+            if (result.success) {
+               const targetDocId = customer.docId || (currentOwnerId ? `${currentOwnerId}_${customer.id}` : customer.id);
+               batch.update(doc(db, 'customers', targetDocId), { 
+                 invoiceSent: true, 
+                 paymentNotified: true,
+                 ...(currentOwnerId ? { ownerId: currentOwnerId } : {})
+               });
+               updatesSkipped++;
 
-             if (updatesSkipped % 100 === 0) {
-                 try {
-                     await batch.commit();
-                 } catch (e: any) {
-                     if (e.code === 'resource-exhausted') {
-                         errors.push("Quota Exceeded on db update");
-                         break;
-                     }
-                 }
-             }
-          } else {
-            errors.push(`${customer.name}: ${result.error}`);
+               if (updatesSkipped % 100 === 0) {
+                   try {
+                       await batch.commit();
+                   } catch (e: any) {
+                       if (e.code === 'resource-exhausted') {
+                           errors.push("Quota Exceeded on db update");
+                           break;
+                       }
+                   }
+               }
+            } else {
+              errors.push(`${customer.name}: ${result.error || 'Failed to dispatch notification'}`);
+            }
+          } catch (itemErr: any) {
+            console.warn(`Error processing receipt for ${customer.name}:`, itemErr);
+            errors.push(`${customer.name}: ${itemErr?.message || 'Unexpected dispatch error'}`);
           }
           
           setBulkProgress(Math.floor(((i + 1) / paidCustomers.length) * 100));

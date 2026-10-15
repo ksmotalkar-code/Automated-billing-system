@@ -13,7 +13,8 @@ import {
   AlertTriangle,
   BookOpen,
   MessageSquare,
-  ClipboardList
+  ClipboardList,
+  SlidersHorizontal
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useState } from "react";
@@ -28,6 +29,7 @@ export const layers = [
   { id: "customers", label: "Customers", icon: Users, description: "Manage Accounts" },
   { id: "alerts", label: "Alerts & Notifications", icon: BellRing, description: "Monitor & Remind" },
   { id: "billing", label: "Invoices & Billing", icon: FileText, description: "Billing Cycles" },
+  { id: "templates", label: "WhatsApp Templates", icon: SlidersHorizontal, description: "Manage Meta Templates" },
   { id: "audit", label: "Audit Trail", icon: ClipboardList, description: "Billing Logs" },
   { id: "payments", label: "Payments", icon: CreditCard, description: "Transaction History" },
   { id: "complaints", label: "Complaints", icon: AlertTriangle, description: "Manage Complaints" },
