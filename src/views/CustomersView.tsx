@@ -280,6 +280,12 @@ export function CustomersView() {
   const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState<string>("default");
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
+  const [broadcastReport, setBroadcastReport] = useState<{
+    total: number;
+    successful: { id: string; name: string; mobileNumber: string }[];
+    rejected: { id: string; name: string; mobileNumber: string; reason: string }[];
+    messagePreview: string;
+  } | null>(null);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
@@ -1042,15 +1048,19 @@ export function CustomersView() {
   const deliveryModeRef = useRef("api");
 
   const handleNotifyActive = async () => {
-    let targetCustomers = customers.filter(c => c.status === 'Active');
+    // All customers except those who are inactive / suspended
+    const nonInactiveCustomers = customers.filter(
+      c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive'
+    );
+    let targetCustomers = nonInactiveCustomers;
     
-    // If user has manually checked boxes, only notify them
+    // If user has manually checked boxes, only notify non-inactive among those
     if (selectedIds.length > 0) {
-      targetCustomers = customers.filter(c => selectedIds.includes(c.id!));
+      targetCustomers = nonInactiveCustomers.filter(c => selectedIds.includes(c.id!));
     }
 
     if (targetCustomers.length === 0) {
-      showAlert("No Targets", "There are no valid customers to notify based on your selection.");
+      showAlert("No Targets", "There are no non-inactive customers to notify based on your selection.");
       return;
     }
 
@@ -1074,7 +1084,7 @@ export function CustomersView() {
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk Notification",
-      message: `Send custom message to ${targetCustomers.length} target(s)?`,
+      message: `Send custom message to ${targetCustomers.length} active/non-inactive customer(s)?`,
       isDestructive: false,
       showCancel: true,
       children: (
@@ -1116,7 +1126,7 @@ export function CustomersView() {
                 defaultValue={templateRef.current}
               >
                 <option value="default">
-                  {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast Template'}
+                  {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
                 </option>
                 {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
                   <option key={t.id || t.templateName} value={t.templateName}>
@@ -1144,23 +1154,35 @@ export function CustomersView() {
         setIsSendingNotify(true);
         setNotifyProgress(0);
         
-        let errors = [];
         const isApiMode = deliveryRef.current === "api";
         const selectedProvider = providerRef.current;
         
-        // Pass the chosen provider via tempSettings
         const tempSettings = { ...settings, preferredNotificationMethod: selectedProvider };
-        
-        // If meta was not chosen, we can clear meta fields temporarily to ensure it doesn't default to it if WATI fails, 
-        // but 'preferredNotificationMethod' is enough for automation.ts route.
 
-        let combinedMessage = notifyMessage;
+        const combinedMessage = notifyMessage.trim();
         const isDirectText = templateRef.current === 'direct_text';
         const chosenTemplate = templateRef.current !== 'default' && !isDirectText ? templateRef.current : undefined;
         const templateCategory = isDirectText ? undefined : (chosenTemplate ? 'custom' : 'broadcast');
 
+        const successful: { id: string; name: string; mobileNumber: string }[] = [];
+        const rejected: { id: string; name: string; mobileNumber: string; reason: string }[] = [];
+
         for (let i = 0; i < targetCustomers.length; i++) {
           const customer = targetCustomers[i];
+          const rawDigits = (customer.mobileNumber || '').replace(/\D/g, '');
+
+          // Check if phone number is missing or invalid (< 10 digits)
+          if (!rawDigits || rawDigits.length < 10) {
+            rejected.push({
+              id: customer.id,
+              name: customer.name,
+              mobileNumber: customer.mobileNumber || 'Missing',
+              reason: 'Missing or invalid phone number (< 10 digits)'
+            });
+            setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
+            continue; // Continue seamlessly without breaking process!
+          }
+
           const finalMsg = `Dear ${customer.name}, ${combinedMessage}`;
           
           let attachment: Blob | undefined = undefined;
@@ -1180,107 +1202,59 @@ export function CustomersView() {
               true, 
               false, 
               templateCategory, 
-              undefined, 
+              [customer.name, combinedMessage], 
               chosenTemplate
             );
-            if (!result.success) {
-              errors.push(`${customer.name}: ${result.error || 'Failed to deliver'}`);
+
+            if (result.success) {
+              successful.push({
+                id: customer.id,
+                name: customer.name,
+                mobileNumber: customer.mobileNumber
+              });
+            } else {
+              let cleanErr = result.error || 'Delivery rejected by WhatsApp';
+              if (cleanErr.includes('131026') || cleanErr.toLowerCase().includes('undeliverable') || cleanErr.toLowerCase().includes('not registered')) {
+                cleanErr = 'WhatsApp rejected: Number not active on WhatsApp or undeliverable';
+              } else if (cleanErr.includes('131047') || cleanErr.toLowerCase().includes('24 hour')) {
+                cleanErr = 'WhatsApp rejected: Session closed (Approved Meta template required)';
+              } else if (cleanErr.includes('132000') || cleanErr.toLowerCase().includes('param')) {
+                cleanErr = 'WhatsApp rejected: Template variable count mismatch';
+              } else if (cleanErr.toLowerCase().includes('invalid mobile')) {
+                cleanErr = 'WhatsApp rejected: Invalid phone number';
+              }
+              rejected.push({
+                id: customer.id,
+                name: customer.name,
+                mobileNumber: customer.mobileNumber,
+                reason: cleanErr
+              });
             }
           } catch (sendErr: any) {
-            errors.push(`${customer.name}: ${sendErr?.message || 'Network error'}`);
+            rejected.push({
+              id: customer.id,
+              name: customer.name,
+              mobileNumber: customer.mobileNumber,
+              reason: sendErr?.message || 'Network / server communication error'
+            });
           }
 
           setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
-          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1500 : 3500));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1200 : 3000));
         }
 
         setIsSendingNotify(false);
         setNotifyMessage("");
-        
-        if (errors.length > 0) {
-          if (isApiMode) {
-            setConfirmConfig({
-              isOpen: true,
-              title: "API Delivery Failed",
-              message: `Notifications finished with errors (${errors.length} failed):\n${errors.slice(0, 3).join('\n')}${errors.length > 3 ? '\n...' : ''}\n\nWould you like to use the manual fallback to select and message them in WhatsApp?`,
-              isDestructive: false,
-              showCancel: true,
-              children: <></>, // Reset children
-              onConfirm: () => {
-                const genericMessage = `Important Notice:\n\n${notifyMessage}`;
-                const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
-                window.open(url, '_blank');
-                setConfirmConfig(prev => ({...prev, isOpen: false}));
-              }
-            });
-          } else {
-            showAlert("Completed with Errors", `Notifications finished with some errors:\n\n${errors.join('\n')}`);
-          }
-        } else {
-          showAlert("Success", "All selected customers notified successfully!");
-        }
+
+        // Show comprehensive Delivery Report modal
+        setBroadcastReport({
+          total: targetCustomers.length,
+          successful,
+          rejected,
+          messagePreview: combinedMessage
+        });
       }
     });
-
-    /* == ISOLATED AUTOMATION BLOCK ==
-    // Fast fail if API is missing for bulk
-    if (!settings?.metaWhatsAppApiKey || !settings?.metaWhatsAppPhoneNumberId) {
-       setIsNotifyModalOpen(false);
-       setConfirmConfig({
-         isOpen: true,
-         title: "Meta API Configuration Missing",
-         message: "Bulk automated messaging requires the WhatsApp Meta API key. Would you like to use the manual backup method to forward a single general message to your WhatsApp groups or select individuals?",
-         isDestructive: false,
-         showCancel: true,
-         onConfirm: () => {
-             const genericMessage = `Important Notice: ${notifyMessage}`;
-             const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
-             window.open(url, '_blank');
-             setNotifyMessage("");
-         }
-       });
-       return;
-    }
-
-    setIsSendingNotify(true);
-    setNotifyProgress(0);
-
-    let errors = [];
-    for (let i = 0; i < activeCustomers.length; i++) {
-      const customer = activeCustomers[i];
-      const message = `Dear ${customer.name}, ${notifyMessage}`;
-      
-      const result = await sendWhatsAppNotification(customer, message, settings as AppSettings, undefined, undefined, true, true, 'broadcast');
-      if (!result.success) {
-        errors.push(`${customer.name}: ${result.error}`);
-      }
-
-      setNotifyProgress(Math.floor(((i + 1) / activeCustomers.length) * 100));
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    setIsSendingNotify(false);
-    setIsNotifyModalOpen(false);
-    
-    if (errors.length > 0) {
-      setConfirmConfig({
-         isOpen: true,
-         title: "Completed with Errors",
-         message: `Notifications finished with errors (${errors.length} failed). Would you like to use the backup method to forward the message manually via WhatsApp App?`,
-         isDestructive: false,
-         showCancel: true,
-         onConfirm: () => {
-             const genericMessage = `Important Notice: ${notifyMessage}`;
-             const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
-             window.open(url, '_blank');
-             setNotifyMessage("");
-         }
-      });
-    } else {
-      setNotifyMessage("");
-      showAlert("Success", `Notifications sent to ${activeCustomers.length} active customers.`);
-    }
-    =============================== */
   };
 
   const totalPages = Math.ceil(sortedCustomers.length / itemsPerPage);
@@ -2268,7 +2242,7 @@ export function CustomersView() {
                       className="w-full px-3 py-2.5 neu-pressed rounded-xl outline-none text-sm font-medium bg-transparent"
                     >
                       <option value="default">
-                        {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast Template'}
+                        {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
                       </option>
                       {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
                         <option key={t.id || t.templateName} value={t.templateName}>
@@ -2280,14 +2254,32 @@ export function CustomersView() {
                     <p className="text-[11px] text-gray-500 mt-1">
                       {selectedBroadcastTemplate === 'direct_text'
                         ? 'Sends your typed message directly as plain text (requires active 24h customer window).'
-                        : 'Your typed or selected message is dynamically mapped into the template variables.'}
+                        : 'Your typed message is dynamically passed to the template variables.'}
                     </p>
                   </div>
                 )}
 
+                <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs flex flex-col gap-1.5">
+                  <div className="font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-blue-600" />
+                    <span>Meta Dashboard Template: <strong>broadcast</strong> (Category: Utility)</span>
+                  </div>
+                  <p className="text-[11px] text-blue-900/80 dark:text-blue-200/80 leading-relaxed">
+                    Create a template named <code>broadcast</code> with body:
+                    <span className="block my-1 px-2 py-1 bg-white/70 dark:bg-black/30 rounded font-mono text-[10px] select-all">
+                      Dear &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;
+                    </span>
+                    Variable &#123;&#123;1&#125;&#125; = Customer Name, Variable &#123;&#123;2&#125;&#125; = Whatever message you type in the box above.
+                  </p>
+                </div>
+
                 <div className="flex items-center justify-between pt-4 border-t border-[var(--shadow-dark)]">
                   <div className="text-xs neu-text-muted">
-                    Sending to <span className="font-bold text-blue-600">{selectedIds.length > 0 ? selectedIds.length : customers.filter(c => c.status === 'Active').length}</span> target customers
+                    Sending to <span className="font-bold text-blue-600">
+                      {selectedIds.length > 0 
+                        ? customers.filter(c => selectedIds.includes(c.id!) && c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length 
+                        : customers.filter(c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length}
+                    </span> target customers (all non-inactive)
                   </div>
                   <div className="flex gap-3">
                     <button 
@@ -2313,6 +2305,132 @@ export function CustomersView() {
                       )}
                     </button>
                   </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Broadcast Delivery Report Modal */}
+      <AnimatePresence>
+        {broadcastReport && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="neu-bg p-6 rounded-3xl w-full max-w-2xl shadow-2xl border border-white/20 max-h-[90vh] flex flex-col"
+            >
+              {/* Header */}
+              <div className="flex justify-between items-center pb-4 border-b border-[var(--shadow-dark)]">
+                <div>
+                  <h3 className="text-xl font-black">Broadcast Delivery Report</h3>
+                  <p className="text-xs neu-text-muted mt-0.5">
+                    Total target customers processed: <span className="font-bold">{broadcastReport.total}</span>
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setBroadcastReport(null)}
+                  className="p-2 hover:bg-black/10 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Metrics */}
+              <div className="grid grid-cols-2 gap-3 my-4">
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center font-black text-lg">
+                    ✓
+                  </div>
+                  <div>
+                    <div className="text-2xl font-black text-emerald-600">{broadcastReport.successful.length}</div>
+                    <div className="text-[10px] font-black uppercase tracking-wider text-emerald-700">Delivered Successfully</div>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-rose-500 text-white flex items-center justify-center font-black text-lg">
+                    ✕
+                  </div>
+                  <div>
+                    <div className="text-2xl font-black text-rose-600">{broadcastReport.rejected.length}</div>
+                    <div className="text-[10px] font-black uppercase tracking-wider text-rose-700">Rejected by WhatsApp</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Rejected List */}
+              {broadcastReport.rejected.length > 0 ? (
+                <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-rose-600 uppercase tracking-wider flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Customers Rejected by WhatsApp ({broadcastReport.rejected.length})
+                    </span>
+                    <button
+                      onClick={() => {
+                        const text = broadcastReport.rejected.map(r => `${r.name} (${r.mobileNumber}): ${r.reason}`).join('\n');
+                        navigator.clipboard.writeText(text);
+                        showAlert("Copied", "Rejected customers list copied to clipboard.");
+                      }}
+                      className="text-[11px] font-bold text-blue-600 hover:underline"
+                    >
+                      Copy Rejected List
+                    </button>
+                  </div>
+
+                  <p className="text-xs text-neutral-600 dark:text-neutral-400 mb-2">
+                    These customers did not receive the broadcast because WhatsApp rejected their phone number or delivery was undeliverable. All other customers received it successfully.
+                  </p>
+
+                  <div className="overflow-y-auto pr-1 space-y-2 flex-1 max-h-56 rounded-xl bg-black/5 dark:bg-white/5 p-3">
+                    {broadcastReport.rejected.map((r, idx) => (
+                      <div key={idx} className="p-2.5 rounded-xl bg-white dark:bg-neutral-800 border border-red-500/20 text-xs flex justify-between items-center gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold truncate">{r.name} <span className="font-mono text-[10px] text-blue-600">#{r.id}</span></div>
+                          <div className="text-[11px] text-neutral-500">{r.mobileNumber}</div>
+                        </div>
+                        <div className="text-[10px] font-semibold text-rose-600 bg-rose-500/10 px-2.5 py-1 rounded-lg shrink-0 max-w-[240px] truncate" title={r.reason}>
+                          {r.reason}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 rounded-2xl bg-emerald-500/10 text-center my-4">
+                  <p className="text-sm font-bold text-emerald-700">
+                    🎉 Outstanding! All {broadcastReport.successful.length} customers had valid WhatsApp numbers and accepted delivery without any rejections.
+                  </p>
+                </div>
+              )}
+
+              {/* Footer */}
+              <div className="mt-5 pt-4 border-t border-[var(--shadow-dark)] flex items-center justify-between gap-3">
+                <div className="text-[11px] text-neutral-500">
+                  {broadcastReport.successful.length} delivered • {broadcastReport.rejected.length} failed
+                </div>
+                <div className="flex gap-2">
+                  {broadcastReport.rejected.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const genericMessage = `Important Announcement:\n\n${broadcastReport.messagePreview}`;
+                        const url = `https://wa.me/?text=${encodeURIComponent(genericMessage)}`;
+                        window.open(url, '_blank');
+                      }}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors"
+                    >
+                      Forward to WhatsApp App
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setBroadcastReport(null)}
+                    className="px-6 py-2 bg-neutral-800 text-white dark:bg-neutral-200 dark:text-neutral-900 rounded-xl text-xs font-bold shadow hover:opacity-90"
+                  >
+                    Close Report
+                  </button>
                 </div>
               </div>
             </motion.div>

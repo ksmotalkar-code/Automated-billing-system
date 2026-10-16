@@ -3726,8 +3726,47 @@ async function startServer() {
           "Meta Error: The 'Phone Number ID' you provided is invalid. Please make sure you are using the 'Phone Number ID' (usually 15-digits) from your Meta App Dashboard, and NOT your actual phone number.";
       } else if (latestData.error?.type === "OAuthException") {
         finalErrMsg = `OAuthException: ${latestData.error?.message || "Invalid or expired token"}. Please ensure you're using the Phone Number ID (not App ID), the token is valid, and 'whatsapp_business_messaging' permissions are granted.`;
-        if (latestData.error.error_data && latestData.error.error_data.details) {
-          finalErrMsg += ` Details: ${latestData.error.error_data.details}`;
+      }
+
+      if (bodyPayload.type === "template") {
+        console.warn(`[WhatsApp] Template dispatch failed (${finalErrMsg}). Attempting session text/media fallback...`);
+        try {
+          const fallbackPayload: any = {
+            messaging_product: "whatsapp",
+            to: formattedTo,
+          };
+          if (mediaId || mediaUrl) {
+            fallbackPayload.type = "document";
+            fallbackPayload.document = {
+              filename: mediaName || "Receipt.pdf",
+              caption: message,
+              ...(mediaUrl ? { link: mediaUrl } : { id: mediaId }),
+            };
+          } else {
+            fallbackPayload.type = "text";
+            fallbackPayload.text = { body: message };
+          }
+          const fallbackRes = await fetchWithRetry(metaMessagesEndpoint, {
+            method: "POST",
+            headers: metaRequestHeaders,
+            body: JSON.stringify(fallbackPayload),
+          });
+          const fallbackData = await safeParseFetchResponse(fallbackRes);
+          if (fallbackRes.ok) {
+            console.log(`[WhatsApp] Session fallback message succeeded for ${formattedTo}!`);
+            writeWhatsAppAuditLog({
+              stage: "RESPONSE_SUCCESS",
+              to: formattedTo,
+              method: "POST",
+              url: metaMessagesEndpoint,
+              responseStatus: `${fallbackRes.status} ${fallbackRes.statusText}`,
+              responseBody: fallbackData,
+              metadata: { isSessionFallback: true },
+            });
+            return fallbackData;
+          }
+        } catch (fbErr) {
+          console.warn("[WhatsApp] Session fallback also failed:", fbErr);
         }
       }
       
@@ -7136,17 +7175,33 @@ async function startServer() {
                         });
                         unregReply = `Thank you${senderDisplayName ? ` ${senderDisplayName}` : ""}! Your grievance (#${complaintId}) has been registered with Gram Panchayat Jhanda Khurd. Our maintenance team will review and resolve it promptly.`;
                       } else {
-                        unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 Welcome to Gram Panchayat Jhanda Khurd Water Billing & Citizen Services.
-
-Your mobile number (+${fromMobile}) is not currently linked in our consumer records.
-
-📌 *Available Citizen Services:*
-🛠️ *Complaint / Grievance:* Type *Complaint* followed by your issue (e.g. *Complaint Water pressure is low in ward 3*).
-⏰ *Water Supply Timings:* Morning 6:00 - 8:00 AM | Evening 6:00 - 8:00 PM.
-📞 *Panchayat Helpline:* 1800-123-4567 / 0161-2345678.
-📍 *Office:* Gram Panchayat Jhanda Khurd, Dist. Mansa, Punjab.
-
-To link your connection or update your registered number, please contact the Gram Panchayat office or Sarpanch.`;
+                        const complaintId =
+                          "COMP-" +
+                          Math.random().toString(36).substr(2, 8).toUpperCase();
+                        try {
+                          await saveComplaintData(complaintId, {
+                            id: complaintId,
+                            customerId: "unregistered",
+                            ownerId: effectiveOwnerId,
+                            customerName: senderDisplayName
+                              ? `${senderDisplayName} (+${fromMobile})`
+                              : `Resident (+${fromMobile})`,
+                            mobileNumber: fromMobile,
+                            category: "Service Query",
+                            message: "WhatsApp Query",
+                            description: msgBody,
+                            billStatus: "Unregistered",
+                            status: "Pending",
+                            priority: "Medium",
+                            createdAt: new Date().toISOString(),
+                            expiresAt: new Date(
+                              Date.now() + 180 * 24 * 60 * 60 * 1000,
+                            ).toISOString(),
+                          });
+                        } catch (compErr) {
+                          console.error("Failed to save unregistered query:", compErr);
+                        }
+                        unregReply = `Namaste${senderDisplayName ? ` ${senderDisplayName}` : ""}! 🙏 We have registered your query and will respond you within 24 hour. Thank you.`;
                       }
 
                       try {

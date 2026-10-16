@@ -205,7 +205,21 @@ export function PaymentsView() {
           templateCat = 'billing';
         }
 
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.warn("Auto notify note:", err?.message || err));
+        const paymentParams = templateCat === 'receipt'
+          ? [updatedCustomer.name, String(amount), String(newBalance)]
+          : [updatedCustomer.name, String(amount), String(newBalance), new Date().toLocaleDateString('en-GB')];
+
+        sendWhatsAppNotification(
+          { ...updatedCustomer, lastPaymentAmount: amount }, 
+          message, 
+          settings, 
+          pdfBlob, 
+          pdfName, 
+          false, 
+          true, 
+          templateCat,
+          paymentParams
+        ).catch(err => console.warn("Auto notify note:", err?.message || err));
       }
     } catch (error: any) {
       console.error("Payment confirmation error:", error);
@@ -352,7 +366,23 @@ export function PaymentsView() {
           templateCat = 'billing';
         }
 
-        sendWhatsAppNotification(updatedCustomer, message, settings, pdfBlob, pdfName, false, true, templateCat).catch(err => console.warn("Auto notify note:", err?.message || err));
+        const receiptParams = [
+          updatedCustomer.name,
+          String(result.effectiveAmount),
+          String(updatedCustomer.balance ?? 0),
+        ];
+
+        sendWhatsAppNotification(
+          { ...updatedCustomer, lastPaymentAmount: result.effectiveAmount }, 
+          message, 
+          settings, 
+          pdfBlob, 
+          pdfName, 
+          false, 
+          true, 
+          templateCat,
+          receiptParams
+        ).catch(err => console.warn("Auto notify note:", err?.message || err));
       }
     } catch (error: any) {
       console.error("Error approving receipt:", error);

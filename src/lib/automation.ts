@@ -255,12 +255,12 @@ export const sendWhatsAppNotification = async (
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   try {
-    if (customer.status === 'Suspended') {
-      return { success: false, error: `Customer status is "${customer.status}". Automated billing notifications are disabled for this account.` };
+    if (customer.status === 'Suspended' || (customer.status as string) === 'Inactive') {
+      return { success: false, error: `Customer status is "${customer.status}". Automated notifications are disabled for inactive accounts.` };
     }
     if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
       console.warn(`Customer ${customer.name} has missing or invalid mobile number, skipping automation.`);
-      return { success: false, error: "Customer has missing or invalid mobile number, cannot send automated messages." };
+      return { success: false, error: "Missing or invalid mobile number (at least 10 digits required)" };
     }
 
   whatsappService.updateConfig(
@@ -387,6 +387,15 @@ export const sendWhatsAppNotification = async (
     }
   }
 
+  if (templateCategory === 'broadcast') {
+    const hasMsgKey = paramKeys.some(k =>
+      ['message', 'broadcast_message', 'custom_message', 'text', 'content', 'body', 'notice', 'announcement', 'msg', 'details', 'info', '2', '{{2}}'].includes(k.toLowerCase())
+    );
+    if (!hasMsgKey) {
+      paramKeys = ['customer_name', 'message'];
+    }
+  }
+
   if (paramKeys.length > 0) {
         templateParams = paramKeys.map(key => {
           const lowerKey = key.toLowerCase();
@@ -487,7 +496,8 @@ export const sendWhatsAppNotification = async (
           templateParams.push(new Date().toLocaleDateString('en-GB'));
         } else if (templateCategory === 'receipt') {
           templateParams.push(customer.name);
-          templateParams.push(customer.balance || settings.billingAmount || 200);
+          templateParams.push(String((customer as any).lastPaymentAmount ?? settings.billingAmount ?? 200));
+          templateParams.push(String(customer.balance ?? 0));
         } else {
           templateParams.push(customer.name);
         }

@@ -110,10 +110,62 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
 
 ---
 
-## 8. Render Production WhatsApp & Payment Approval Fixes
-- **Issue**: On Render production deployment, client-side environment variables (`VITE_WHATSAPP_API_KEY`) are not present in the browser bundle (since keys are stored securely in Firestore settings). Consequently, `whatsappService.isConfigured()` previously returned `false` in production, causing payment approvals (`PaymentsView.tsx`) and automated triggers to bypass API dispatch and fail or fall back to manual links.
-- **Fix Implemented**:
-  1. Relaxed `whatsappService.isConfigured()` in `src/services/whatsappService.ts` to recognize `preferredMethod === 'api'` or `'wati'` even if client env vars are absent, relying on server-side credential resolution.
-  2. Updated `sendWhatsAppNotification` in `src/lib/automation.ts` with `shouldTryApi` condition checking `settings.preferredNotificationMethod === 'api'` or `'wati'` and API key presence in settings.
-  3. Verified clean build (`npm run build`) and 0 lint errors (`npm run lint`).
+---
+
+## 9. WhatsApp Chatbot Fallback & Render Payment Approval Notification Hardening
+- **WhatsApp Fallback Query Registration (`server.ts`)**:
+  - Automatically captures unhandled WhatsApp incoming messages (from both registered consumers and unregistered numbers) and creates persistent `complaints` records in Firestore (`category: "Service Query"`, `priority: "Medium"`).
+  - Responds immediately with the exact requested confirmation: `"Namaste [Name]! 🙏 We have registered your query and will respond you within 24 hour. Thank you."`
+  - Integrated identically across Meta Webhook handling (`/api/whatsapp-webhook`) and Chatbot Simulation/Diagnostics (`/api/chatbot/diagnose-message`).
+- **Render Payment Approval Meta API Fix (`PaymentsView.tsx`, `automation.ts`, `server.ts`)**:
+  - **Issue**: When approving receipts or recording payments on Render, Meta rejected the `receipt` template with error 132000 (`Number of parameters does not match the expected number of parameters for template`). The approved template expected 3 parameters (`{{1}}` Customer Name, `{{2}}` Paid Amount, `{{3}}` New Balance), but only 2 were dispatched, and the paid amount evaluated incorrectly when balance was ₹0.
+  - **Resolution**:
+    1. In `PaymentsView.tsx`, both `handleApproveReceipt` and `handleConfirmPayment` now inject `lastPaymentAmount` and pass explicit 3-parameter arrays (`[customer.name, amount, balance]`) to `sendWhatsAppNotification`.
+    2. In `src/lib/automation.ts`, hardened the default parameter resolver for category `'receipt'` to guarantee all 3 parameters are supplied: `[name, lastPaymentAmount, balance]`.
+    3. In `server.ts`, enhanced `sendMetaWhatsApp` so that if a template message is rejected by Meta and retries are exhausted, the server automatically attempts a direct session document/text fallback when the resident's 24-hour customer care session is open.
+- **Verification**: Clean build (`compile_applet`), zero TypeScript/lint issues (`lint_applet`), and all 6 E2E tests passing (`test:e2e`).
+
+---
+
+## 10. Bulk Notify Non-Inactive Target Delivery & Meta Template Standardization
+- **Non-Inactive Customer Target Filtering (`CustomersView.tsx`)**:
+  - `handleNotifyActive` and the target count preview in the Bulk Notify modal now filter all active/non-suspended accounts (`c.status !== 'Suspended' && c.status !== 'Inactive'`), including `'Active'` and `'Advance Paid'`.
+  - When checkboxes are selected, it filters non-inactive customers among selected items.
+- **WhatsApp Rejection & Invalid Number Fault Tolerance**:
+  - Processing NEVER breaks or aborts when encountering invalid or missing phone numbers (< 10 digits) or when Meta WhatsApp rejects a message (e.g., number not registered on WhatsApp, undeliverable).
+  - Valid recipients are smoothly delivered while invalid/rejected recipients are isolated without interrupting the loop.
+  - At the end of the batch, a dedicated **Broadcast Delivery Report** modal displays:
+    - Count of successful deliveries (green)
+    - Count of rejections (red/amber) with customer name, ID, mobile number, and the exact reason WhatsApp rejected them.
+    - One-click "Copy Rejected List" button to review or fix catalog records.
+    - Manual fallback option to forward the announcement via the WhatsApp app if needed.
+- **Meta Dashboard Template Specification (`broadcast`)**:
+  - **Template Name**: `broadcast`
+  - **Category**: `UTILITY`
+  - **Language**: `en_US` (English) or account language
+  - **Body**:
+    ```
+    Dear {{1}},
+
+    {{2}}
+
+    Thank you,
+    Water Billing Department
+    ```
+  - **Variables**: `{{1}}` = Customer Name, `{{2}}` = Broadcast Announcement Message.
+  - Normalized `def_broadcast` across `src/lib/db.ts`, `SettingsView.tsx`, and `src/lib/automation.ts` to map `[customer_name, message]` dynamically so whatever the admin types into the box is directly delivered into variable `{{2}}`.
+
+---
+
+## 11. WhatsApp Client Fetch Resilience & Build Bundle Refresh
+- **Root Cause Analysis (`Failed to fetch` error)**:
+  - The browser session was previously invoking an earlier unhandled promise from `whatsappService.sendMessage` where network drops or server restarts during payment confirmations were not cleanly caught in the UI call sites.
+- **Resolution & Fixes**:
+  - Hardened `WhatsAppService.sendMessage` in `src/services/whatsappService.ts` to catch all transport and fetch exceptions gracefully, returning safe error payloads without throwing uncaught exceptions to the window.
+  - Added `.catch(...)` error handlers across `PaymentsView.tsx` (`handleConfirmPayment`, `handleApproveReceipt`) to prevent any WhatsApp API downtime from crashing the payment confirmation or receipt approval flows.
+  - Recompiled production bundles (`compile_applet`) and restarted Node development server (`restart_dev_server`).
+  - Verified all 6 end-to-end integration tests (`npm run test:e2e`) passing successfully with 0 lint errors.
+
+
+
 

@@ -178,6 +178,7 @@ export interface Customer {
   invoiceSent?: boolean;
   paymentNotified?: boolean;
   lastMeterReading?: number;
+  lastPaymentAmount?: number;
   createdAt?: string;
 }
 
@@ -1567,14 +1568,24 @@ export function subscribeToSettings(
         { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
         { key: 'metaTemplateBilling', defaultName: 'payment_due_reminder', params: 'customer_name, billing_amount, new_balance, date, button_param', id: 'def_billing' },
         { key: 'metaTemplateReceipt', defaultName: 'invoice_bill', params: 'customer_name, payment_amount, button_param', id: 'def_receipt' },
-        { key: 'metaTemplateBroadcast', defaultName: 'operation_disruption_2', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', id: 'def_broadcast' },
+        { key: 'metaTemplateBroadcast', defaultName: 'broadcast', params: 'customer_name, message', id: 'def_broadcast' },
         { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
         { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
         { key: 'metaTemplateCustom', defaultName: 'general_notification', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', id: 'def_custom' },
       ];
       for (const def of categoryDefaults) {
-        const configuredName = (data as any)[def.key] || def.defaultName;
-        if (configuredName && !existingNames.has(configuredName)) {
+        let configuredName = (data as any)[def.key] || def.defaultName;
+        if (def.key === 'metaTemplateBroadcast' && (configuredName === 'operation_disruption_2' || !configuredName)) {
+          configuredName = 'broadcast';
+          data.metaTemplateBroadcast = 'broadcast';
+        }
+        const existingTmpl = data.metaCustomTemplates.find(t => t.id === def.id || t.templateName === configuredName);
+        if (existingTmpl) {
+          if (def.key === 'metaTemplateBroadcast' && (existingTmpl.templateName === 'operation_disruption_2' || !existingTmpl.parameters?.includes('message'))) {
+            existingTmpl.templateName = configuredName;
+            existingTmpl.parameters = def.params;
+          }
+        } else if (configuredName && !existingNames.has(configuredName)) {
           data.metaCustomTemplates.push({
             id: def.id,
             templateName: configuredName,

@@ -208,7 +208,7 @@ export function SettingsView() {
       metaTemplateWelcome: 'welcome',
       metaTemplateBilling: 'payment_due_reminder',
       metaTemplateReceipt: 'invoice_bill',
-      metaTemplateBroadcast: 'operation_disruption_2',
+      metaTemplateBroadcast: 'broadcast',
       metaTemplateOverdue: 'payment_overdue_1',
       metaTemplateSuspension: 'autopay',
       metaTemplateCustom: 'general_notification',
@@ -1039,7 +1039,7 @@ export function SettingsView() {
                          { id: 'metaTemplateWelcome', category: 'welcome', label: 'Welcome / Onboarding', placeholder: 'welcome', verifiedParams: 'customer_name', note: '1 Body Param • No Button' },
                          { id: 'metaTemplateBilling', category: 'billing', label: 'Cyclic Invoice / Billing', placeholder: 'payment_due_reminder', verifiedParams: 'customer_name, billing_amount, new_balance, date, button_param', note: '4 Body Params • 1 URL Button' },
                          { id: 'metaTemplateReceipt', category: 'receipt', label: 'Success Receipt', placeholder: 'invoice_bill', verifiedParams: 'customer_name, payment_amount, button_param', note: 'Doc Header • 2 Body • 1 URL Button' },
-                         { id: 'metaTemplateBroadcast', category: 'broadcast', label: 'Bulk Broadcast / Outage', placeholder: 'operation_disruption_2', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', note: '6 Body Params • 1 URL Button' },
+                         { id: 'metaTemplateBroadcast', category: 'broadcast', label: 'Bulk Broadcast / Notice', placeholder: 'broadcast', verifiedParams: 'customer_name, message', note: '2 Body Params: {{1}} Name, {{2}} Message' },
                          { id: 'metaTemplateOverdue', category: 'overdue', label: 'Overdue Penalty Alert', placeholder: 'payment_overdue_1', verifiedParams: 'customer_name, overdue_amount, date, penalty_amount, button_param', note: '4 Body Params • 1 URL Button' },
                          { id: 'metaTemplateSuspension', category: 'suspension', label: 'Suspension Notice / Autopay', placeholder: 'autopay', verifiedParams: 'customer_name, customer_balance, date', note: '3 Body Params • No Button' },
                          { id: 'metaTemplateCustom', category: 'custom', label: 'Custom / General Alert', placeholder: 'general_notification', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', note: '5 Body Params • 1 URL Button' }
