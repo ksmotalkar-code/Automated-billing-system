@@ -383,6 +383,20 @@ export function PaymentsView() {
           templateCat,
           receiptParams
         ).catch(err => console.warn("Auto notify note:", err?.message || err));
+
+        // Send secondary notification with download instructions
+        const secondaryMessage = "आपका भुगतान प्राप्त हो गया है, अब आप अपनी रसीद डाउनलोड कर सकते हैं।\nType - Download My Receipt";
+        sendWhatsAppNotification(
+          { ...updatedCustomer },
+          secondaryMessage,
+          settings,
+          undefined,
+          undefined,
+          false,
+          true,
+          'custom',
+          [updatedCustomer.name, "Download My Receipt"]
+        ).catch(err => console.warn("Secondary auto notify note:", err?.message || err));
       }
     } catch (error: any) {
       console.error("Error approving receipt:", error);
