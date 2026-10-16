@@ -113,22 +113,12 @@ service cloud.firestore {
 
     // Payment Receipts (Portal submissions & Tenant review)
     match /payment_receipts/{receiptId} {
-      allow get: if isOwner(existing()) || ('portalToken' in existing());
-      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if (isSignedIn() && incoming().ownerId == request.auth.uid) ||
-                      (isValidPaymentReceipt(incoming()) && incoming().status == 'Pending' && incoming().id == receiptId);
-      allow update: if isOwner(existing());
-      allow delete: if isOwner(existing());
+      allow get, list, create, update, delete: if isSignedIn();
     }
 
     // Complaints (Public portal submission & Tenant review)
     match /complaints/{complaintId} {
-      allow get: if isOwner(existing());
-      allow list: if isSignedIn() && resource.data.ownerId == request.auth.uid;
-      allow create: if (isSignedIn() && incoming().ownerId == request.auth.uid) ||
-                      (isValidComplaint(incoming()) && incoming().status == 'Pending' && incoming().id == complaintId);
-      allow update: if isOwner(existing());
-      allow delete: if isOwner(existing());
+      allow get, list, create, update, delete: if isSignedIn();
     }
 
     // Complaints Archive
