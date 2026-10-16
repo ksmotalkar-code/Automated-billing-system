@@ -71,6 +71,15 @@ class WhatsAppService {
    * This is the core automation function.
    */
   public async sendMessage(params: WhatsAppMessage): Promise<{ success: boolean; messageId?: string; error?: string; fellBackToManual?: boolean }> {
+    if (!this.isConfigured()) {
+      console.error("[WhatsAppService] Attempted to send message but service is not configured.", {
+        apiKey: !!this.apiKey,
+        phoneId: !!this.phoneNumberId,
+        method: this.preferredMethod
+      });
+      return { success: false, error: "WhatsApp API is not configured. Please check your settings.", fellBackToManual: true };
+    }
+
     // We now use our backend proxy to send messages safely (avoiding CORS and keeping keys server-side)
     try {
       const ownerId = params.ownerId || auth.currentUser?.uid || 'system';
@@ -98,6 +107,7 @@ class WhatsAppService {
          }
       }
 
+      console.log('[WhatsAppService] Attempting to send message to /api/wa/send', { to: params.to, ownerId });
       const response = await authFetch('/api/wa/send', {
         method: 'POST',
         body: JSON.stringify({

@@ -263,6 +263,11 @@ export const sendWhatsAppNotification = async (
       return { success: false, error: "Missing or invalid mobile number (at least 10 digits required)" };
     }
 
+    if (!settings) {
+      console.error("[sendWhatsAppNotification] Settings are missing.");
+      return { success: false, error: "Settings are missing." };
+    }
+
   whatsappService.updateConfig(
     settings.metaWhatsAppApiKey || null, 
     settings.metaWhatsAppPhoneNumberId || null, 

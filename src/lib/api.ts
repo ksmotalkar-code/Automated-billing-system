@@ -71,6 +71,7 @@ export async function authFetch(url: string, options: AuthFetchOptions = {}): Pr
   try {
     while (true) {
       try {
+        console.log(`[authFetch] Initiating fetch request to ${targetUrl}`);
         const response = await fetch(targetUrl, fetchOptions);
         clearTimeout(timeoutId);
         return response;
