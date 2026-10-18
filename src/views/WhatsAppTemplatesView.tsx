@@ -409,7 +409,13 @@ export function WhatsAppTemplatesView() {
         })
       });
 
-      const data = await response.json();
+      let data: any = {};
+      try {
+        const text = await response.text();
+        data = text ? JSON.parse(text) : {};
+      } catch (e) {
+        data = { error: `Server returned non-JSON response (HTTP ${response.status})` };
+      }
       if (response.ok && data.success) {
         setTestFeedback({
           success: true,
