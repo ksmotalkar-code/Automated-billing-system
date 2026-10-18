@@ -521,6 +521,99 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     }
   });
 
+  // Send Individual Message API (Protected by requireAuth)
+  router.post("/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || req.body.ownerId;
+      const {
+        to,
+        message,
+        apiKey,
+        phoneId,
+        watiAccessToken,
+        watiApiEndpoint,
+        method,
+        mediaBase64,
+        mediaName,
+        templateCategory,
+        templateParams,
+        customTemplateName,
+      } = req.body;
+      if (!to || !message)
+        return res.status(400).json({ error: "Missing required fields" });
+
+      let settings: any = {
+        metaWhatsAppApiKey: apiKey,
+        metaWhatsAppPhoneNumberId: phoneId,
+        watiAccessToken: watiAccessToken,
+        watiApiEndpoint: watiApiEndpoint,
+        preferredNotificationMethod: method,
+      };
+
+      // Clean up whitespace or empty/null/undefined string values to ensure fallback
+      if (settings.metaWhatsAppApiKey && typeof settings.metaWhatsAppApiKey === 'string') {
+        settings.metaWhatsAppApiKey = settings.metaWhatsAppApiKey.trim();
+        if (settings.metaWhatsAppApiKey === "" || settings.metaWhatsAppApiKey === "null" || settings.metaWhatsAppApiKey === "undefined") {
+          settings.metaWhatsAppApiKey = null;
+        }
+      }
+      if (settings.metaWhatsAppPhoneNumberId && typeof settings.metaWhatsAppPhoneNumberId === 'string') {
+        settings.metaWhatsAppPhoneNumberId = settings.metaWhatsAppPhoneNumberId.trim();
+        if (settings.metaWhatsAppPhoneNumberId === "" || settings.metaWhatsAppPhoneNumberId === "null" || settings.metaWhatsAppPhoneNumberId === "undefined") {
+          settings.metaWhatsAppPhoneNumberId = null;
+        }
+      }
+      if (settings.watiAccessToken && typeof settings.watiAccessToken === 'string') {
+        settings.watiAccessToken = settings.watiAccessToken.trim();
+        if (settings.watiAccessToken === "" || settings.watiAccessToken === "null" || settings.watiAccessToken === "undefined") {
+          settings.watiAccessToken = null;
+        }
+      }
+
+      if (deps.resolveOwnerIdForWebhook) {
+        try {
+          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
+            await deps.resolveOwnerIdForWebhook(ownerId || "system", phoneId);
+          if (resolvedSettings) {
+            settings = {
+              ...resolvedSettings,
+              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
+              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
+              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
+              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
+              ...(method ? { preferredNotificationMethod: method } : {}),
+            };
+          }
+        } catch (e) {
+          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
+        }
+      }
+
+      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
+        return res
+          .status(400)
+          .json({ error: "WhatsApp API not configured in settings" });
+      }
+
+      const data = await deps.sendMessageUtil({
+        settings,
+        to,
+        message,
+        mediaBase64,
+        mediaName,
+        templateCategory,
+        templateParams,
+        customTemplateName,
+        ownerId,
+      });
+
+      return res.json(data);
+    } catch (err: any) {
+      console.error("[WhatsAppRouter] /wa/send error:", err);
+      return res.status(500).json({ error: err.message || "Failed to send message" });
+    }
+  });
+
   return router;
 }
 

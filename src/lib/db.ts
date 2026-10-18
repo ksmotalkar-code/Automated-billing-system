@@ -1985,6 +1985,28 @@ export const approveReceiptWithAtomicTransaction = async (
   if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Approve Payment Receipt");
 
+  // Priority 1: High-resilience Server-side Admin Endpoint
+  // Completely immune to client-side Firestore security rules restrictions on Render or any deployment
+  try {
+    const response = await authFetch('/api/receipts/approve', {
+      method: 'POST',
+      body: JSON.stringify({
+        receiptId,
+        customAmount,
+        ownerId: uid,
+      }),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.success) {
+        return data as ApproveReceiptResult;
+      }
+    }
+  } catch (apiErr) {
+    console.warn("[approveReceiptWithAtomicTransaction] Server endpoint fallback to client transaction:", apiErr);
+  }
+
+  // Priority 2: Client SDK Transaction Fallback
   const receiptRef = doc(db, 'payment_receipts', receiptId);
 
   return await runTransaction(db, async (txn) => {
@@ -2145,6 +2167,31 @@ export const recordPaymentWithAtomicTransaction = async (
   if (!uid) throw new Error("Not authenticated");
   checkQuotaBeforeWrite("Record Payment Transaction");
 
+  // Priority 1: High-resilience Server-side Admin Endpoint
+  try {
+    const response = await authFetch('/api/payments/record', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerId,
+        amount,
+        transactionId,
+        paymentMode,
+        isDirectAdvanceDeposit: paymentRecordingType === 'advance',
+        ownerId: uid,
+        idempotencyKey,
+      }),
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.success) {
+        return data as RecordPaymentResult;
+      }
+    }
+  } catch (apiErr) {
+    console.warn("[recordPaymentWithAtomicTransaction] Server endpoint fallback to client transaction:", apiErr);
+  }
+
+  // Priority 2: Client SDK Transaction Fallback
   const effectiveKey = idempotencyKey || `manual_${transactionId.trim()}`;
   const idempRef = doc(db, 'idempotency_keys', `pay_${effectiveKey}`);
   const custRef = doc(db, 'customers', customerId);
@@ -2277,6 +2324,19 @@ export const recordPaymentWithAtomicTransaction = async (
 export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Rejected', explicitOwnerId?: string) => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) return;
+
+  if (status === 'Rejected') {
+    try {
+      const res = await authFetch('/api/receipts/reject', {
+        method: 'POST',
+        body: JSON.stringify({ receiptId: id, ownerId: uid }),
+      });
+      if (res.ok) return;
+    } catch (apiErr) {
+      console.warn("[updateReceiptStatus] Server endpoint fallback:", apiErr);
+    }
+  }
+
   try {
     await updateDoc(doc(db, 'payment_receipts', id), { status });
   } catch (error) {
@@ -2287,6 +2347,35 @@ export const updateReceiptStatus = async (id: string, status: 'Approved' | 'Reje
 export const resolveComplaint = async (id: string, notify: boolean = false, explicitOwnerId?: string) => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) return;
+
+  // Priority 1: High-resilience Server Admin endpoint
+  try {
+    const res = await authFetch('/api/complaints/resolve', {
+      method: 'POST',
+      body: JSON.stringify({ complaintId: id, ownerId: uid }),
+    });
+    if (res.ok) {
+      if (notify) {
+        const complaintSnap = await getDoc(doc(db, 'complaints', id));
+        if (complaintSnap.exists()) {
+          const data = complaintSnap.data() as Complaint;
+          await authFetch('/api/complaints/notify-resolution', {
+            method: 'POST',
+            body: JSON.stringify({
+              complaintId: id,
+              ownerId: uid,
+              customerId: data.customerId
+            })
+          });
+        }
+      }
+      return;
+    }
+  } catch (apiErr) {
+    console.warn("[resolveComplaint] Server endpoint fallback:", apiErr);
+  }
+
+  // Priority 2: Client SDK updateDoc Fallback
   const expiresAt = new Date();
   expiresAt.setMonth(expiresAt.getMonth() + 6);
   try {

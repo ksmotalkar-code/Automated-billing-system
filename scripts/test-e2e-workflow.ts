@@ -250,9 +250,53 @@ async function runEndToEndTestSuite() {
     });
 
     // -------------------------------------------------------------
+    // STEP 6: RECEIPT APPROVAL & PAYMENT RECORDING API VALIDATION
+    // -------------------------------------------------------------
+    console.log(`\n[Step 6] Testing Server-side Receipt Approval (/api/receipts/approve)...`);
+    const testReceiptId = `test_rcpt_${Date.now()}`;
+    await db.collection("payment_receipts").doc(testReceiptId).set({
+      id: testReceiptId,
+      customerId: cust1Id,
+      customerName: "Ramesh Kumar (Test)",
+      amount: 200,
+      status: "Pending",
+      submittedAt: new Date().toISOString(),
+      ownerId: testOwnerId,
+    });
+
+    const approveRes = await fetch(`${API_BASE}/api/receipts/approve`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${testOwnerId}`,
+      },
+      body: JSON.stringify({
+        receiptId: testReceiptId,
+        customAmount: 200,
+        ownerId: testOwnerId,
+      }),
+    });
+
+    const approveData = await approveRes.json();
+    const approvedOk = approveRes.ok && approveData.success === true && approveData.newBalance === 0;
+
+    results.push({
+      step: "6. Server-side Receipt Approval",
+      passed: approvedOk,
+      details: approvedOk
+        ? `Receipt approved atomically: newBalance=${approveData.newBalance}, newAdvance=${approveData.newAdvance}, txnId=${approveData.transactionId}`
+        : `Approval failed: status ${approveRes.status}, data=${JSON.stringify(approveData)}`,
+    });
+
+    // -------------------------------------------------------------
     // CLEANUP TEST DATA
     // -------------------------------------------------------------
     console.log(`\n[Cleanup] Cleaning up test data for ownerId: ${testOwnerId}...`);
+    await db.collection("payment_receipts").doc(testReceiptId).delete();
+    if (approveData?.transactionId) {
+      await db.collection("transactions").doc(approveData.transactionId).delete();
+    }
+    await db.collection("idempotency_keys").doc(`rcpt_appr_${testReceiptId}`).delete();
     await db.collection("settings").doc(testOwnerId).delete();
     await db.collection("customers").doc(cust1Id).delete();
     await db.collection("customers").doc(cust2Id).delete();

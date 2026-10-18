@@ -18,6 +18,7 @@ import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
 import { createWhatsAppRouter, recordRawWebhookReceipt } from "./src/server/routes/whatsapp.ts";
 import { createImportRouter } from "./src/server/routes/import.ts";
+import { createPaymentsRouter } from "./src/server/routes/payments.ts";
 import { pruneTemplateRegistry } from "./src/server/services/templatePruner.ts";
 import { tenantMiddleware, errorHandler, requireAuth, cronAuth, AuthenticatedRequest, verifyHmacSignature, checkRateLimit, checkRateLimitPersistent, setRateLimitDbGetter, DistributedLock } from "./src/server/middleware/auth.ts";
 // Support for Client SDK Fallback (Service User Pattern)
@@ -2270,97 +2271,11 @@ async function startServer() {
     }
   });
 
-  // Send Individual Message API (Protected by requireAuth)
-  app.post("/api/wa/send", requireAuth, async (req: AuthenticatedRequest, res) => {
-    try {
-      const ownerId = req.ownerId || req.body.ownerId;
-      const {
-        to,
-        message,
-        apiKey,
-        phoneId,
-        watiAccessToken,
-        watiApiEndpoint,
-        method,
-        mediaBase64,
-        mediaName,
-        templateCategory,
-        templateParams,
-        customTemplateName,
-      } = req.body;
-      if (!to || !message)
-        return res.status(400).json({ error: "Missing required fields" });
 
-      let settings: any = {
-        metaWhatsAppApiKey: apiKey,
-        metaWhatsAppPhoneNumberId: phoneId,
-        watiAccessToken: watiAccessToken,
-        watiApiEndpoint: watiApiEndpoint,
-        preferredNotificationMethod: method,
-      };
 
-      // Clean up whitespace or empty/null/undefined string values to ensure fallback
-      if (settings.metaWhatsAppApiKey && typeof settings.metaWhatsAppApiKey === 'string') {
-        settings.metaWhatsAppApiKey = settings.metaWhatsAppApiKey.trim();
-        if (settings.metaWhatsAppApiKey === "" || settings.metaWhatsAppApiKey === "null" || settings.metaWhatsAppApiKey === "undefined") {
-          settings.metaWhatsAppApiKey = null;
-        }
-      }
-      if (settings.metaWhatsAppPhoneNumberId && typeof settings.metaWhatsAppPhoneNumberId === 'string') {
-        settings.metaWhatsAppPhoneNumberId = settings.metaWhatsAppPhoneNumberId.trim();
-        if (settings.metaWhatsAppPhoneNumberId === "" || settings.metaWhatsAppPhoneNumberId === "null" || settings.metaWhatsAppPhoneNumberId === "undefined") {
-          settings.metaWhatsAppPhoneNumberId = null;
-        }
-      }
-      if (settings.watiAccessToken && typeof settings.watiAccessToken === 'string') {
-        settings.watiAccessToken = settings.watiAccessToken.trim();
-        if (settings.watiAccessToken === "" || settings.watiAccessToken === "null" || settings.watiAccessToken === "undefined") {
-          settings.watiAccessToken = null;
-        }
-      }
 
-      if (admin.apps.length) {
-        try {
-          const { ownerId: resolvedOwnerId, settings: resolvedSettings } =
-            await resolveOwnerIdForWebhook(ownerId || "system", phoneId);
-          if (resolvedSettings) {
-            settings = {
-              ...resolvedSettings,
-              ...(apiKey ? { metaWhatsAppApiKey: apiKey } : {}),
-              ...(phoneId ? { metaWhatsAppPhoneNumberId: phoneId } : {}),
-              ...(watiAccessToken ? { watiAccessToken: watiAccessToken } : {}),
-              ...(watiApiEndpoint ? { watiApiEndpoint: watiApiEndpoint } : {}),
-              ...(method ? { preferredNotificationMethod: method } : {}),
-            };
-          }
-        } catch (e) {
-          console.warn("Failed to fetch settings from resolveOwnerIdForWebhook in /api/wa/send:", e);
-        }
-      }
 
-      if (!settings?.metaWhatsAppApiKey && !settings?.watiAccessToken) {
-        return res
-          .status(400)
-          .json({ error: "WhatsApp API not configured in settings" });
-      }
 
-      const data = await sendMessageUtil({
-        settings,
-        to,
-        message,
-        mediaBase64,
-        mediaName,
-        isTestMessage: false,
-        templateCategory,
-        templateParams,
-        customTemplateName,
-      });
-      const messageId = data?.messages?.[0]?.id || data?.id || data?.messageId || "sent";
-      res.json({ success: true, messageId, data });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message || "Failed to send WhatsApp message" });
-    }
-  });
 
   // Mount Persistent Cloud Storage API
   app.use("/api", createStorageRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
@@ -2382,6 +2297,9 @@ async function startServer() {
 
   // Mount Import Router
   app.use("/api", createImportRouter(() => admin.apps.length ? getRequiredAdminDb() : null));
+
+  // Mount Payments & Receipts Router
+  app.use("/api", createPaymentsRouter({ getDb: () => admin.apps.length ? getRequiredAdminDb() : null }));
 
   // Server-side Gemini AI Client
   let geminiClient: GoogleGenAI | null = null;
@@ -5909,6 +5827,26 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Webhook] Portal AI error:", err);
       res.status(500).json({ error: "Internal Server Error: " + err.message });
+    }
+  });
+
+  app.post("/api/complaints/resolve", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const { complaintId } = req.body;
+      if (!complaintId) return res.status(400).json({ error: "Missing complaintId" });
+      const db = getAdminDb();
+      if (!db) throw new Error("Firebase Admin Database is not available.");
+      const expiresAt = new Date();
+      expiresAt.setMonth(expiresAt.getMonth() + 6);
+      await db.collection("complaints").doc(complaintId).set({
+        status: "Resolved",
+        resolvedAt: new Date().toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      }, { merge: true });
+      return res.json({ success: true, complaintId, status: "Resolved" });
+    } catch (err: any) {
+      console.error("[Complaints] /api/complaints/resolve error:", err);
+      return res.status(500).json({ error: err.message || "Failed to resolve complaint" });
     }
   });
 
