@@ -345,22 +345,16 @@ export function PaymentsView() {
 
       if (result.customer) {
         const updatedCustomer = result.customer;
-        let message = "";
+        const message = "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है";
         let pdfBlob: Blob;
         let pdfName = "";
         let templateCat: 'receipt' | 'billing' = 'receipt';
 
         if (updatedCustomer.balance === 0 || result.isAdvanceCredit) {
-          if (result.isAdvanceCredit) {
-            message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified. Your bill is fully PAID, and ${formatCurrency(result.newAdvance)} has been credited to your Advance Balance. Attached is your official receipt.`;
-          } else {
-            message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified and your bill is now fully PAID. Attached is your official receipt.`;
-          }
           pdfBlob = generateInvoicePDF(updatedCustomer, settings, true, result.effectiveAmount);
           pdfName = `Receipt_${updatedCustomer.id}.pdf`;
           templateCat = 'receipt';
         } else {
-          message = `Dear ${updatedCustomer.name}, your payment screenshot has been verified for a partial payment of ${formatCurrency(result.effectiveAmount)}. Your remaining outstanding balance is ${formatCurrency(updatedCustomer.balance)}. Attached is your updated invoice.`;
           pdfBlob = generateInvoicePDF(updatedCustomer, settings, false, 0);
           pdfName = `Invoice_${updatedCustomer.id}.pdf`;
           templateCat = 'billing';
@@ -385,7 +379,7 @@ export function PaymentsView() {
         ).catch(err => console.warn("Auto notify note:", err?.message || err));
 
         // Send secondary notification with download instructions
-        const secondaryMessage = "आपका भुगतान प्राप्त हो गया है, अब आप अपनी रसीद डाउनलोड कर सकते हैं।\nType - Download My Receipt";
+        const secondaryMessage = "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है\nType - Download My Receipt";
         sendWhatsAppNotification(
           { ...updatedCustomer },
           secondaryMessage,

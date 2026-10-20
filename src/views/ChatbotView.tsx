@@ -136,7 +136,7 @@ ${cmdList}`;
       const data = await getChatbotSettings(currentOwnerId || undefined);
       const defaultSystemCommands: ChatbotCommand[] = [
         { id: "sysdlbill", buttonLabel: `📄 ${t('Download My Bill')}`, triggerWord: t('Download My Bill'), response: t('Hello {{name}}, here is your requested PDF bill. Your current bill status is {{status}}.'), isActive: true },
-        { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: t('Hi {{name}}, you can scan the UPI QR code below to make your payment. Your pending balance is Rs. {{balance}} due on {{dueDate}}.'), isActive: true },
+        { id: "syspaybill", buttonLabel: `💰 ${t('Pay Bill')}`, triggerWord: t('Pay Bill'), response: "अपनी payment करने के लिए इस QR code को scan करें। Payment होने के बाद हमें उसका Screenshot भेज दीजिए, payment confirmation के लिए।", isActive: true },
         { id: "sysdlinvoice", buttonLabel: `🧾 ${t('Download Invoice')}`, triggerWord: t('Download Invoice'), response: t('Dear {{name}}, your latest invoice has been generated. Please find it attached below.'), isActive: true },
         { id: "sysmonthly", buttonLabel: `📊 ${t('Panchayat Reports')}`, triggerWord: t('Panchayat Reports'), response: t('Here are the direct PDF download links for Gram Panchayat reports.'), isActive: true },
         { id: "sysdeepreport", buttonLabel: `📑 ${t('Deep Details Report')}`, triggerWord: t('Deep Details Report'), response: t('Here are the detailed itemized expenditure reports and vouchers for Gram Panchayat.'), isActive: true },

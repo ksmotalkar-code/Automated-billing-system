@@ -708,7 +708,7 @@ function processDynamicResponse(response: string, userCustData: any): string {
 const SERVER_TRANSLATIONS: any = {
   en: {
     invoiceMsg: "Here is your invoice. Your outstanding balance is Rs. {{amt}}.",
-    paymentSuccess: "Dear {{name}}, your payment of Rs. {{amt}} was received! Your balance is now 0. Thank you!",
+    paymentSuccess: "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है",
     receipt: "PAYMENT RECEIPT",
     invoice: "INVOICE / BILL DETAILS",
     name: "Name",
@@ -716,12 +716,12 @@ const SERVER_TRANSLATIONS: any = {
     balanceLabel: "Outstanding Balance",
     date: "Date",
     thankYou: "Thank you for using SmartBilling.",
-    payBillMsg: "Scan the attached UPI QR code to pay your bill.",
+    payBillMsg: "अपनी payment करने के लिए इस QR code को scan करें। Payment होने के बाद हमें उसका Screenshot भेज दीजिए, payment confirmation के लिए।",
     noQrCodeMsg: "Sorry, no UPI QR code has been set by the administration yet."
   },
   hi: {
     invoiceMsg: "यहाँ आपका चालान है। आपकी बकाया राशि रु. {{amt}} है।",
-    paymentSuccess: "प्रिय {{name}}, आपका रु. {{amt}} का भुगतान प्राप्त हुआ! आपका बैलेंस अब 0 है। धन्यवाद!",
+    paymentSuccess: "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है",
     receipt: "PAYMENT RECEIPT (भुगतान रसीद)",
     invoice: "INVOICE (चालान विवरण)",
     name: "Name (नाम)",
@@ -729,7 +729,7 @@ const SERVER_TRANSLATIONS: any = {
     balanceLabel: "Balance (बकाया)",
     date: "Date (दिनांक)",
     thankYou: "Thank you for using SmartBilling. धन्यवाद।",
-    payBillMsg: "अपने बिल का भुगतान करने के लिए संलग्न UPI QR कोड को स्कैन करें।",
+    payBillMsg: "अपनी payment करने के लिए इस QR code को scan करें। Payment होने के बाद हमें उसका Screenshot भेज दीजिए, payment confirmation के लिए।",
     noQrCodeMsg: "क्षमा करें, प्रशासन द्वारा अभी तक कोई UPI QR कोड सेट नहीं किया गया है।"
   },
   pa: {
@@ -742,7 +742,7 @@ const SERVER_TRANSLATIONS: any = {
     balanceLabel: "Balance (ਬਾਕੀ)",
     date: "Date (ਮਿਤੀ)",
     thankYou: "Thank you for using SmartBilling. ਧੰਨਵਾਦ।",
-    payBillMsg: "ਆਪਣੇ ਬਿੱਲ ਦਾ ਭੁਗਤਾਨ ਕਰਨ ਲਈ ਨੱਥੀ UPI QR ਕੋਡ ਨੂੰ ਸਕੈਨ ਕਰੋ।",
+    payBillMsg: "ਆਪਣੀ payment ਕਰਨ ਲਈ ਇਸ QR code ਨੂੰ scan ਕਰੋ। Payment ਹੋਣ ਤੋਂ ਬਾਅਦ ਸਾਨੂੰ ਉਸਦਾ Screenshot ਭੇਜ ਦਿਓ, payment confirmation ਲਈ।",
     noQrCodeMsg: "ਮਾਫ ਕਰਨਾ, ਪ੍ਰਸ਼ਾਸਨ ਦੁਆਰਾ ਅਜੇ ਤੱਕ ਕੋਈ UPI QR ਕੋਡ ਸੈੱਟ ਨਹੀਂ ਕੀਤਾ ਗਿਆ ਹੈ।"
   }
 };
@@ -1354,11 +1354,16 @@ async function routeSystemIntent(
   ) {
     const amt = Number(custData.balance) || 0;
     const adv = Number(custData.advanceBalance) || 0;
-    const lang = adminSettings?.preferredLanguage || 'en';
+    const lang = adminSettings?.preferredLanguage || 'hi';
+    const upiPromptMsg = "अपनी payment करने के लिए इस QR code को scan करें। Payment होने के बाद हमें उसका Screenshot भेज दीजिए, payment confirmation के लिए।";
     if (adv > 0 && amt <= 0) {
-      replyText = `Your account already has an advance credit of Rs. ${adv} and zero outstanding due! If you wish to deposit additional advance credit, you can scan the QR code below:`;
+      replyText = `Your account already has an advance credit of Rs. ${adv} and zero outstanding due! If you wish to deposit additional advance credit, you can scan the QR code below:\n\n${upiPromptMsg}`;
     } else {
-      replyText = replyText || getSvrT(lang, 'payBillMsg');
+      if (!replyText || replyText.includes("Scan this UPI QR code") || replyText.includes("संलग्न UPI QR कोड") || replyText.includes("ਨੱਥੀ UPI QR ਕੋਡ") || replyText.includes("Scan the attached UPI QR code") || replyText.includes("wrong screenshot or fake screenshot") || replyText.includes("scan the UPI QR code below") || replyText.includes("सफल भुगतान का स्क्रीनशॉट")) {
+        replyText = upiPromptMsg;
+      } else {
+        replyText = replyText || upiPromptMsg;
+      }
     }
     const qrImage = adminSettings?.upiQrCodeImage || custData?.upiQrCodeImage;
     if (qrImage) {

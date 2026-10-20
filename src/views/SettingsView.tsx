@@ -361,7 +361,7 @@ export function SettingsView() {
         const botData = await getChatbotSettings(currentOwnerId || undefined);
         const defaultBotCommands: ChatbotCommand[] = [
           { id: "sysdlbill", buttonLabel: "📄 Download My Bill", triggerWord: "Download My Bill", response: "Here is your requested PDF bill.", isActive: true },
-          { id: "syspaybill", buttonLabel: "💰 Pay Bill", triggerWord: "Pay Bill", response: "Scan this UPI QR code to make your payment.", isActive: true },
+          { id: "syspaybill", buttonLabel: "💰 Pay Bill", triggerWord: "Pay Bill", response: "अपनी payment करने के लिए इस QR code को scan करें। Payment होने के बाद हमें उसका Screenshot भेज दीजिए, payment confirmation के लिए।", isActive: true },
           { id: "sysdlinvoice", buttonLabel: "🧾 Download Invoice", triggerWord: "Download Invoice", response: "Here is your latest official invoice.", isActive: true },
           { id: "sysmonthly", buttonLabel: "📊 Panchayat Reports", triggerWord: "Panchayat Reports", response: "Here are the direct PDF download links for Gram Panchayat reports.", isActive: true },
           { id: "sysdeepreport", buttonLabel: "📑 Deep Details Report", triggerWord: "Deep Details Report", response: "Here are the detailed expenditure reports and vouchers.", isActive: true },
