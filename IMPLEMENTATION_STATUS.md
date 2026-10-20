@@ -53,7 +53,12 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
    - **Language**: English (en)
    - **Template Text Example**:
      `Welcome {{1}} to Village Water Department digital portal. Your account is now active.`
-   - **Parameters**: `{{1}}` = Customer Name.
+5. **Complaint Resolution Template (`complaint_resolved`)**:
+   - **Category**: Utility
+   - **Language**: English (en) / English US (en_US)
+   - **Template Text Example**:
+     `Dear {{1}}, your complaint {{2}} regarding {{3}} has been resolved. Status: {{4}}. Thank you for your patience! Gram Panchayat Water Committee.`
+   - **Parameters**: `{{1}}` = Customer Name, `{{2}}` = Complaint Ticket ID, `{{3}}` = Complaint Topic / Issue, `{{4}}` = Resolution Status (`Resolved`).
 
 ---
 

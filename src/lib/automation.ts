@@ -250,7 +250,7 @@ export const sendWhatsAppNotification = async (
   attachmentName?: string,
   isBulkMode?: boolean,
   includePortalLink: boolean = true,
-  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom',
+  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'complaint' | 'custom',
   templateParams?: any[],
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
@@ -328,6 +328,7 @@ export const sendWhatsAppNotification = async (
     else if (templateCategory === 'welcome') templateName = settings.metaTemplateWelcome;
     else if (templateCategory === 'overdue') templateName = settings.metaTemplateOverdue;
     else if (templateCategory === 'suspension') templateName = settings.metaTemplateSuspension;
+    else if (templateCategory === 'complaint') templateName = settings.metaTemplateComplaint;
     else if (templateCategory === 'custom') templateName = settings.metaTemplateCustom;
   }
 
@@ -344,6 +345,7 @@ export const sendWhatsAppNotification = async (
       if (cat === 'broadcast' && (tName.includes('broadcast') || tName.includes('notice') || tName.includes('announcement') || tId.includes('broadcast'))) return true;
       if (cat === 'overdue' && (tName.includes('overdue') || tName.includes('due') || tId.includes('overdue'))) return true;
       if (cat === 'suspension' && (tName.includes('suspen') || tName.includes('disconnect') || tId.includes('suspension'))) return true;
+      if (cat === 'complaint' && (tName.includes('complain') || tName.includes('ticket') || tName.includes('issue') || tId.includes('complaint'))) return true;
       return false;
     });
     if (matched?.templateName) {
@@ -357,6 +359,7 @@ export const sendWhatsAppNotification = async (
     else if (templateCategory === 'broadcast') templateName = settings.metaCustomTemplates?.[0]?.templateName || 'broadcast';
     else if (templateCategory === 'receipt') templateName = 'receipt';
     else if (templateCategory === 'billing') templateName = 'billing';
+    else if (templateCategory === 'complaint') templateName = 'complaint_resolved';
   }
 
   // Look for custom parameters mapping in Firestore template or Settings Registry

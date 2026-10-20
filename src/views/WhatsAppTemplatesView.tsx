@@ -83,6 +83,12 @@ const CATEGORY_META = {
     color: 'text-rose-500 bg-rose-500/10 border-rose-500/30',
     description: 'Final statutory warning before water supply disconnection.'
   },
+  complaint: {
+    label: 'Complaint Resolution',
+    icon: CheckCircle2,
+    color: 'text-teal-500 bg-teal-500/10 border-teal-500/30',
+    description: 'Official notification dispatched when a citizen grievance or complaint is resolved.'
+  },
   custom: {
     label: 'Custom Templates',
     icon: Sliders,
@@ -1152,14 +1158,14 @@ export function WhatsAppTemplatesView() {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredTemplates.map((template) => {
+          {filteredTemplates.map((template, index) => {
             const catMeta = CATEGORY_META[template.category] || CATEGORY_META.custom;
             const CatIcon = catMeta.icon;
             const paramList = (template.parameters || '').split(',').map(s => s.trim()).filter(Boolean);
 
             return (
               <motion.div
-                key={template.id}
+                key={`${template.id || template.templateName}-${index}`}
                 layout
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}

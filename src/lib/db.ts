@@ -385,7 +385,7 @@ export interface TemplateParameterMapping {
 export interface WhatsAppTemplate {
   id: string;
   templateName: string;
-  category: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
+  category: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'complaint' | 'custom';
   language?: string;
   bodyText: string;
   parameters: string; // Comma separated: e.g. "customer_name, billing_amount, new_balance, date, button_param"
@@ -407,6 +407,10 @@ export interface WhatsAppTemplate {
 export const SYSTEM_TEMPLATE_VARIABLES = [
   { key: 'customer_name', label: 'Citizen Name', sample: 'Malook Singh', description: 'Name of the consumer / citizen' },
   { key: 'customer_id', label: 'Consumer Account ID', sample: 'JK-001', description: 'Unique water account / consumer number' },
+  { key: 'complaint_id', label: 'Complaint Ticket ID', sample: 'COMP-A1B2C3', description: 'Complaint reference ticket number' },
+  { key: 'complaint_category', label: 'Complaint Topic / Category', sample: 'Pipe Leakage', description: 'Category or nature of the reported issue' },
+  { key: 'complaint_status', label: 'Resolution Status', sample: 'Resolved', description: 'Resolution status e.g. Resolved' },
+  { key: 'complaint_message', label: 'Complaint Summary / Issue', sample: 'Low water pressure in Ward 4', description: 'Citizen description of the issue' },
   { key: 'billing_amount', label: 'Current Bill Amount (Rs.)', sample: '200', description: 'Tariff amount for the billing cycle' },
   { key: 'new_balance', label: 'Total Payable Balance (Rs.)', sample: '400', description: 'Total outstanding balance including arrears' },
   { key: 'customer_balance', label: 'Previous Arrears (Rs.)', sample: '200', description: 'Previous month unpaid arrears' },
@@ -551,6 +555,25 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     isActive: true,
     isDefault: true,
     description: 'Final pre-disconnection warning sent when arrears remain unaddressed.'
+  },
+  {
+    id: 'def_complaint',
+    templateName: 'complaint_resolved',
+    category: 'complaint',
+    language: 'en_US',
+    headerType: 'NONE',
+    bodyText: 'Dear {{1}}, your complaint {{2}} regarding {{3}} has been resolved. Status: {{4}}. Thank you for your patience! Gram Panchayat Water Committee.',
+    parameters: 'customer_name, complaint_id, complaint_category, complaint_status',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'complaint_id', label: 'Complaint ID' },
+      { index: 3, placeholder: '{{3}}', key: 'complaint_category', label: 'Issue Category' },
+      { index: 4, placeholder: '{{4}}', key: 'complaint_status', label: 'Resolution Status' }
+    ],
+    supportsButton: false,
+    isActive: true,
+    isDefault: true,
+    description: 'Official WhatsApp notification sent to resident when their registered grievance is resolved.'
   }
 ];
 
@@ -581,6 +604,7 @@ export interface AppSettings {
   metaTemplateWelcome?: string;
   metaTemplateOverdue?: string;
   metaTemplateSuspension?: string;
+  metaTemplateComplaint?: string;
   metaTemplateCustom?: string;
   metaCustomTemplates?: MetaTemplateDef[];
   watiAccessToken?: string;
@@ -1312,6 +1336,9 @@ export const saveSettings = async (settings: AppSettings, explicitOwnerId?: stri
         if (!payload.metaTemplateSuspension && existing.metaTemplateSuspension) {
           payload.metaTemplateSuspension = existing.metaTemplateSuspension;
         }
+        if (!payload.metaTemplateComplaint && existing.metaTemplateComplaint) {
+          payload.metaTemplateComplaint = existing.metaTemplateComplaint;
+        }
         if (!payload.metaTemplateCustom && existing.metaTemplateCustom) {
           payload.metaTemplateCustom = existing.metaTemplateCustom;
         }
@@ -1571,6 +1598,7 @@ export function subscribeToSettings(
         { key: 'metaTemplateBroadcast', defaultName: 'broadcast', params: 'customer_name, message', id: 'def_broadcast' },
         { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
         { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
+        { key: 'metaTemplateComplaint', defaultName: 'complaint_resolved', params: 'customer_name, complaint_id, complaint_category, complaint_status', id: 'def_complaint' },
         { key: 'metaTemplateCustom', defaultName: 'general_notification', params: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', id: 'def_custom' },
       ];
       for (const def of categoryDefaults) {
@@ -1733,8 +1761,15 @@ export function subscribeToWhatsAppTemplates(
     if (snapshot.empty) {
       callback(DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId })));
     } else {
-      const templates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
-      callback(templates);
+      const rawTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
+      const uniqueMap = new Map<string, WhatsAppTemplate>();
+      rawTemplates.forEach(t => {
+        const key = t.templateName || t.id;
+        if (!uniqueMap.has(key) || t.isDefault) {
+          uniqueMap.set(key, t);
+        }
+      });
+      callback(Array.from(uniqueMap.values()));
     }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'whatsapp_templates');
@@ -1751,7 +1786,15 @@ export const getWhatsAppTemplates = async (explicitOwnerId?: string): Promise<Wh
     if (snapshot.empty) {
       return DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId: uid }));
     }
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
+    const rawTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
+    const uniqueMap = new Map<string, WhatsAppTemplate>();
+    rawTemplates.forEach(t => {
+      const key = t.templateName || t.id;
+      if (!uniqueMap.has(key) || t.isDefault) {
+        uniqueMap.set(key, t);
+      }
+    });
+    return Array.from(uniqueMap.values());
   } catch (error: any) {
     handleFirestoreError(error, OperationType.GET, 'whatsapp_templates');
     return DEFAULT_WHATSAPP_TEMPLATES.map(t => ({ ...t, ownerId: uid }));
@@ -1823,6 +1866,7 @@ export const saveWhatsAppTemplate = async (template: WhatsAppTemplate, explicitO
           if (template.category === 'welcome') updates.metaTemplateWelcome = template.templateName;
           if (template.category === 'overdue') updates.metaTemplateOverdue = template.templateName;
           if (template.category === 'suspension') updates.metaTemplateSuspension = template.templateName;
+          if (template.category === 'complaint') updates.metaTemplateComplaint = template.templateName;
           if (template.category === 'custom') updates.metaTemplateCustom = template.templateName;
         }
         await updateDoc(settingsRef, updates);
@@ -2364,7 +2408,10 @@ export const resolveComplaint = async (id: string, notify: boolean = false, expl
             body: JSON.stringify({
               complaintId: id,
               ownerId: uid,
-              customerId: data.customerId
+              customerId: data.customerId,
+              mobileNumber: data.mobileNumber,
+              customerName: data.customerName,
+              category: data.category || data.message || 'Water Issue'
             })
           });
         }
@@ -2394,7 +2441,10 @@ export const resolveComplaint = async (id: string, notify: boolean = false, expl
           body: JSON.stringify({
             complaintId: id,
             ownerId: uid,
-            customerId: data.customerId
+            customerId: data.customerId,
+            mobileNumber: data.mobileNumber,
+            customerName: data.customerName,
+            category: data.category || data.message || 'Water Issue'
           })
         });
       }

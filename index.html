@@ -14,6 +14,30 @@
     <meta name="description" content="Gram Panchayat GP. Jhanda Khurd - Automated Billing System." />
     <meta property="og:title" content="Gram Panchayat GP. Jhanda Khurd" />
     <meta property="og:description" content="Gram Panchayat GP. Jhanda Khurd - Automated Billing System." />
+    <script>
+      // Suppress Vite HMR WebSocket closing errors in iframe/preview environment
+      window.addEventListener('error', function (event) {
+        if (
+          event &&
+          (String(event.message || '').includes('WebSocket closed without opened') ||
+           String(event.filename || '').includes('@vite/client'))
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          return true;
+        }
+      }, true);
+      window.addEventListener('unhandledrejection', function (event) {
+        if (
+          event &&
+          event.reason &&
+          String(event.reason.message || event.reason).includes('WebSocket closed without opened')
+        ) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
+    </script>
   </head>
   <body>
     <div id="root"></div>

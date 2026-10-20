@@ -13,7 +13,7 @@ export interface WhatsAppMessage {
   attachment?: Blob | File;
   attachmentName?: string;
   attachmentType?: string;
-  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'custom';
+  templateCategory?: 'billing' | 'receipt' | 'broadcast' | 'welcome' | 'overdue' | 'suspension' | 'complaint' | 'custom';
   templateParams?: any[];
   customTemplateName?: string;
   ownerId?: string;

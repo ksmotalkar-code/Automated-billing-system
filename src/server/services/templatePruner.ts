@@ -124,6 +124,17 @@ export const VERIFIED_CATEGORY_SPECIFICATIONS = [
     language: "en_US"
   },
   {
+    key: "complaint",
+    label: "Complaint Resolution",
+    settingField: "metaTemplateComplaint",
+    defaultFallback: "complaint_resolved",
+    expectedParams: ["customer_name", "complaint_id", "complaint_category", "complaint_status"],
+    bodyCount: 4,
+    supportsButton: false,
+    requiresDocHeader: false,
+    language: "en_US"
+  },
+  {
     key: "custom",
     label: "Custom / General Alert",
     settingField: "metaTemplateCustom",

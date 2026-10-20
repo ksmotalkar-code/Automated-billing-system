@@ -328,6 +328,7 @@ export async function resolveOwnerIdForWebhook(
       metaTemplateWelcome: masterSettings.metaTemplateWelcome || s?.metaTemplateWelcome || "welcome",
       metaTemplateOverdue: masterSettings.metaTemplateOverdue || s?.metaTemplateOverdue || "payment_overdue_1",
       metaTemplateSuspension: masterSettings.metaTemplateSuspension || s?.metaTemplateSuspension || "autopay",
+      metaTemplateComplaint: masterSettings.metaTemplateComplaint || s?.metaTemplateComplaint || "complaint_resolved",
       metaTemplateCustom: masterSettings.metaTemplateCustom || s?.metaTemplateCustom || "general_notification",
       metaCustomTemplates: masterSettings.metaCustomTemplates || s?.metaCustomTemplates,
       appLogoImage: masterSettings.appLogoImage || s?.appLogoImage,
@@ -548,6 +549,7 @@ interface AppSettings {
   metaTemplateWelcome?: string;
   metaTemplateOverdue?: string;
   metaTemplateSuspension?: string;
+  metaTemplateComplaint?: string;
   metaTemplateCustom?: string;
   metaCustomTemplates?: any[];
   appLogoImage?: string | null;
@@ -3042,6 +3044,7 @@ async function startServer() {
       | "welcome"
       | "overdue"
       | "suspension"
+      | "complaint"
       | "custom",
     templateParams?: any[],
     customTemplateName?: string,
@@ -3192,6 +3195,8 @@ async function startServer() {
           templateName = settings.metaTemplateOverdue || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_overdue' || t.templateName?.toLowerCase().includes('overdue'))?.templateName || "overdue";
         } else if (templateCategory === "suspension") {
           templateName = settings.metaTemplateSuspension || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_suspension' || t.templateName?.toLowerCase().includes('suspen'))?.templateName || "suspension";
+        } else if (templateCategory === "complaint") {
+          templateName = settings.metaTemplateComplaint || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_complaint' || t.category === 'complaint' || t.templateName?.toLowerCase().includes('complain'))?.templateName || "complaint_resolved";
         } else if (templateCategory === "custom") {
           templateName = settings.metaTemplateCustom || settings.metaCustomTemplates?.[0]?.templateName || "custom";
         }
@@ -3762,6 +3767,7 @@ async function startServer() {
       | "welcome"
       | "overdue"
       | "suspension"
+      | "complaint"
       | "custom",
     templateParams?: any[],
     customTemplateName?: string,
@@ -5352,6 +5358,15 @@ async function startServer() {
           requiresDocHeader: false
         },
         {
+          key: "complaint",
+          label: "Complaint Resolution",
+          settingField: "metaTemplateComplaint",
+          defaultFallback: "complaint_resolved",
+          expectedParams: ["customer_name", "complaint_id", "complaint_category", "complaint_status"],
+          supportsButton: false,
+          requiresDocHeader: false
+        },
+        {
           key: "custom",
           label: "Custom / General Alert",
           settingField: "metaTemplateCustom",
@@ -5854,8 +5869,8 @@ async function startServer() {
     try {
       const { complaintId, customerId } = req.body;
       const ownerId = req.ownerId || req.body.ownerId;
-      if (!complaintId || !ownerId || !customerId)
-        return res.status(400).json({ error: "Missing params" });
+      if (!complaintId || !ownerId)
+        return res.status(400).json({ error: "Missing required params: complaintId and ownerId" });
 
       const db = getAdminDb();
       if (!db)
@@ -5871,39 +5886,81 @@ async function startServer() {
         }
       }
 
-      const customerDoc = await db
-        .collection("customers")
-        .doc(customerId)
-        .get();
-      const customer = customerDoc.exists ? customerDoc.data() : null;
+      // Fetch complaint document to retrieve all incident details and contact info
+      const compDoc = await db.collection("complaints").doc(complaintId).get();
+      const compData = compDoc.exists ? (compDoc.data() as any) : null;
+
+      // Fetch customer doc if customerId is valid
+      let customer: any = null;
+      if (customerId && customerId !== "unregistered") {
+        const customerDoc = await db.collection("customers").doc(customerId).get();
+        if (customerDoc.exists) {
+          customer = customerDoc.data();
+        }
+      }
+
+      const recipientMobile = req.body.mobileNumber || customer?.mobileNumber || compData?.mobileNumber;
+      const recipientName = req.body.customerName || customer?.name || compData?.customerName || "Resident";
+      const complaintTopic = req.body.category || compData?.category || compData?.message || "Water Service Request";
+
+      if (!recipientMobile) {
+        return res.status(400).json({ error: "No mobile number found for this complaint ticket." });
+      }
 
       if (
-        customer &&
         settings &&
         ((settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) ||
           settings.watiAccessToken)
       ) {
-        const msg = `Dear ${customer.name}, your complaint (${complaintId}) has been resolved. ✅ Thank you for your patience!`;
-        await sendWhatsAppMessage(settings as any, customer.mobileNumber, msg);
+        const fallbackMsg = `Dear ${recipientName}, your complaint (${complaintId}) regarding ${complaintTopic} has been resolved. ✅ Status: Resolved. Thank you for your patience! Gram Panchayat Water Committee.`;
 
-        await db
-          .collection("customers")
-          .doc(customerId)
-          .collection("chat_history")
-          .add({
-            role: "assistant",
-            content: msg,
-            timestamp: FieldValue.serverTimestamp(),
-          });
+        // Parameters matching standard Meta Complaint Resolution Template:
+        // {{1}} = Citizen Name
+        // {{2}} = Complaint Ticket ID
+        // {{3}} = Complaint Topic / Category
+        // {{4}} = Resolution Status
+        const templateParams = [
+          { index: 1, value: recipientName },
+          { index: 2, value: complaintId },
+          { index: 3, value: complaintTopic },
+          { index: 4, value: "Resolved" }
+        ];
 
-        return res.json({ success: true });
+        console.log(`[Complaint] Dispatching resolution notification via WhatsApp to ${recipientMobile}...`);
+        const sendResult = await sendWhatsAppMessage(
+          settings as any,
+          recipientMobile,
+          fallbackMsg,
+          undefined,
+          undefined,
+          false,
+          "complaint",
+          templateParams,
+          settings.metaTemplateComplaint || undefined,
+          { complaintId, customerName: recipientName, category: complaintTopic, status: "Resolved" }
+        );
+
+        if (customerId && customerId !== "unregistered") {
+          await db
+            .collection("customers")
+            .doc(customerId)
+            .collection("chat_history")
+            .add({
+              role: "assistant",
+              content: fallbackMsg,
+              timestamp: FieldValue.serverTimestamp(),
+            });
+        }
+
+        return res.json({ success: true, deliveredTo: recipientMobile, complaintId, sendResult });
       }
+
       res
         .status(400)
-        .json({ error: "Could not send notification. Check WhatsApp setup." });
-    } catch (err) {
+        .json({ error: "WhatsApp API is not configured. Please check your Meta WhatsApp credentials in Settings." });
+    } catch (err: any) {
       console.error("[Complaint] Resolution notify failed:", err);
-      res.status(500).json({ error: "Automation failed" });
+      res.status(500).json({ error: err?.message || "Automation failed" });
     }
   });
 

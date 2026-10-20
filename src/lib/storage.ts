@@ -78,8 +78,8 @@ export const uploadImageToStorage = async (
     if (res.ok && res.headers.get('content-type')?.includes('application/json')) {
       try {
         const data = await res.json();
-        if (data.imageUrl) {
-          return data.imageUrl;
+        if (data.imageUrl || data.fileUrl || data.url) {
+          return data.imageUrl || data.fileUrl || data.url;
         }
       } catch (e) {
         console.warn('[Storage] Could not parse upload-image response JSON:', e);

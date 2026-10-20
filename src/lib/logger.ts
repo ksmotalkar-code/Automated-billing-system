@@ -65,6 +65,10 @@ export const initLogger = () => {
     addLog('warn', ...args);
   };
   console.error = (...args) => {
+    const str = args.map(a => String(a?.message || a)).join(' ');
+    if (str.includes('WebSocket closed without opened') || str.includes('failed to connect to websocket')) {
+      return;
+    }
     originalError(...args);
     addLog('error', ...args);
   };

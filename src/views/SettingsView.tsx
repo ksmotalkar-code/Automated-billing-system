@@ -201,6 +201,7 @@ export function SettingsView() {
       { id: 'def_broadcast', templateName: 'operation_disruption_2', parameters: 'customer_name, billing_amount, new_balance, date, overdue_amount, penalty_amount, button_param', language: 'en_US' },
       { id: 'def_overdue', templateName: 'payment_overdue_1', parameters: 'customer_name, overdue_amount, date, penalty_amount, button_param', language: 'en_US' },
       { id: 'def_suspension', templateName: 'autopay', parameters: 'customer_name, customer_balance, date', language: 'en_US' },
+      { id: 'def_complaint', templateName: 'complaint_resolved', parameters: 'customer_name, complaint_id, complaint_category, complaint_status', language: 'en_US' },
       { id: 'def_custom', templateName: 'general_notification', parameters: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', language: 'en_US' },
     ];
     setSettings({
@@ -211,6 +212,7 @@ export function SettingsView() {
       metaTemplateBroadcast: 'broadcast',
       metaTemplateOverdue: 'payment_overdue_1',
       metaTemplateSuspension: 'autopay',
+      metaTemplateComplaint: 'complaint_resolved',
       metaTemplateCustom: 'general_notification',
       metaCustomTemplates: verifiedTemplates
     });
@@ -1042,6 +1044,7 @@ export function SettingsView() {
                          { id: 'metaTemplateBroadcast', category: 'broadcast', label: 'Bulk Broadcast / Notice', placeholder: 'broadcast', verifiedParams: 'customer_name, message', note: '2 Body Params: {{1}} Name, {{2}} Message' },
                          { id: 'metaTemplateOverdue', category: 'overdue', label: 'Overdue Penalty Alert', placeholder: 'payment_overdue_1', verifiedParams: 'customer_name, overdue_amount, date, penalty_amount, button_param', note: '4 Body Params • 1 URL Button' },
                          { id: 'metaTemplateSuspension', category: 'suspension', label: 'Suspension Notice / Autopay', placeholder: 'autopay', verifiedParams: 'customer_name, customer_balance, date', note: '3 Body Params • No Button' },
+                         { id: 'metaTemplateComplaint', category: 'complaint', label: 'Complaint Resolution', placeholder: 'complaint_resolved', verifiedParams: 'customer_name, complaint_id, complaint_category, complaint_status', note: '4 Body Params • No Button' },
                          { id: 'metaTemplateCustom', category: 'custom', label: 'Custom / General Alert', placeholder: 'general_notification', verifiedParams: 'customer_name, billing_amount, new_balance, date, overdue_amount, button_param', note: '5 Body Params • 1 URL Button' }
                        ].map(tmp => {
                          const val = templateValidationResults[tmp.id];
@@ -1219,6 +1222,7 @@ export function SettingsView() {
                           {settings.metaTemplateBroadcast && <option value={settings.metaTemplateBroadcast}>Broadcast: {settings.metaTemplateBroadcast}</option>}
                           {settings.metaTemplateOverdue && <option value={settings.metaTemplateOverdue}>Overdue: {settings.metaTemplateOverdue}</option>}
                           {settings.metaTemplateSuspension && <option value={settings.metaTemplateSuspension}>Suspension: {settings.metaTemplateSuspension}</option>}
+                          {settings.metaTemplateComplaint && <option value={settings.metaTemplateComplaint}>Complaint: {settings.metaTemplateComplaint}</option>}
                           {settings.metaTemplateCustom && <option value={settings.metaTemplateCustom}>Custom: {settings.metaTemplateCustom}</option>}
                           <option value="custom">Manual Text (Custom Entry)</option>
                         </select>
