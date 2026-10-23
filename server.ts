@@ -708,7 +708,7 @@ function processDynamicResponse(response: string, userCustData: any): string {
 const SERVER_TRANSLATIONS: any = {
   en: {
     invoiceMsg: "Here is your invoice. Your outstanding balance is Rs. {{amt}}.",
-    paymentSuccess: "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है",
+    paymentSuccess: "प्रिय ग्रामवासी, आपका screenshot approve हो गया है, आपकी राशि हमें प्राप्त हो गई है।",
     receipt: "PAYMENT RECEIPT",
     invoice: "INVOICE / BILL DETAILS",
     name: "Name",
@@ -721,7 +721,7 @@ const SERVER_TRANSLATIONS: any = {
   },
   hi: {
     invoiceMsg: "यहाँ आपका चालान है। आपकी बकाया राशि रु. {{amt}} है।",
-    paymentSuccess: "आपका screeshot approve हो गया है , आपका राशि प्राप्त हो गई है",
+    paymentSuccess: "प्रिय ग्रामवासी, आपका screenshot approve हो गया है, आपकी राशि हमें प्राप्त हो गई है।",
     receipt: "PAYMENT RECEIPT (भुगतान रसीद)",
     invoice: "INVOICE (चालान विवरण)",
     name: "Name (नाम)",

@@ -345,7 +345,7 @@ export function PaymentsView() {
 
       if (result.customer) {
         const updatedCustomer = result.customer;
-        const message = "प्रिय ग्रामवासी आपका screeshot approve हो गया है , आपकी राशि प्राप्त हो गई है";
+        const message = "प्रिय ग्रामवासी, आपका screenshot approve हो गया है, आपकी राशि हमें प्राप्त हो गई है।";
         let pdfBlob: Blob;
         let pdfName = "";
         let templateCat: 'receipt' | 'billing' = 'receipt';
