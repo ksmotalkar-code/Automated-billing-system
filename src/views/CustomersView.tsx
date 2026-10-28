@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card"
 import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw, History, Clock } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId } from "../lib/db";
+import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId, WhatsAppTemplate, subscribeToWhatsAppTemplates } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
@@ -278,8 +278,11 @@ export function CustomersView() {
   const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
   const [notifyMessage, setNotifyMessage] = useState("");
   const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState<string>("default");
+  const [notifyTargetAudience, setNotifyTargetAudience] = useState<'all' | 'active' | 'unpaid' | 'selected'>('all');
+  const [availableTemplates, setAvailableTemplates] = useState<WhatsAppTemplate[]>([]);
   const [isSendingNotify, setIsSendingNotify] = useState(false);
   const [notifyProgress, setNotifyProgress] = useState(0);
+
   const [broadcastReport, setBroadcastReport] = useState<{
     total: number;
     successful: { id: string; name: string; mobileNumber: string }[];
@@ -290,6 +293,19 @@ export function CustomersView() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [sortConfig, setSortConfig] = useState<{ key: keyof Customer; direction: 'asc' | 'desc' } | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+
+  const targetCount = useMemo(() => {
+    if (notifyTargetAudience === 'selected' && selectedIds.length > 0) {
+      return customers.filter(c => selectedIds.includes(c.id!)).length;
+    }
+    if (notifyTargetAudience === 'active') {
+      return customers.filter(c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length;
+    }
+    if (notifyTargetAudience === 'unpaid') {
+      return customers.filter(c => (c.balance || 0) > 0).length;
+    }
+    return customers.length;
+  }, [customers, notifyTargetAudience, selectedIds]);
   const [isDeletingAll, setIsDeletingAll] = useState(false);
   const [showFaultyOnly, setShowFaultyOnly] = useState(false);
   const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Suspended' | 'Advance Paid'>('all');
@@ -308,6 +324,13 @@ export function CustomersView() {
   const [customAttachment, setCustomAttachment] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const broadcastFileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToWhatsAppTemplates(currentOwnerId || undefined, (tmpls) => {
+      setAvailableTemplates(tmpls.filter(t => t.isActive));
+    });
+    return () => unsub();
+  }, [currentOwnerId]);
 
   const filteredCustomers = useMemo(() => {
     const searchTerms = searchQuery.toLowerCase().split(' ').filter(term => term.trim() !== '');
@@ -1048,19 +1071,20 @@ export function CustomersView() {
   const deliveryModeRef = useRef("api");
 
   const handleNotifyActive = async () => {
-    // All customers except those who are inactive / suspended
-    const nonInactiveCustomers = customers.filter(
-      c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive'
-    );
-    let targetCustomers = nonInactiveCustomers;
-    
-    // If user has manually checked boxes, only notify non-inactive among those
-    if (selectedIds.length > 0) {
-      targetCustomers = nonInactiveCustomers.filter(c => selectedIds.includes(c.id!));
+    let targetCustomers: Customer[] = [];
+    if (notifyTargetAudience === 'selected' && selectedIds.length > 0) {
+      targetCustomers = customers.filter(c => selectedIds.includes(c.id!));
+    } else if (notifyTargetAudience === 'active') {
+      targetCustomers = customers.filter(c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive');
+    } else if (notifyTargetAudience === 'unpaid') {
+      targetCustomers = customers.filter(c => (c.balance || 0) > 0);
+    } else {
+      // 'all' -> sends to every customer registered in the system!
+      targetCustomers = customers;
     }
 
     if (targetCustomers.length === 0) {
-      showAlert("No Targets", "There are no non-inactive customers to notify based on your selection.");
+      showAlert("No Targets", "There are no customers matching the selected audience.");
       return;
     }
 
@@ -1084,7 +1108,7 @@ export function CustomersView() {
     setConfirmConfig({
       isOpen: true,
       title: "Send Bulk Notification",
-      message: `Send custom message to ${targetCustomers.length} active/non-inactive customer(s)?`,
+      message: `Send custom message to all ${targetCustomers.length} customer(s)?`,
       isDestructive: false,
       showCancel: true,
       children: (
@@ -1128,7 +1152,12 @@ export function CustomersView() {
                 <option value="default">
                   {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
                 </option>
-                {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
+                {availableTemplates.map(t => (
+                  <option key={t.id || t.templateName} value={t.templateName}>
+                    {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
+                  </option>
+                ))}
+                {settings?.metaCustomTemplates?.filter(t => !availableTemplates.some(at => at.templateName === t.templateName) && t.templateName && t.templateName.trim() !== '').map(t => (
                   <option key={t.id || t.templateName} value={t.templateName}>
                     {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
                   </option>
@@ -2164,6 +2193,60 @@ export function CustomersView() {
 
               <div className="space-y-6">
                 <div>
+                  <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
+                    Target Audience
+                  </label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setNotifyTargetAudience('all')}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition-all text-center ${
+                        notifyTargetAudience === 'all'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                          : 'neu-flat border-transparent text-slate-700 hover:border-blue-300'
+                      }`}
+                    >
+                      All Customers ({customers.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotifyTargetAudience('active')}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition-all text-center ${
+                        notifyTargetAudience === 'active'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                          : 'neu-flat border-transparent text-slate-700 hover:border-blue-300'
+                      }`}
+                    >
+                      Active Only ({customers.filter(c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotifyTargetAudience('unpaid')}
+                      className={`p-2.5 rounded-xl text-xs font-bold border transition-all text-center ${
+                        notifyTargetAudience === 'unpaid'
+                          ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                          : 'neu-flat border-transparent text-slate-700 hover:border-blue-300'
+                      }`}
+                    >
+                      Due Balance ({customers.filter(c => (c.balance || 0) > 0).length})
+                    </button>
+                    {selectedIds.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNotifyTargetAudience('selected')}
+                        className={`p-2.5 rounded-xl text-xs font-bold border transition-all text-center ${
+                          notifyTargetAudience === 'selected'
+                            ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                            : 'neu-flat border-transparent text-slate-700 hover:border-blue-300'
+                        }`}
+                      >
+                        Selected ({selectedIds.length})
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div>
                   <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-3">
                     Select Preloaded Message
                   </label>
@@ -2231,7 +2314,7 @@ export function CustomersView() {
                   </div>
                 </div>
 
-                {((settings?.metaWhatsAppApiKey && settings?.metaWhatsAppPhoneNumberId) || (settings?.metaCustomTemplates && settings.metaCustomTemplates.length > 0) || settings?.metaTemplateBroadcast) && (
+                {((settings?.metaWhatsAppApiKey && settings?.metaWhatsAppPhoneNumberId) || (settings?.metaCustomTemplates && settings.metaCustomTemplates.length > 0) || settings?.metaTemplateBroadcast || availableTemplates.length > 0) && (
                   <div>
                     <label className="block text-sm font-bold uppercase tracking-wider neu-text-muted mb-2">
                       WhatsApp Meta Template (API Delivery)
@@ -2244,11 +2327,18 @@ export function CustomersView() {
                       <option value="default">
                         {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
                       </option>
-                      {settings?.metaCustomTemplates?.filter(t => t.templateName && t.templateName.trim() !== '').map(t => (
+                      {availableTemplates.map(t => (
                         <option key={t.id || t.templateName} value={t.templateName}>
                           {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
                         </option>
                       ))}
+                      {settings?.metaCustomTemplates
+                        ?.filter(t => t.templateName && t.templateName.trim() !== '' && !availableTemplates.some(at => at.templateName === t.templateName))
+                        .map(t => (
+                          <option key={t.id || t.templateName} value={t.templateName}>
+                            {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
+                          </option>
+                        ))}
                       <option value="direct_text">Direct Text Message (No Template / 24h Session)</option>
                     </select>
                     <p className="text-[11px] text-gray-500 mt-1">
@@ -2276,10 +2366,12 @@ export function CustomersView() {
                 <div className="flex items-center justify-between pt-4 border-t border-[var(--shadow-dark)]">
                   <div className="text-xs neu-text-muted">
                     Sending to <span className="font-bold text-blue-600">
-                      {selectedIds.length > 0 
-                        ? customers.filter(c => selectedIds.includes(c.id!) && c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length 
-                        : customers.filter(c => c.status !== 'Suspended' && (c.status as string) !== 'Inactive').length}
-                    </span> target customers (all non-inactive)
+                      {targetCount}
+                    </span> target customers ({
+                      notifyTargetAudience === 'all' ? 'All Customers' :
+                      notifyTargetAudience === 'active' ? 'Active Only' :
+                      notifyTargetAudience === 'unpaid' ? 'Due Balance Only' : 'Selected Only'
+                    })
                   </div>
                   <div className="flex gap-3">
                     <button 

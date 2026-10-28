@@ -255,7 +255,7 @@ export const sendWhatsAppNotification = async (
   customTemplateName?: string
 ): Promise<{ success: boolean; error?: string; fellBackToManual?: boolean }> => {
   try {
-    if (customer.status === 'Suspended' || (customer.status as string) === 'Inactive') {
+    if (templateCategory !== 'broadcast' && (customer.status === 'Suspended' || (customer.status as string) === 'Inactive')) {
       return { success: false, error: `Customer status is "${customer.status}". Automated notifications are disabled for inactive accounts.` };
     }
     if (!customer.mobileNumber || customer.mobileNumber.replace(/\D/g, '').length < 10) {
@@ -369,12 +369,20 @@ export const sendWhatsAppNotification = async (
   if (matchedFirestoreTemplate) {
     if (matchedFirestoreTemplate.parameterMappings && matchedFirestoreTemplate.parameterMappings.length > 0) {
       paramKeys = matchedFirestoreTemplate.parameterMappings.map(m => m.key);
-    } else if (matchedFirestoreTemplate.parameters) {
-      paramKeys = matchedFirestoreTemplate.parameters.split(',').map(s => s.trim()).filter(Boolean);
+    } else if (matchedFirestoreTemplate.parameters !== undefined) {
+      paramKeys = matchedFirestoreTemplate.parameters ? matchedFirestoreTemplate.parameters.split(',').map(s => s.trim()).filter(Boolean) : [];
+    } else if (matchedFirestoreTemplate.bodyText) {
+      const matches = matchedFirestoreTemplate.bodyText.match(/\{\{(\d+)\}\}/g) || [];
+      paramKeys = matches.map((_, idx) => idx === 0 ? 'customer_name' : (idx === 1 ? 'message' : `param_${idx + 1}`));
+    }
+    // If the matched template explicitly defines 0 parameters (static text template like freeflow_3)
+    if (paramKeys.length === 0) {
+      templateParams = [];
+      dynamicParamsResolved = true;
     }
   }
 
-  if (paramKeys.length === 0 && templateName && settings.metaCustomTemplates) {
+  if (paramKeys.length === 0 && !dynamicParamsResolved && templateName && settings.metaCustomTemplates) {
     let matchedConfig = settings.metaCustomTemplates.find(t => t.templateName === templateName);
     if (!matchedConfig && templateCategory) {
       // Fallback matching by default template category IDs or names
@@ -395,13 +403,9 @@ export const sendWhatsAppNotification = async (
     }
   }
 
-  if (templateCategory === 'broadcast') {
-    const hasMsgKey = paramKeys.some(k =>
-      ['message', 'broadcast_message', 'custom_message', 'text', 'content', 'body', 'notice', 'announcement', 'msg', 'details', 'info', '2', '{{2}}'].includes(k.toLowerCase())
-    );
-    if (!hasMsgKey) {
-      paramKeys = ['customer_name', 'message'];
-    }
+  // Only apply 2-variable broadcast fallback if no specific Firestore/custom template was resolved
+  if (!matchedFirestoreTemplate && !dynamicParamsResolved && templateCategory === 'broadcast' && paramKeys.length === 0) {
+    paramKeys = ['customer_name', 'message'];
   }
 
   if (paramKeys.length > 0) {

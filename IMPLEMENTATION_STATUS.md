@@ -194,3 +194,34 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
      - Added Step 6 to `scripts/test-e2e-workflow.ts` specifically asserting server-side atomic receipt approval.
      - Verified all 7 E2E tests pass (`npm run test:e2e`).
      - Rebuilt production bundle (`npm run build`) and restarted server (`restart_dev_server`).
+
+---
+
+## 13. Bulk Notify Audience Scope & Meta Template Variable Alignment
+- **Root Cause Analysis (Why Bulk Notify previously missed recipients)**:
+  1. **Strict Status Gate**: Previously filtered target customers with `customer.status !== 'Suspended' && customer.status !== 'Inactive'`. When village-wide emergency announcements (e.g. water outages, pipeline maintenance) were broadcast, residents marked as suspended or inactive were silently excluded.
+  2. **Table Checkbox Conflation**: If any rows had checkboxes checked on the table (`selectedIds.length > 0`), the broadcast modal silently narrowed scope to only those checked customers instead of the entire registered customer base.
+  3. **Meta API Error 132000 (Parameter Count Mismatch)**: Broadcast logic previously forced `paramKeys = ['customer_name', 'message']` (2 parameters) onto every broadcast template. When using Meta templates that require 0 parameters (static announcements like `freeflow_3`) or 1 parameter, Meta rejected delivery with error code 132000.
+  4. **Unsynced Template Dropdown**: The broadcast modal only rendered hardcoded presets or templates stored in settings, rather than live synced Meta templates from the `whatsapp_templates` Firestore collection.
+
+- **Resolution & Fixes**:
+  1. **Flexible Target Audience Selector (`CustomersView.tsx`)**:
+     - Added an explicit **Target Audience** segmented control in the Broadcast Notification modal:
+       - **All Customers (`all`)**: Sends broadcast to all registered citizens without status exclusions (default).
+       - **Active Only (`active`)**: Filters to active accounts only.
+       - **Due Balance (`unpaid`)**: Filters to citizens with outstanding arrears (`balance > 0`).
+       - **Selected (`selected`)**: Visible only when table checkboxes are selected, allowing selective targeting.
+     - Live dynamic counter indicates exact target customer count (`targetCount`) and audience label.
+  2. **Synced Meta Template Integration (`CustomersView.tsx`)**:
+     - Subscribed `CustomersView` to `whatsapp_templates` via `subscribeToWhatsAppTemplates`.
+     - Synced Meta templates (including `freeflow_3`) are dynamically populated in the template dropdown with language and parameter tags.
+  3. **Exact Parameter Count Alignment (`src/lib/automation.ts`)**:
+     - Updated `sendWhatsAppNotification` to check `matchedFirestoreTemplate.parameters` and `parameterMappings`.
+     - When a template defines 0 parameters (such as static broadcast notices like `freeflow_3`), `templateParams` is cleanly passed as `[]` (`dynamicParamsResolved = true`), preventing Meta Error 132000.
+     - For templates with 1 parameter, only that single parameter is sent.
+     - Permitted the `broadcast` category in `sendWhatsAppNotification` to reach all customer accounts regardless of status when village-wide broadcasts are initiated.
+  4. **Verification**:
+     - `lint_applet` passed cleanly with 0 TypeScript errors.
+     - `compile_applet` succeeded and production build verified.
+     - All 7 E2E workflow integration tests passed (`npm run test:e2e`).
+
