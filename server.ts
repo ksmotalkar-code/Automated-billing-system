@@ -2300,6 +2300,7 @@ async function startServer() {
     getCustomerByMobile,
     sendMessageUtil,
     resolveOwnerIdForWebhook: (ownerId, phoneId) => resolveOwnerIdForWebhook(ownerId, phoneId),
+    getDb: () => admin.apps.length ? getRequiredAdminDb() : null,
   }));
 
   // Mount Import Router

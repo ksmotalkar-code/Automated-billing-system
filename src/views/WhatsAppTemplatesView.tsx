@@ -39,7 +39,8 @@ import {
   subscribeToWhatsAppTemplates, 
   saveWhatsAppTemplate, 
   deleteWhatsAppTemplate, 
-  seedDefaultWhatsAppTemplates 
+  seedDefaultWhatsAppTemplates,
+  saveSettings
 } from '../lib/db';
 import { useData } from '../contexts/DataContext';
 import { useTenant } from '../contexts/TenantContext';
@@ -106,6 +107,7 @@ export function WhatsAppTemplatesView() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncingMeta, setIsSyncingMeta] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -307,6 +309,37 @@ export function WhatsAppTemplatesView() {
     }
   };
 
+  const handleSetAsBroadcast = async (template: WhatsAppTemplate) => {
+    try {
+      // 1. Unmark any other broadcast template as default
+      const batchPromises = templates
+        .filter(t => t.category === 'broadcast' && t.id !== template.id && t.isDefault)
+        .map(t => saveWhatsAppTemplate({ ...t, isDefault: false }, currentOwnerId || undefined));
+      await Promise.all(batchPromises);
+
+      // 2. Mark this template as broadcast default and active
+      const updatedTemplate: WhatsAppTemplate = {
+        ...template,
+        category: 'broadcast',
+        isDefault: true,
+        isActive: true,
+      };
+      await saveWhatsAppTemplate(updatedTemplate, currentOwnerId || undefined);
+
+      // 3. Update settings.metaTemplateBroadcast
+      if (settings) {
+        await saveSettings({
+          ...settings,
+          metaTemplateBroadcast: template.templateName
+        }, currentOwnerId || undefined);
+      }
+
+      showBanner(`"${template.templateName}" is now the active template for automated and manual broadcasts!`);
+    } catch (err: any) {
+      showBanner(err.message || "Failed to set template for broadcasts.", true);
+    }
+  };
+
   const handleSyncPresets = async () => {
     setIsSaving(true);
     try {
@@ -316,6 +349,26 @@ export function WhatsAppTemplatesView() {
       showBanner(err.message || "Failed to seed default templates.", true);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleFetchFromMeta = async () => {
+    setIsSyncingMeta(true);
+    try {
+      const res = await authFetch('/api/wa/sync-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ownerId: currentOwnerId || undefined })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to fetch templates from Meta API');
+      }
+      showBanner(`Successfully synced ${data.count} approved message templates from Meta Business API!`);
+    } catch (err: any) {
+      showBanner(err.message || 'Failed to sync templates from Meta API. Check your API Key and Phone ID in Settings.', true);
+    } finally {
+      setIsSyncingMeta(false);
     }
   };
 
@@ -544,6 +597,15 @@ export function WhatsAppTemplatesView() {
           >
             <Sparkles className="w-4 h-4 text-amber-400" />
             Sync Official Presets
+          </button>
+          <button
+            onClick={handleFetchFromMeta}
+            disabled={isSyncingMeta}
+            className="px-4 py-2.5 rounded-2xl neu-flat hover:neu-pressed text-xs font-medium flex items-center gap-2 transition-all text-emerald-400 hover:text-emerald-300 disabled:opacity-50 border border-emerald-500/20"
+            title="Fetch and sync available WhatsApp Message Templates directly from Meta Business API"
+          >
+            <RefreshCw className={`w-4 h-4 text-emerald-400 ${isSyncingMeta ? 'animate-spin' : ''}`} />
+            {isSyncingMeta ? 'Syncing Meta...' : 'Fetch & Sync from Meta'}
           </button>
           <button
             onClick={() => handleOpenEditor()}
@@ -1281,9 +1343,24 @@ export function WhatsAppTemplatesView() {
                 </div>
 
                 {/* Card Action Buttons */}
-                <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5">
-                    {!template.isDefault && (
+                <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {template.category === 'broadcast' && template.isDefault ? (
+                      <span className="px-2.5 py-1 rounded-xl bg-purple-500/20 text-purple-300 text-[11px] font-semibold flex items-center gap-1 border border-purple-500/30" title="Active Default Broadcast Template">
+                        <Megaphone className="w-3 h-3 text-purple-400" />
+                        Active Broadcast
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => handleSetAsBroadcast(template)}
+                        className="px-2.5 py-1 rounded-xl neu-flat hover:neu-pressed text-purple-400 hover:text-purple-300 transition-all text-[11px] font-medium flex items-center gap-1 border border-purple-500/20"
+                        title="Set this template as the active template for automated and manual broadcasts"
+                      >
+                        <Megaphone className="w-3 h-3" />
+                        Use for Broadcast
+                      </button>
+                    )}
+                    {!template.isDefault && template.category !== 'broadcast' && (
                       <button
                         onClick={() => handleSetDefault(template)}
                         className="p-2 rounded-xl neu-flat hover:neu-pressed text-amber-400/80 hover:text-amber-300 transition-all text-xs flex items-center gap-1"

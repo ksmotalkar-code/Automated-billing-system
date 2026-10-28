@@ -7,6 +7,7 @@ export interface WhatsAppRouteDeps {
   getCustomerByMobile: (ownerId: string, mobile: string) => Promise<any>;
   sendMessageUtil: (params: any) => Promise<any>;
   resolveOwnerIdForWebhook?: (requestedOwnerId: string, phoneNumberId?: string) => Promise<{ ownerId: string; settings: any }>;
+  getDb?: () => any;
 }
 
 export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
@@ -611,6 +612,157 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
     } catch (err: any) {
       console.error("[WhatsAppRouter] /wa/send error:", err);
       return res.status(500).json({ error: err.message || "Failed to send message" });
+    }
+  });
+
+  // Fetch and Sync Meta WhatsApp Message Templates API (Protected by requireAuth)
+  router.post("/wa/sync-templates", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || req.body.ownerId || "system";
+      const settings = await deps.getSettings(ownerId);
+      const apiKey = req.body.apiKey || settings?.metaWhatsAppApiKey;
+      const phoneId = req.body.phoneId || settings?.metaWhatsAppPhoneNumberId;
+
+      const cleanKey = apiKey ? String(apiKey).trim().replace(/^Bearer\s+/i, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+      const cleanPhone = phoneId ? String(phoneId).trim().replace(/[\s\-\+]/g, '').replace(/^['"]|['"]$/g, '').trim() : undefined;
+
+      if (!cleanKey || !cleanPhone) {
+        return res.status(400).json({ error: "Meta WhatsApp API Key and Phone Number ID are required to sync templates from Meta." });
+      }
+
+      // Try resolving WhatsApp Business Account (WABA) ID from phone ID if needed
+      let targetEndpointId = cleanPhone;
+      try {
+        const wabaLookup = await fetch(`https://graph.facebook.com/v21.0/${cleanPhone}?fields=whatsapp_business_account`, {
+          headers: { 'Authorization': `Bearer ${cleanKey}` }
+        });
+        if (wabaLookup.ok) {
+          const wabaJson = await wabaLookup.json();
+          if (wabaJson.whatsapp_business_account?.id) {
+            targetEndpointId = wabaJson.whatsapp_business_account.id;
+          }
+        }
+      } catch (e) {
+        // Fallback to cleanPhone
+      }
+
+      let metaUrl = `https://graph.facebook.com/v21.0/${targetEndpointId}/message_templates?limit=100`;
+      let metaRes = await fetch(metaUrl, {
+        headers: {
+          'Authorization': `Bearer ${cleanKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // If querying with targetEndpointId failed and it differed from cleanPhone, try cleanPhone as fallback
+      if (!metaRes.ok && targetEndpointId !== cleanPhone) {
+        metaUrl = `https://graph.facebook.com/v21.0/${cleanPhone}/message_templates?limit=100`;
+        metaRes = await fetch(metaUrl, {
+          headers: {
+            'Authorization': `Bearer ${cleanKey}`,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      if (!metaRes.ok) {
+        const errJson = await metaRes.json().catch(() => ({}));
+        return res.status(metaRes.status).json({
+          error: errJson.error?.message || `Failed to fetch message templates from Meta Graph API (HTTP ${metaRes.status})`
+        });
+      }
+
+      const metaData = await metaRes.json();
+      const rawTemplates = metaData.data || [];
+
+      const db = deps.getDb ? deps.getDb() : ((globalThis as any).admin?.apps?.length ? (globalThis as any).admin.firestore() : null);
+
+      const syncedTemplates: any[] = [];
+      for (const t of rawTemplates) {
+        const templateName = t.name;
+        const language = t.language || 'en_US';
+        const category = String(t.category || 'UTILITY').toLowerCase();
+        const lowerName = templateName.toLowerCase();
+        
+        let mappedCategory = 'custom';
+        if (lowerName.includes('broadcast') || lowerName.includes('notice') || lowerName.includes('alert') || lowerName.includes('freeflow') || category.includes('marketing')) {
+          mappedCategory = 'broadcast';
+        } else if (lowerName.includes('receipt') || lowerName.includes('payment_done') || lowerName.includes('paid')) {
+          mappedCategory = 'receipt';
+        } else if (lowerName.includes('bill') || lowerName.includes('invoice') || category.includes('utility') || category.includes('transaction')) {
+          mappedCategory = 'billing';
+        } else if (lowerName.includes('welcome') || category.includes('authentication')) {
+          mappedCategory = 'welcome';
+        }
+
+        let bodyText = '';
+        let headerType = 'NONE';
+        let headerText = '';
+        let buttonText = '';
+        let supportsButton = false;
+
+        if (Array.isArray(t.components)) {
+          for (const comp of t.components) {
+            if (comp.type === 'BODY') {
+              bodyText = comp.text || '';
+            } else if (comp.type === 'HEADER') {
+              headerType = comp.format || 'TEXT';
+              headerText = comp.text || '';
+            } else if (comp.type === 'BUTTONS') {
+              supportsButton = true;
+              if (comp.buttons?.[0]?.text) {
+                buttonText = comp.buttons[0].text;
+              }
+            }
+          }
+        }
+
+        const matches = bodyText.match(/\{\{(\d+)\}\}/g) || [];
+        const paramCount = matches.length;
+        const paramKeys = [];
+        for (let i = 1; i <= paramCount; i++) {
+          if (i === 1) paramKeys.push({ key: 'customer_name', label: 'Customer Name' });
+          else if (i === 2) paramKeys.push({ key: 'message', label: 'Message / Details' });
+          else if (i === 3) paramKeys.push({ key: 'balance', label: 'Outstanding Balance' });
+          else paramKeys.push({ key: `param_${i}`, label: `Parameter ${i}` });
+        }
+
+        const templateId = `meta_${templateName}_${language}`.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        const docId = `${ownerId}_${templateId}`;
+
+        const templateRecord = {
+          id: templateId,
+          ownerId,
+          templateName,
+          category: mappedCategory,
+          language,
+          bodyText,
+          headerType,
+          headerText,
+          supportsButton,
+          buttonText,
+          parameters: paramKeys.map(p => p.key).join(', '),
+          parameterMappings: paramKeys,
+          isActive: t.status === 'APPROVED',
+          isDefault: false,
+          description: `Synced from Meta (Status: ${t.status})`,
+          updatedAt: new Date().toISOString()
+        };
+
+        if (db) {
+          await db.collection("whatsapp_templates").doc(docId).set(templateRecord, { merge: true });
+        }
+        syncedTemplates.push(templateRecord);
+      }
+
+      return res.json({
+        success: true,
+        count: syncedTemplates.length,
+        templates: syncedTemplates
+      });
+    } catch (err: any) {
+      console.error("[WhatsAppRouter] /wa/sync-templates error:", err);
+      return res.status(500).json({ error: err.message || "Failed to sync templates from Meta" });
     }
   });
 
