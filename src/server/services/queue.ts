@@ -39,7 +39,7 @@ export class BackgroundJobQueue extends EventEmitter {
   private jobsMap = new Map<string, QueueJob>();
   private handlers = new Map<
     JobType,
-    (job: QueueJob, onProgress: (pct: number) => Promise<void> | void) => Promise<any>
+    (job: QueueJob, onProgress: (pct: number, intermediateResult?: any) => Promise<void> | void) => Promise<any>
   >();
 
   private getDbFn: (() => any) | null = null;
@@ -261,7 +261,7 @@ export class BackgroundJobQueue extends EventEmitter {
    */
   public registerWorker<T>(
     type: JobType,
-    handler: (job: QueueJob<T>, onProgress: (pct: number) => Promise<void> | void) => Promise<any>
+    handler: (job: QueueJob<T>, onProgress: (pct: number, intermediateResult?: any) => Promise<void> | void) => Promise<any>
   ) {
     this.handlers.set(type, handler);
   }
@@ -295,8 +295,8 @@ export class BackgroundJobQueue extends EventEmitter {
         throw new Error(`No worker registered for job type: ${job.type}`);
       }
 
-      const result = await handler(job, async (progress) => {
-        await this.updateProgress(job.id, progress);
+      const result = await handler(job, async (progress, intermediateResult) => {
+        await this.updateProgress(job.id, progress, intermediateResult);
       });
 
       job.status = "completed";

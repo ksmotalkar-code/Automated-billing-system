@@ -14,7 +14,38 @@
     <meta name="description" content="Gram Panchayat GP. Jhanda Khurd - Automated Billing System." />
     <meta property="og:title" content="Gram Panchayat GP. Jhanda Khurd" />
     <meta property="og:description" content="Gram Panchayat GP. Jhanda Khurd - Automated Billing System." />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <script>
+      // Clear service workers & caches in preview iframe to ensure always latest version matches production
+      (function() {
+        var isIframe = window.self !== window.top;
+        var isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        var isRunApp = window.location.hostname.indexOf('run.app') !== -1;
+        var isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches;
+        
+        // In preview environments, unregister any stale SW to avoid holding onto outdated bundles
+        if ((isIframe || isLocal || isRunApp) && !isStandalone) {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+              for (var i = 0; i < registrations.length; i++) {
+                registrations[i].unregister();
+              }
+            });
+          }
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              for (var i = 0; i < keys.length; i++) {
+                if (keys[i].indexOf('workbox') !== -1 || keys[i].indexOf('precache') !== -1) {
+                  caches.delete(keys[i]);
+                }
+              }
+            });
+          }
+        }
+      })();
+
       // Suppress Vite HMR WebSocket closing errors in iframe/preview environment
       window.addEventListener('error', function (event) {
         if (

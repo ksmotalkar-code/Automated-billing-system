@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces, Lightbulb, Tag, Sparkles, RotateCcw, Edit2, Check } from "lucide-react";
+import { Settings, Bell, Shield, User, Globe, Palette, Database, HelpCircle, DollarSign, FileText, Save, AlertCircle, CreditCard, Plus, ArrowUp, ArrowDown, FileCode, Copy, Zap, Send, Webhook, ShieldCheck, Cpu, Clock, List, UploadCloud, Braces, Lightbulb, Tag, Sparkles, RotateCcw, Edit2, Check, SlidersHorizontal, ArrowRight } from "lucide-react";
 import { motion } from "motion/react";
 import { saveSettings, saveChatbotSettings, AppSettings, resetDatabase, WhatsAppProvider, getProviders, addProvider, deleteProvider, ChatbotCommand, getChatbotSettings, ChatbotSettings, deleteBillTemplateImage } from "../lib/db";
 import { useData } from "../contexts/DataContext";
@@ -52,7 +52,7 @@ const compressImage = (file: File, maxWidth = 800, quality = 0.7): Promise<strin
   });
 };
 
-export function SettingsView() {
+export function SettingsView({ onNavigate }: { onNavigate?: (layerId: string) => void } = {}) {
   const { t } = useTranslation();
   const { settings: contextSettings } = useData();
   const { currentOwnerId } = useTenant();
@@ -805,6 +805,27 @@ export function SettingsView() {
               </div>
             </CardHeader>
             <CardContent className="pt-6 space-y-10">
+              {/* WhatsApp Templates Direct Navigation */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 neu-pressed rounded-2xl border border-emerald-500/30 bg-emerald-500/5 gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 neu-flat rounded-xl text-emerald-600 bg-white/40 dark:bg-black/20">
+                    <SlidersHorizontal className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Meta WhatsApp Message Templates</h4>
+                    <p className="text-[11px] neu-text-muted mt-0.5">Manage, test, and sync approved message templates from Meta Business API.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate?.('templates')}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-emerald-600/20 flex items-center gap-2 transition-all shrink-0"
+                >
+                  <span>Open Templates Manager</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
               {/* Provider Selection */}
               <div className="space-y-4">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted">Primary Bridge Provider</p>

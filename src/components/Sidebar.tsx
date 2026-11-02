@@ -202,7 +202,16 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
                 title={!isExpanded ? t(layer.label) : undefined}
               >
                 <Icon className={cn("shrink-0 transition-transform group-hover:scale-110", isActive ? "neu-accent" : "neu-text-muted group-hover:neu-accent", !isExpanded ? "w-6 h-6" : "w-5 h-5")} />
-                {isExpanded && <span className="truncate hover-underline">{t(layer.label)}</span>}
+                {isExpanded && (
+                  <div className="flex items-center justify-between flex-1 min-w-0">
+                    <span className="truncate hover-underline">{t(layer.label)}</span>
+                    {layer.id === "templates" && (
+                      <span className="ml-1.5 px-1.5 py-0.5 text-[9px] font-black uppercase rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                        Meta
+                      </span>
+                    )}
+                  </div>
+                )}
                 {!isExpanded && (
                   <div className="absolute left-full ml-4 px-3 py-2 bg-black/80 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
                     {t(layer.label)}

@@ -28,7 +28,8 @@ import {
   Code2,
   BookOpen,
   ExternalLink,
-  Info
+  Info,
+  Zap
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -129,6 +130,31 @@ export function WhatsAppTemplatesView() {
   const [showMetaGuide, setShowMetaGuide] = useState(false);
   const [activeGuideTab, setActiveGuideTab] = useState<'billing' | 'receipt' | 'overdue' | 'welcome' | 'broadcast' | 'suspension'>('billing');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [isSavingPriority, setIsSavingPriority] = useState(false);
+
+  // By default, Meta API template priority is active unless explicitly set to false
+  const isMetaPriorityEnabled = settings?.prioritizeMetaTemplates !== false;
+
+  const handleToggleMetaPriority = async () => {
+    if (!settings) {
+      showBanner("Settings not loaded yet. Please wait.", true);
+      return;
+    }
+    const nextVal = !isMetaPriorityEnabled;
+    setIsSavingPriority(true);
+    try {
+      await saveSettings({ ...settings, prioritizeMetaTemplates: nextVal }, currentOwnerId || undefined);
+      showBanner(
+        nextVal
+          ? "Meta API Template Priority Enabled! Dispatches will prioritize official Meta templates over webhook/session methods."
+          : "Meta API Template Priority Disabled. Dispatches can use direct session text or webhook fallbacks."
+      );
+    } catch (err: any) {
+      showBanner(err.message || "Failed to update Meta template priority.", true);
+    } finally {
+      setIsSavingPriority(false);
+    }
+  };
 
   const handleCopy = (text: string, key: string) => {
     try {
@@ -1141,6 +1167,54 @@ export function WhatsAppTemplatesView() {
         </div>
       </div>
 
+      {/* Priority Dispatch Switch Card */}
+      <div className="p-5 md:p-6 rounded-3xl neu-flat border border-blue-500/20 bg-slate-900/60 flex flex-col md:flex-row md:items-center justify-between gap-5 relative overflow-hidden">
+        <div className="flex items-start gap-4">
+          <div className={`p-3 rounded-2xl flex-shrink-0 transition-colors ${
+            isMetaPriorityEnabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-slate-800 text-slate-400 border border-white/10'
+          }`}>
+            <Zap className={`w-6 h-6 ${isMetaPriorityEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+          </div>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-bold text-white">Prioritize Meta API Template Dispatch</h3>
+              <span className={`px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full border ${
+                isMetaPriorityEnabled
+                  ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                  : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+              }`}>
+                {isMetaPriorityEnabled ? 'Meta Template Primary (Active)' : 'Webhook / Fallback Mode'}
+              </span>
+            </div>
+            <p className="text-xs neu-text-muted max-w-3xl leading-relaxed">
+              When enabled, all WhatsApp notifications (including Bulk Broadcasts, Automated Invoicing, Due Reminders, and Public Alerts) strictly prioritize official Meta Cloud API registered templates with structured parameter mappings over direct session text or webhook-based methods. This guarantees deliverability even outside the 24-hour customer window.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 self-end md:self-center flex-shrink-0">
+          <button
+            type="button"
+            onClick={handleToggleMetaPriority}
+            disabled={isSavingPriority || !settings}
+            className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
+              isMetaPriorityEnabled ? 'bg-emerald-500' : 'bg-slate-700'
+            } ${isSavingPriority ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+            role="switch"
+            aria-checked={isMetaPriorityEnabled}
+            title={isMetaPriorityEnabled ? "Click to disable Meta API Template Priority" : "Click to enable Meta API Template Priority"}
+          >
+            <span
+              className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${
+                isMetaPriorityEnabled ? 'translate-x-8' : 'translate-x-1'
+              }`}
+            />
+          </button>
+          <span className="text-xs font-semibold text-slate-300 min-w-[55px]">
+            {isSavingPriority ? 'Saving...' : isMetaPriorityEnabled ? 'Enabled' : 'Disabled'}
+          </span>
+        </div>
+      </div>
 
       {/* Filter Tabs & Search Bar */}
       <div className="space-y-4">

@@ -1,8 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw, History, Clock } from "lucide-react";
+import { Users, Search, Plus, MoreVertical, X, Trash2, Bell, Send, Upload, Download, Loader2, AlertTriangle, Paperclip, Link as LinkIcon, Hash, RefreshCw, History, Clock, Zap } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import React, { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId, WhatsAppTemplate, subscribeToWhatsAppTemplates } from "../lib/db";
+import { Customer, addCustomer, updateCustomer, deleteCustomer, deleteCustomersBatch, updateCustomersBatchStatus, deleteAllCustomers, AppSettings, resequenceAllCustomers, getNextSequentialCustomerId, WhatsAppTemplate, subscribeToWhatsAppTemplates, saveSettings } from "../lib/db";
 import { useData } from "../contexts/DataContext";
 import { useTenant } from "../contexts/TenantContext";
 import { useTranslation } from "react-i18next";
@@ -278,6 +278,22 @@ export function CustomersView() {
   const [historyCustomer, setHistoryCustomer] = useState<Customer | null>(null);
   const [notifyMessage, setNotifyMessage] = useState("");
   const [selectedBroadcastTemplate, setSelectedBroadcastTemplate] = useState<string>("default");
+  const [isSavingPriority, setIsSavingPriority] = useState(false);
+  const isMetaPriorityEnabled = settings?.prioritizeMetaTemplates !== false;
+
+  const handleToggleMetaPriority = async () => {
+    if (!settings) return;
+    const nextVal = !isMetaPriorityEnabled;
+    setIsSavingPriority(true);
+    try {
+      await saveSettings({ ...settings, prioritizeMetaTemplates: nextVal }, currentOwnerId || undefined);
+      showAlert("Priority Updated", nextVal ? "Meta API Template Priority enabled for all dispatches." : "Meta API Template Priority disabled.");
+    } catch (err: any) {
+      showAlert("Error", err.message || "Failed to update priority setting.");
+    } finally {
+      setIsSavingPriority(false);
+    }
+  };
   const [notifyTargetAudience, setNotifyTargetAudience] = useState<'all' | 'active' | 'unpaid' | 'selected'>('all');
   const [availableTemplates, setAvailableTemplates] = useState<WhatsAppTemplate[]>([]);
   const [isSendingNotify, setIsSendingNotify] = useState(false);
@@ -1102,8 +1118,8 @@ export function CustomersView() {
     setIsNotifyModalOpen(false);
 
     const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
-    const deliveryRef = { current: hasAnyApi ? 'api' : 'broadcast' };
-    const templateRef = { current: selectedBroadcastTemplate };
+    const deliveryRef = { current: 'api' };
+    const templateRef = { current: selectedBroadcastTemplate !== 'direct_text' ? selectedBroadcastTemplate : (settings?.metaTemplateBroadcast || 'broadcast') };
 
     setConfirmConfig({
       isOpen: true,
@@ -1186,12 +1202,21 @@ export function CustomersView() {
         const isApiMode = deliveryRef.current === "api";
         const selectedProvider = providerRef.current;
         
-        const tempSettings = { ...settings, preferredNotificationMethod: selectedProvider };
+        const isMetaPrioritized = settings?.prioritizeMetaTemplates !== false;
+        const tempSettings = {
+          ...settings,
+          preferredNotificationMethod: isMetaPrioritized ? 'api' : selectedProvider,
+          prioritizeMetaTemplates: isMetaPrioritized
+        };
 
         const combinedMessage = notifyMessage.trim();
-        const isDirectText = templateRef.current === 'direct_text';
-        const chosenTemplate = templateRef.current !== 'default' && !isDirectText ? templateRef.current : undefined;
-        const templateCategory = isDirectText ? undefined : (chosenTemplate ? 'custom' : 'broadcast');
+        const effectiveTemplateName = isMetaPrioritized && templateRef.current === 'direct_text'
+          ? (settings?.metaTemplateBroadcast || 'broadcast')
+          : (templateRef.current && templateRef.current !== 'direct_text' && templateRef.current !== 'default' 
+              ? templateRef.current 
+              : (settings?.metaTemplateBroadcast || 'broadcast'));
+        const chosenTemplate = effectiveTemplateName;
+        const templateCategory = 'broadcast';
 
         const successful: { id: string; name: string; mobileNumber: string }[] = [];
         const rejected: { id: string; name: string; mobileNumber: string; reason: string }[] = [];
@@ -2348,6 +2373,45 @@ export function CustomersView() {
                     </p>
                   </div>
                 )}
+
+                {/* Meta API Template Priority Switch in Bulk Notify Modal */}
+                <div className="p-3.5 rounded-xl border border-blue-500/20 bg-blue-50/50 dark:bg-blue-950/20 flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    <Zap className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isMetaPriorityEnabled ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Prioritize Meta API Template Dispatch</span>
+                        <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${
+                          isMetaPriorityEnabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                        }`}>
+                          {isMetaPriorityEnabled ? 'Prioritized (Official Meta API)' : 'Webhook / Fallback Mode'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                        {isMetaPriorityEnabled 
+                          ? 'All bulk notifications strictly use official Meta Cloud API registered templates over webhook/session fallbacks, guaranteeing delivery outside the 24h window.'
+                          : 'Fallback mode: Dispatches will attempt webhook or plain session text messaging.'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleMetaPriority}
+                    disabled={isSavingPriority || !settings}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none flex-shrink-0 ${
+                      isMetaPriorityEnabled ? 'bg-blue-600' : 'bg-slate-300 dark:bg-slate-700'
+                    } ${isSavingPriority ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                    role="switch"
+                    aria-checked={isMetaPriorityEnabled}
+                    title="Toggle Meta API Template Priority"
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                        isMetaPriorityEnabled ? 'translate-x-6' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
 
                 <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs flex flex-col gap-1.5">
                   <div className="font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">

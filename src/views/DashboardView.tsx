@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
-import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox } from "lucide-react";
+import { DollarSign, Users, AlertTriangle, FileText, Bell, Inbox, SlidersHorizontal, Settings, MessageSquare } from "lucide-react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 import { motion, AnimatePresence } from "motion/react";
 import { resolveAutomationError } from "../lib/db";
@@ -8,7 +8,7 @@ import { useData } from "../contexts/DataContext";
 import { useTranslation } from "react-i18next";
 import { ChatbotDiagnosticWidget } from "../components/ChatbotDiagnosticWidget";
 
-export function DashboardView() {
+export function DashboardView({ onNavigate }: { onNavigate?: (layerId: string) => void }) {
   const { t } = useTranslation();
   const { customers, transactions, complaints, settings, automationErrors } = useData();
 
@@ -310,6 +310,99 @@ export function DashboardView() {
             </CardContent>
           </Card>
         </motion.div>
+      </div>
+
+      {/* Quick Access Operations Hub */}
+      <div className="p-6 neu-pressed rounded-3xl space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-4 h-4 text-emerald-500" />
+            <h3 className="text-xs font-black uppercase tracking-[0.2em] neu-text">Management & Operations Hub</h3>
+          </div>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+            Direct View Access
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('templates')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group border border-emerald-500/30 bg-emerald-500/5 transition-all shadow-sm"
+          >
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform shadow-sm">
+              <SlidersHorizontal className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 leading-tight">WhatsApp Templates</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">Meta Cloud API</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('customers')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl neu-pressed text-blue-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+              <Users className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold leading-tight">Customers</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">Manage Accounts</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('billing')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl neu-pressed text-amber-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+              <FileText className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold leading-tight">Invoices & Billing</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">Generate Cycles</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('alerts')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl neu-pressed text-indigo-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+              <Bell className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold leading-tight">Alerts & Reminders</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">Due Reminders</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('chatbot')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl neu-pressed text-purple-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+              <MessageSquare className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold leading-tight">Chatbot Setup</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">Auto Responder</span>
+          </motion.button>
+
+          <motion.button
+            whileHover={{ scale: 1.03, y: -2 }}
+            whileTap={{ scale: 0.97 }}
+            onClick={() => onNavigate?.('settings')}
+            className="flex flex-col items-center justify-center p-4 neu-flat hover:neu-pressed rounded-2xl text-center group transition-all"
+          >
+            <div className="w-10 h-10 rounded-xl neu-pressed text-slate-500 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform">
+              <Settings className="w-5 h-5" />
+            </div>
+            <span className="text-xs font-bold leading-tight">Settings</span>
+            <span className="text-[9px] neu-text-muted mt-0.5 uppercase tracking-tighter">API & Meta Keys</span>
+          </motion.button>
+        </div>
       </div>
 
       <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-7">

@@ -535,6 +535,22 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     description: 'Mass public service announcement for pipeline maintenance or clean water notices.'
   },
   {
+    id: 'def_freeflow_3',
+    templateName: 'freeflow_3',
+    category: 'broadcast',
+    language: 'en_US',
+    headerType: 'NONE',
+    bodyText: 'Hi {{1}}, Emergency repair work is in progress. Water supply may be affected for the next 4 hours. we will notify you once issue is solved.',
+    parameters: 'customer_name',
+    parameterMappings: [
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' }
+    ],
+    supportsButton: false,
+    isActive: true,
+    isDefault: false,
+    description: 'Emergency repair and water outage alert (Meta template: freeflow_3).'
+  },
+  {
     id: 'def_suspension',
     templateName: 'suspension',
     category: 'suspension',
@@ -610,6 +626,8 @@ export interface AppSettings {
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
+  prioritizeMetaTemplates?: boolean; // When true, prioritizes official Meta API Template dispatch over webhook/session text
+  prioritizeMetaApiTemplates?: boolean;
   enableWhatsappWeb?: boolean;
   lateFee?: boolean;
   enableAutosave?: boolean;

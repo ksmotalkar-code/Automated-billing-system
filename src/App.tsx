@@ -19,7 +19,7 @@ import { ManualView } from "./views/ManualView";
 import { ChatbotView } from "./views/ChatbotView";
 import { WhatsAppTemplatesView } from "./views/WhatsAppTemplatesView";
 import { AnimatePresence, motion } from "motion/react";
-import { Menu, X, AlertTriangle, Loader2 } from "lucide-react";
+import { Menu, X, AlertTriangle, Loader2, SlidersHorizontal, LayoutDashboard } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -204,7 +204,7 @@ export default function App() {
 
   const renderView = () => {
     switch (activeLayer) {
-      case "dashboard": return <DashboardView key="dashboard" />;
+      case "dashboard": return <DashboardView key="dashboard" onNavigate={(id) => setActiveLayer(id)} />;
       case "customers": return <CustomersView key="customers" />;
       case "alerts": return <AlertsView key="alerts" />;
       case "billing": return <BillingView key="billing" />;
@@ -214,7 +214,7 @@ export default function App() {
       case "complaints": return <ComplaintsView key="complaints" />;
       case "reports": return <ReportsView key="reports" />;
       case "upload": return <DataUploadView key="upload" />;
-      case "settings": return <SettingsView key="settings" />;
+      case "settings": return <SettingsView key="settings" onNavigate={(id) => setActiveLayer(id)} />;
       case "manual": return <ManualView key="manual" />;
       case "chatbot": return <ChatbotView key="chatbot" />;
       default: 
@@ -459,13 +459,38 @@ export default function App() {
         </div>
       </div>
       <main className="flex-1 overflow-y-auto p-4 md:p-8 relative w-full min-w-0">
-        <div className="flex justify-between items-center mb-4">
-          <button 
-            className="md:hidden p-2 neu-flat rounded-xl"
-            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-          >
-            {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
+        <div className="flex justify-between items-center mb-4 gap-3">
+          <div className="flex items-center gap-2">
+            <button 
+              className="md:hidden p-2 neu-flat rounded-xl"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              title="Toggle Menu"
+            >
+              {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            </button>
+            <button
+              onClick={() => setActiveLayer('templates')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all ${
+                activeLayer === 'templates'
+                  ? 'neu-pressed text-emerald-500 border border-emerald-500/30'
+                  : 'neu-flat hover:neu-pressed text-emerald-600 dark:text-emerald-400'
+              }`}
+              title="Manage Meta WhatsApp Templates"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span>WhatsApp Templates</span>
+            </button>
+            {activeLayer !== 'dashboard' && (
+              <button
+                onClick={() => setActiveLayer('dashboard')}
+                className="px-2.5 py-1.5 neu-flat hover:neu-pressed rounded-xl text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 flex items-center gap-1.5 transition-all"
+                title="Return to Dashboard"
+              >
+                <LayoutDashboard className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Dashboard</span>
+              </button>
+            )}
+          </div>
           
           {/* Quota Exceeded Alert Banner */}
           {quotaExceeded && (

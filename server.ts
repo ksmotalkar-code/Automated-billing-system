@@ -13,6 +13,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import admin from "firebase-admin";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { backgroundQueue } from "./src/server/services/queue.ts";
+import { registerBroadcastWorker } from "./src/server/services/broadcastWorker.ts";
 import { createStorageRouter } from "./src/server/routes/storage.ts";
 import { createPortalsRouter } from "./src/server/routes/portals.ts";
 import { createBillingRouter } from "./src/server/routes/billing.ts";
@@ -563,6 +564,8 @@ interface AppSettings {
   watiAccessToken?: string;
   watiApiEndpoint?: string;
   preferredNotificationMethod?: string;
+  prioritizeMetaTemplates?: boolean;
+  prioritizeMetaApiTemplates?: boolean;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
   enableWhatsappWeb?: boolean;
@@ -2219,6 +2222,12 @@ async function startServer() {
     return { executedAt: new Date().toISOString(), input: job.data };
   });
 
+  // 4. WhatsApp Broadcast Batch Processing Worker
+  registerBroadcastWorker({
+    sendWhatsAppMessage,
+    getDb: () => admin.apps.length ? getRequiredAdminDb() : null,
+  });
+
   // Queue Status Polling Endpoint (Persistent lookup)
   app.get("/api/queue/status/:jobId", async (req, res) => {
     try {
@@ -3791,6 +3800,28 @@ async function startServer() {
     }
     settings = settings || ({} as any);
 
+    const prioritizeMeta = Boolean(
+      settings?.prioritizeMetaTemplates !== false && (
+        settings?.prioritizeMetaTemplates === true ||
+        settings?.prioritizeMetaApiTemplates === true
+      )
+    );
+
+    if (prioritizeMeta && settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
+      return await sendMetaWhatsApp(
+        settings,
+        to,
+        message,
+        mediaBase64,
+        mediaName,
+        isTestMessage,
+        templateCategory || 'broadcast',
+        templateParams,
+        customTemplateName || settings.metaTemplateBroadcast || 'broadcast',
+        contextData,
+      );
+    }
+
     if (settings.preferredNotificationMethod === "manual_link") {
       throw new Error("Manual link selected, API disabled.");
     }
@@ -3882,8 +3913,38 @@ async function startServer() {
       }
     });
 
+    // Check 'Meta API Template' sending priority preference before dispatching
+    const prioritizeMeta = Boolean(
+      params.settings?.prioritizeMetaTemplates !== false && (
+        params.settings?.prioritizeMetaTemplates === true ||
+        params.settings?.prioritizeMetaApiTemplates === true
+      )
+    );
+
+    if (prioritizeMeta) {
+      console.log(`[sendMessageUtil] Preference Check: 'Meta API Template' sending is PRIORITIZED over webhook/session-based method.`);
+      
+      // Override webhook or manual methods to API delivery
+      if (params.settings.preferredNotificationMethod === 'manual_link' || params.settings.preferredNotificationMethod === 'webhook') {
+        params.settings.preferredNotificationMethod = 'api';
+      }
+
+      // If no explicit template category or custom template name is provided, upgrade dispatch to an approved Meta template
+      if (!params.templateCategory && !params.customTemplateName && !params.isTestMessage) {
+        params.templateCategory = 'broadcast';
+        params.customTemplateName = params.settings?.metaTemplateBroadcast || 'broadcast';
+
+        if (!params.templateParams || params.templateParams.length === 0) {
+          const recipientName = params.contextData?.customerName || params.contextData?.name || 'Customer';
+          const cleanMsg = params.message ? params.message.replace(/^Dear\s+[^,]+,\s*/i, '').trim() : '';
+          params.templateParams = [recipientName, cleanMsg || params.message || 'Notification from Water Authority'];
+        }
+        console.log(`[sendMessageUtil] Upgraded message to Meta Template "${params.customTemplateName}" with Category: "${params.templateCategory}"`);
+      }
+    }
+
     console.log(`\n======================================================`);
-    console.log(`[sendMessageUtil] Invocation Triggered`);
+    console.log(`[sendMessageUtil] Invocation Triggered (Meta Template Priority: ${prioritizeMeta ? "ENABLED" : "STANDARD"})`);
     console.log(`[sendMessageUtil] Target (To): "${params.to}"`);
     console.log(`[sendMessageUtil] Has Settings Object: ${Boolean(params.settings)}`);
     if (params.settings) {
@@ -3893,6 +3954,7 @@ async function startServer() {
         metaPhoneNumberId: params.settings.metaWhatsAppPhoneNumberId || "MISSING",
         hasWatiToken: Boolean(params.settings.watiAccessToken),
         preferredNotificationMethod: params.settings.preferredNotificationMethod || "default (meta)",
+        prioritizeMetaTemplates: Boolean(params.settings.prioritizeMetaTemplates),
       });
     }
     console.log(`[sendMessageUtil] Template Category: ${params.templateCategory || "None"}`);
@@ -4214,10 +4276,47 @@ async function startServer() {
             settings.automation.smartNotifications &&
             updatedCustomerIds.length > 0
           ) {
-            for (const cDoc of customersSnap.docs) {
-              if (!updatedCustomerIds.includes(cDoc.id)) continue;
+            const targetDocs = customersSnap.docs.filter((cDoc) => updatedCustomerIds.includes(cDoc.id));
+            console.log(`\n[AutomationEngine][SmartNotifications] Starting batch dispatch for ${targetDocs.length} customer(s) under owner: "${ownerId}"`);
+            let notifySentCount = 0;
+            let notifyFailedCount = 0;
+            let notifySkippedCount = 0;
+            const notificationProgressList: Array<{
+              customerId: string;
+              name: string;
+              mobileNumber: string;
+              status: "sent" | "failed" | "skipped";
+              error?: string;
+              durationMs?: number;
+              timestamp: string;
+            }> = [];
 
+            for (let idx = 0; idx < targetDocs.length; idx++) {
+              const cDoc = targetDocs[idx];
               const customer = cDoc.data();
+              const custId = customer.id || cDoc.id;
+              const custName = customer.name || "Customer";
+              const rawMobile = (customer.mobileNumber || "").replace(/\D/g, "");
+              const startCustMs = Date.now();
+
+              console.log(`[AutomationEngine][SmartNotifications] [${idx + 1}/${targetDocs.length}] Processing recipient: "${custName}" (ID: #${custId}, Mobile: "${customer.mobileNumber || "MISSING"}")`);
+
+              if (!rawMobile || rawMobile.length < 10 || rawMobile === "0000000000") {
+                notifySkippedCount++;
+                const durationMs = Date.now() - startCustMs;
+                console.warn(`[AutomationEngine][SmartNotifications] [${idx + 1}/${targetDocs.length}] SKIPPED: Customer "${custName}" has invalid phone number.`);
+                notificationProgressList.push({
+                  customerId: custId,
+                  name: custName,
+                  mobileNumber: customer.mobileNumber || "MISSING",
+                  status: "skipped",
+                  error: "Invalid or missing mobile number (< 10 digits required)",
+                  durationMs,
+                  timestamp: new Date().toISOString(),
+                });
+                continue;
+              }
+
               const delta = customerBillingDeltas.get(cDoc.id);
               const newBalance = delta ? delta.newBalance : (Number(customer.balance) || 0);
               const newAdvance = delta ? delta.newAdvance : (Number(customer.advanceBalance) || 0);
@@ -4228,12 +4327,12 @@ async function startServer() {
               let mediaName = isCoveredByAdvance ? "Receipt.pdf" : "Invoice.pdf";
               try {
                 const b64PdfTemp = await generateInvoicePdf(
-                  customer.name || "Customer",
+                  custName,
                   newBalance,
                   isCoveredByAdvance ? billingAmt : undefined,
                   settings.billTemplateImage,
                   settings.preferredLanguage || 'en',
-                  customer.id || cDoc.id,
+                  custId,
                   billingAmt,
                   newAdvance,
                   settings.appLogoImage
@@ -4241,26 +4340,26 @@ async function startServer() {
                 mediaBase64 = b64PdfTemp.includes(',') ? b64PdfTemp.split(',')[1] : b64PdfTemp;
               } catch (e: any) {
                 console.error(
-                  `[Automation] Failed to generate PDF for ${customer.name}: ${e.message}`,
+                  `[AutomationEngine][SmartNotifications] [${idx + 1}/${targetDocs.length}] Failed to generate PDF for ${custName}: ${e.message}`,
                 );
               }
 
               let message = "";
               if (isCoveredByAdvance) {
-                message = `Dear ${customer.name}, your water bill of Rs. ${billingAmt} for the new cycle has been automatically paid from your advance credit. Remaining advance balance: Rs. ${newAdvance}. No payment is required. Thank you!`;
+                message = `Dear ${custName}, your water bill of Rs. ${billingAmt} for the new cycle has been automatically paid from your advance credit. Remaining advance balance: Rs. ${newAdvance}. No payment is required. Thank you!`;
               } else if ((Number(customer.advanceBalance) || 0) > 0) {
-                message = `Dear ${customer.name}, your water bill of Rs. ${billingAmt} has been partially covered by your Rs. ${customer.advanceBalance} advance credit. Remaining balance due: Rs. ${newBalance}. Please pay on time.`;
+                message = `Dear ${custName}, your water bill of Rs. ${billingAmt} has been partially covered by your Rs. ${customer.advanceBalance} advance credit. Remaining balance due: Rs. ${newBalance}. Please pay on time.`;
               } else {
-                message = `Dear ${customer.name}, your new water bill of Rs. ${billingAmt} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
+                message = `Dear ${custName}, your new water bill of Rs. ${billingAmt} has been generated. Total outstanding: Rs. ${newBalance}. Please pay on time.`;
               }
 
               try {
                 let finalTemplateParams: any[] = [
-                    customer.name,
+                    custName,
                     billingAmt,
                     newBalance,
                     new Date().toLocaleDateString('en-GB'),
-                    { isButtonParam: true, value: customer.id || cDoc.id, index: "0" },
+                    { isButtonParam: true, value: custId, index: "0" },
                 ];
                 
                 // Map Custom parameters for billing template (checking Firestore whatsapp_templates collection first)
@@ -4304,8 +4403,8 @@ async function startServer() {
                 if (paramKeys.length > 0) {
                   finalTemplateParams = paramKeys.map((key:string) => {
                     const lk = key.toLowerCase();
-                    if (lk === 'customer_name' || lk === 'name' || lk === 'customer') return customer.name;
-                    if (lk === 'customer_id' || lk === 'id' || lk === 'account_no') return customer.id || cDoc.id;
+                    if (lk === 'customer_name' || lk === 'name' || lk === 'customer') return custName;
+                    if (lk === 'customer_id' || lk === 'id' || lk === 'account_no') return custId;
                     if (lk === 'customer_balance' || lk === 'balance') return customer.balance;
                     if (lk === 'billing_amount' || lk === 'amount' || lk === 'bill_amount') return billingAmt;
                     if (lk === 'new_balance' || lk === 'total_balance') return newBalance;
@@ -4316,8 +4415,8 @@ async function startServer() {
                     if (lk === 'date' || lk === 'today') return new Date().toLocaleDateString('en-GB');
                     if (lk === 'due_date') return new Date(Date.now() + (settings.penaltyDays || 10) * 86400000).toLocaleDateString('en-GB');
                     if (lk === 'panchayat_name') return settings.organizationName || 'Gram Panchayat';
-                    if (lk === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id || cDoc.id}`;
-                    if (lk === 'button_param' || lk === 'button') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id || cDoc.id}`, index: "0" };
+                    if (lk === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${custId}`;
+                    if (lk === 'button_param' || lk === 'button') return { isButtonParam: true, value: `?portal=true&customerId=${custId}`, index: "0" };
                     return key;
                   });
                 }
@@ -4332,12 +4431,42 @@ async function startServer() {
                   isCoveredByAdvance ? "receipt" : "billing",
                   finalTemplateParams,
                 );
+
+                notifySentCount++;
+                const durationMs = Date.now() - startCustMs;
+                console.log(`[AutomationEngine][SmartNotifications] [${idx + 1}/${targetDocs.length}] SUCCESS: Delivered to "${custName}" in ${durationMs}ms`);
+                notificationProgressList.push({
+                  customerId: custId,
+                  name: custName,
+                  mobileNumber: customer.mobileNumber,
+                  status: "sent",
+                  durationMs,
+                  timestamp: new Date().toISOString(),
+                });
               } catch (e: any) {
+                notifyFailedCount++;
+                const durationMs = Date.now() - startCustMs;
                 console.error(
-                  `[Automation] Failed to auto-send bill to ${customer.name}: ${e.message}`,
+                  `[AutomationEngine][SmartNotifications] [${idx + 1}/${targetDocs.length}] FAILED for "${custName}": ${e.message}`,
                 );
+                notificationProgressList.push({
+                  customerId: custId,
+                  name: custName,
+                  mobileNumber: customer.mobileNumber,
+                  status: "failed",
+                  error: e.message || String(e),
+                  durationMs,
+                  timestamp: new Date().toISOString(),
+                });
+              }
+
+              // Rate-limiting throttle to protect Meta API burst limits
+              if (idx < targetDocs.length - 1) {
+                await new Promise((r) => setTimeout(r, 800));
               }
             }
+
+            console.log(`[AutomationEngine][SmartNotifications] Finished batch dispatch for owner "${ownerId}": ${notifySentCount} sent, ${notifyFailedCount} failed, ${notifySkippedCount} skipped.`);
           }
         }
 
@@ -4586,7 +4715,7 @@ async function startServer() {
     }
   });
 
-  // Bulk Broadcast API (Protected by requireAuth)
+  // Bulk Broadcast API with Batch Processing Queue (Protected by requireAuth)
   app.post("/api/wa/broadcast", requireAuth, async (req: AuthenticatedRequest, res) => {
     try {
       const ownerId = req.ownerId || req.body.ownerId;
@@ -4600,6 +4729,11 @@ async function startServer() {
         mediaBase64,
         mediaName,
         method,
+        templateName,
+        customTemplateName,
+        templateCategory = "broadcast",
+        templateParams,
+        async: isAsyncRequested,
       } = req.body;
       if (!message) return res.status(400).json({ error: "Missing message" });
 
@@ -4650,12 +4784,14 @@ async function startServer() {
         const customersSnap = await db
           .collection("customers")
           .where("ownerId", "==", effectiveOwnerId)
-          .where("status", "==", "Active")
           .get();
-        customers = customersSnap.docs.map((d) => d.data());
+        // Allow all active, advance paid, or non-empty customer accounts for broad emergency notices
+        customers = customersSnap.docs
+          .map((d) => d.data())
+          .filter((c: any) => c.status !== "Suspended" && c.status !== "Inactive");
       }
 
-      // Filter out invalid mobiles
+      // Filter out invalid mobiles (< 10 digits)
       customers = customers.filter((c: any) => {
         const cleanMobile = c.mobileNumber
           ? c.mobileNumber.replace(/\D/g, "")
@@ -4667,65 +4803,143 @@ async function startServer() {
         );
       });
 
-      console.log(`Broadcasting to ${customers.length} customers...`);
+      if (customers.length === 0) {
+        return res.status(400).json({ error: "No valid recipient customers found matching target criteria" });
+      }
 
-      const results = { success: 0, failed: 0, errors: [] as string[] };
+      console.log(`[BroadcastAPI] Queueing broadcast to ${customers.length} customer(s) for owner: "${effectiveOwnerId}"...`);
 
-      for (const customer of customers) {
-        try {
-          let finalTemplateParams: any[] = [message]; // Default parameter is just the message
-          
-          const templateName = settings.metaTemplateBroadcast || 
-            settings.metaCustomTemplates?.find((t: any) => t.id === 'def_broadcast' || t.templateName?.toLowerCase().includes('broadcast') || t.templateName?.toLowerCase().includes('notice') || t.templateName?.toLowerCase().includes('announcement'))?.templateName || 
-            settings.metaCustomTemplates?.[0]?.templateName || 
-            "broadcast";
-          if (settings.metaCustomTemplates) {
-            const matchedConfig = settings.metaCustomTemplates.find((t:any) => t.templateName === templateName);
-            if (matchedConfig && matchedConfig.parameters) {
-              const paramKeys = matchedConfig.parameters.split(',').map((s:string) => s.trim());
-              finalTemplateParams = paramKeys.map((key:string) => {
-                if (key === 'customer_name') return customer.name || "Customer";
-                if (key === 'customer_balance') return customer.balance || 0;
-                if (key === 'billing_amount') return settings.billingAmount || 0;
-                if (key === 'new_balance') return customer.balance || 0;
-                if (key === 'payment_amount') return customer.balance || 0;
-                if (key === 'overdue_amount') return customer.balance || 0;
-                if (key === 'date') return new Date().toLocaleDateString('en-GB');
-                if (key === 'portal_link') return `${settings.publicPortalBaseUrl || 'https://ais-dev-bgo3e3yfqihdrbor7bolgx-496681651924.asia-southeast1.run.app'}/?portal=true&customerId=${customer.id}`;
-                if (key === 'button_param') return { isButtonParam: true, value: `?portal=true&customerId=${customer.id}`, index: "0" };
-                if (key === 'message') return message;
-                return message; // Default mapping
-              });
+      const effectiveTemplate = templateName || customTemplateName;
+
+      // Add to background processing queue
+      const job = await backgroundQueue.addJob(
+        "WHATSAPP_BROADCAST",
+        {
+          ownerId: effectiveOwnerId,
+          message,
+          templateName: effectiveTemplate,
+          templateCategory,
+          templateParams,
+          mediaBase64,
+          mediaName,
+          method: settings.preferredNotificationMethod,
+          recipients: customers,
+          settings,
+        },
+        { ownerId: effectiveOwnerId }
+      );
+
+      // If async is explicitly requested or list is large (> 5), return immediate job token
+      const shouldWait = !isAsyncRequested && customers.length <= 5;
+
+      if (shouldWait) {
+        const waitForOutcome = new Promise<any>((resolve) => {
+          const onDone = (completedJob: any) => {
+            if (completedJob.id === job.id) {
+              backgroundQueue.off("job:completed", onDone);
+              backgroundQueue.off("job:failed", onDone);
+              resolve(completedJob.result || { sent: 0, failed: 1, userProgress: [] });
             }
-          }
+          };
+          backgroundQueue.on("job:completed", onDone);
+          backgroundQueue.on("job:failed", onDone);
 
-          await sendWhatsAppMessage(
-            settings,
-            customer.mobileNumber,
-            message,
-            mediaBase64,
-            mediaName,
-            false,
-            "broadcast",
-            finalTemplateParams,
-          );
-          results.success++;
-          // Rate-limiting throttle to prevent Meta burst limit (#80007 / Rate exceeded)
-          await new Promise((r) => setTimeout(r, 1200));
-        } catch (e: any) {
-          results.failed++;
-          results.errors.push(`${customer.name}: ${e.message}`);
-        }
+          setTimeout(() => {
+            backgroundQueue.off("job:completed", onDone);
+            backgroundQueue.off("job:failed", onDone);
+            resolve({
+              inProgress: true,
+              jobId: job.id,
+              status: "processing",
+              message: "Broadcast execution continuing in background queue.",
+            });
+          }, 20000);
+        });
+
+        const outcome = await waitForOutcome;
+        return res.json({
+          status: outcome.inProgress ? "processing" : "completed",
+          jobId: job.id,
+          success: outcome.sent ?? outcome.success ?? 0,
+          failed: outcome.failed ?? 0,
+          skipped: outcome.skipped ?? 0,
+          total: customers.length,
+          userProgress: outcome.userProgress || [],
+        });
       }
 
-      if (results.failed > 0) {
-        console.warn(`[Broadcast] Completed with failures:`, results.errors);
-      }
+      // Asynchronous batch queue return
+      return res.status(202).json({
+        status: "queued",
+        jobId: job.id,
+        success: true,
+        total: customers.length,
+        message: `Broadcast job ${job.id} enqueued for ${customers.length} recipient(s).`,
+      });
+    } catch (err: any) {
+      console.error("[BroadcastAPI] Error starting broadcast:", err);
+      res.status(500).json({ error: err.message || "Broadcast failed" });
+    }
+  });
 
-      res.json({ status: "completed", ...results });
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Broadcast failed" });
+  // Query Broadcast Job Status and Per-User Delivery Details
+  app.get("/api/wa/broadcast/jobs/:jobId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const job = await backgroundQueue.getJob(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "Broadcast job not found" });
+
+      const result = job.result || {};
+      return res.json({
+        jobId: job.id,
+        status: job.status,
+        progress: job.progress,
+        total: result.total || (job.data as any)?.recipients?.length || 0,
+        sent: result.sent || 0,
+        failed: result.failed || 0,
+        skipped: result.skipped || 0,
+        userProgress: result.userProgress || [],
+        error: job.error,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // List Recent Broadcast Jobs
+  app.get("/api/wa/broadcast/jobs", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || "system";
+      const allJobs = await backgroundQueue.listJobs(ownerId);
+      const broadcastJobs = allJobs.filter((j) => j.type === "WHATSAPP_BROADCAST");
+      return res.json({
+        success: true,
+        count: broadcastJobs.length,
+        jobs: broadcastJobs.map((j) => ({
+          jobId: j.id,
+          status: j.status,
+          progress: j.progress,
+          total: j.result?.total || (j.data as any)?.recipients?.length || 0,
+          sent: j.result?.sent || 0,
+          failed: j.result?.failed || 0,
+          createdAt: j.createdAt,
+          updatedAt: j.updatedAt,
+        })),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Cancel Pending Broadcast Job
+  app.post("/api/wa/broadcast/cancel/:jobId", requireAuth, async (req: AuthenticatedRequest, res) => {
+    try {
+      const ownerId = req.ownerId || "system";
+      const cancelled = await backgroundQueue.cancelJob(req.params.jobId, ownerId);
+      return res.json({ cancelled });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 
