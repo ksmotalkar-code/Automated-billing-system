@@ -566,6 +566,8 @@ interface AppSettings {
   preferredNotificationMethod?: string;
   prioritizeMetaTemplates?: boolean;
   prioritizeMetaApiTemplates?: boolean;
+  fallbackWebhookUrl?: string;
+  webhookUrl?: string;
   paymentGatewayKey?: string;
   paymentGatewaySecret?: string;
   enableWhatsappWeb?: boolean;
@@ -3530,28 +3532,39 @@ async function startServer() {
                 bodyPayload.template.components = (bodyPayload.template.components || []).filter((c: any) => c.type !== "body");
                 madeChanges = true;
               } else {
-                let bodyComponentOpt = bodyPayload.template.components.find((c: any) => c.type === "body");
-                bodyPayload.template.components = bodyPayload.template.components.map((c: any) => {
+                const custName = contextData?.customerName || contextData?.name || "Customer";
+                const cleanMsg = (message || "Notice").replace(/^Dear\s+[^,]+,\s*/i, '').trim();
+
+                let constructedParams: any[] = [];
+                if (expectedCount === 1) {
+                  constructedParams = [{ type: "text", text: cleanMsg || message || "Notice" }];
+                } else if (expectedCount === 2) {
+                  // User's template: {{1}} = person name, {{2}} = message
+                  constructedParams = [
+                    { type: "text", text: custName },
+                    { type: "text", text: cleanMsg || message || "Notice" }
+                  ];
+                } else {
+                  constructedParams = [
+                    { type: "text", text: custName },
+                    { type: "text", text: cleanMsg || message || "Notice" }
+                  ];
+                  while (constructedParams.length < expectedCount) {
+                    constructedParams.push({ type: "text", text: "N/A" });
+                  }
+                }
+
+                let bodyFound = false;
+                bodyPayload.template.components = (bodyPayload.template.components || []).map((c: any) => {
                   if (c.type === "body") {
-                    const currentParams = c.parameters || [];
-                    const paddedParams = [...currentParams];
-                    while (paddedParams.length < expectedCount) {
-                      paddedParams.push({ type: "text", text: message || "Notice" });
-                    }
-                    if (paddedParams.length > expectedCount) {
-                      paddedParams.length = expectedCount;
-                    }
-                    return { ...c, parameters: paddedParams };
+                    bodyFound = true;
+                    return { ...c, parameters: constructedParams };
                   }
                   return c;
                 });
                 
-                if (!bodyComponentOpt && expectedCount > 0) {
-                  const injectedParams = [
-                    { type: "text", text: message || "Notice" },
-                    ...Array(Math.max(0, expectedCount - 1)).fill({ type: "text", text: "N/A" })
-                  ].slice(0, expectedCount);
-                  bodyPayload.template.components.push({ type: "body", parameters: injectedParams });
+                if (!bodyFound && expectedCount > 0) {
+                  bodyPayload.template.components.push({ type: "body", parameters: constructedParams });
                 }
                 madeChanges = true;
               }
@@ -3767,6 +3780,57 @@ async function startServer() {
     return data;
   }
 
+  // Helper for sending fallback notification via outbound Webhook when Meta Template fails
+  async function sendWebhookFallback(
+    settings: AppSettings,
+    payload: {
+      to: string;
+      message: string;
+      customerName?: string;
+      templateCategory?: string;
+      customTemplateName?: string;
+      error?: string;
+      timestamp?: string;
+    }
+  ) {
+    const targetWebhook = settings.fallbackWebhookUrl || settings.webhookUrl;
+    if (!targetWebhook || !targetWebhook.trim()) {
+      return null;
+    }
+    const cleanWebhook = targetWebhook.trim();
+    console.log(`[sendWebhookFallback] Dispatching fallback webhook notification to ${cleanWebhook} for ${payload.to}...`);
+    try {
+      const res = await fetch(cleanWebhook, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          event: "whatsapp_message_fallback",
+          to: payload.to,
+          customerName: payload.customerName || "Customer",
+          message: payload.message,
+          templateCategory: payload.templateCategory || "broadcast",
+          customTemplateName: payload.customTemplateName || null,
+          failureReason: payload.error || "Meta Template Failed",
+          timestamp: payload.timestamp || new Date().toISOString(),
+        }),
+      });
+      const status = res.status;
+      let respBody: any = null;
+      try {
+        respBody = await res.json();
+      } catch {
+        respBody = await res.text();
+      }
+      console.log(`[sendWebhookFallback] Webhook responded with status ${status}`);
+      return { success: res.ok, status, data: respBody };
+    } catch (err: any) {
+      console.warn(`[sendWebhookFallback] Failed to trigger fallback webhook:`, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
   // Generic Send WhatsApp API
   async function sendWhatsAppMessage(
     settings: AppSettings,
@@ -3807,47 +3871,74 @@ async function startServer() {
       )
     );
 
+    let metaError: any = null;
+
     if (prioritizeMeta && settings.metaWhatsAppApiKey && settings.metaWhatsAppPhoneNumberId) {
-      return await sendMetaWhatsApp(
-        settings,
-        to,
-        message,
-        mediaBase64,
-        mediaName,
-        isTestMessage,
-        templateCategory || 'broadcast',
-        templateParams,
-        customTemplateName || settings.metaTemplateBroadcast || 'broadcast',
-        contextData,
-      );
+      try {
+        return await sendMetaWhatsApp(
+          settings,
+          to,
+          message,
+          mediaBase64,
+          mediaName,
+          isTestMessage,
+          templateCategory || 'broadcast',
+          templateParams,
+          customTemplateName || settings.metaTemplateBroadcast || 'broadcast',
+          contextData,
+        );
+      } catch (err: any) {
+        metaError = err;
+        console.warn(`[sendWhatsAppMessage] Prioritized Meta template dispatch failed: ${err.message}. Initiating automated fallback routing...`);
+      }
     }
 
     if (settings.preferredNotificationMethod === "manual_link") {
-      throw new Error("Manual link selected, API disabled.");
+      throw metaError || new Error("Manual link selected, API disabled.");
     }
 
-    if (settings.preferredNotificationMethod === "wati") {
-      return await sendWatiWhatsApp(
-        settings,
+    // Secondary fallback: WATI if configured
+    if (settings.preferredNotificationMethod === "wati" || settings.watiAccessToken) {
+      try {
+        return await sendWatiWhatsApp(
+          settings,
+          to,
+          message,
+          mediaBase64,
+          mediaName,
+        );
+      } catch (watiErr: any) {
+        console.warn(`[sendWhatsAppMessage] WATI fallback dispatch failed:`, watiErr.message);
+      }
+    }
+
+    // Tertiary fallback: Webhook fallback if configured
+    if (settings.fallbackWebhookUrl || settings.webhookUrl) {
+      const webhookRes = await sendWebhookFallback(settings, {
         to,
         message,
-        mediaBase64,
-        mediaName,
-      );
-    } else if (
-      !settings.preferredNotificationMethod &&
-      settings.watiAccessToken &&
-      !settings.metaWhatsAppApiKey
-    ) {
-      return await sendWatiWhatsApp(
-        settings,
-        to,
-        message,
-        mediaBase64,
-        mediaName,
-      );
-    } else {
-      // Default to Meta or explicit 'api'
+        customerName: contextData?.customerName || contextData?.name,
+        templateCategory,
+        customTemplateName,
+        error: metaError?.message || "Meta API template failed",
+      });
+      if (webhookRes && (webhookRes.success || webhookRes.status < 400)) {
+        return {
+          success: true,
+          provider: "webhook_fallback",
+          messages: [{ id: `wh_${Date.now()}` }],
+          details: webhookRes.data,
+        };
+      }
+    }
+
+    // If Meta was attempted and failed, rethrow the meta error so detailed diagnostics are visible
+    if (metaError) {
+      throw metaError;
+    }
+
+    // Default to Meta or explicit 'api'
+    try {
       return await sendMetaWhatsApp(
         settings,
         to,
@@ -3860,6 +3951,27 @@ async function startServer() {
         customTemplateName,
         contextData,
       );
+    } catch (err: any) {
+      // Final attempt at webhook fallback if configured
+      if (settings.fallbackWebhookUrl || settings.webhookUrl) {
+        const webhookRes = await sendWebhookFallback(settings, {
+          to,
+          message,
+          customerName: contextData?.customerName || contextData?.name,
+          templateCategory,
+          customTemplateName,
+          error: err?.message || "Meta WhatsApp delivery failed",
+        });
+        if (webhookRes && (webhookRes.success || webhookRes.status < 400)) {
+          return {
+            success: true,
+            provider: "webhook_fallback",
+            messages: [{ id: `wh_${Date.now()}` }],
+            details: webhookRes.data,
+          };
+        }
+      }
+      throw err;
     }
   }
 

@@ -596,6 +596,7 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
           .json({ error: "WhatsApp API not configured in settings" });
       }
 
+      const customerName = req.body.customerName || (templateParams && templateParams.length > 0 ? templateParams[0] : undefined);
       const data = await deps.sendMessageUtil({
         settings,
         to,
@@ -606,6 +607,7 @@ export function createWhatsAppRouter(deps: WhatsAppRouteDeps) {
         templateParams,
         customTemplateName,
         ownerId,
+        contextData: { customerName, name: customerName },
       });
 
       return res.json(data);

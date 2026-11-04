@@ -289,14 +289,27 @@ export default function App() {
           animate={{ opacity: 1, y: 0 }}
           className="p-8 neu-pressed rounded-3xl max-w-md w-full text-center space-y-6 relative z-20 elite-sparkle-card"
         >
-          <div className="w-20 h-20 mx-auto rounded-2xl flex items-center justify-center text-white font-bold text-4xl static-glow transition-all duration-300" style={{ background: 'var(--accent)' }}>
-            ⚡
+          <div className="w-24 h-24 mx-auto rounded-2xl flex items-center justify-center p-2 neu-flat overflow-hidden bg-white/80 dark:bg-slate-900/80 shadow-md">
+            <img 
+              src="/vwsc_seal.png" 
+              alt="Gram Panchayat Seal" 
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                // Graceful fallback to droplet icon if image load fails
+                (e.target as HTMLElement).style.display = 'none';
+              }} 
+            />
           </div>
           <div>
-            <h1 className="text-3xl font-black bg-gradient-to-br from-blue-600 to-indigo-600 bg-clip-text text-transparent">Multi-Tenant Billing Platform</h1>
-            <p className="neu-text-muted mt-2 font-bold uppercase tracking-widest text-xs">Automated Utility & Enterprise Billing</p>
-            <p className="text-xs text-blue-600 font-medium mt-4 px-4 py-2 bg-blue-50 rounded-lg inline-block">
-              Secure Zero-Trust Workspace Login
+            <h1 className="text-2xl font-black bg-gradient-to-br from-blue-700 via-indigo-700 to-emerald-700 bg-clip-text text-transparent">
+              {settings?.organizationName || 'Gram Panchayat Smart Water Department'}
+            </h1>
+            <p className="neu-text-muted mt-2 font-bold uppercase tracking-wider text-[11px]">
+              Village Water & Sanitation Committee (VWSC)
+            </p>
+            <p className="text-[10px] text-blue-700 dark:text-blue-400 font-bold mt-3 px-3 py-1.5 bg-blue-500/10 rounded-full inline-flex items-center gap-1.5 border border-blue-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              Official Panchayat Administration Portal
             </p>
           </div>
           

@@ -524,15 +524,16 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     category: 'broadcast',
     language: 'en_US',
     headerType: 'NONE',
-    bodyText: 'Gram Panchayat Water Department Announcement: {{1}}. For assistance, contact the water operator or Gram Panchayat office.',
-    parameters: 'broadcast_message',
+    bodyText: 'Dear {{1}}, important notice from Village Water Department: {{2}} thank you',
+    parameters: 'customer_name, message',
     parameterMappings: [
-      { index: 1, placeholder: '{{1}}', key: 'broadcast_message', label: 'Broadcast Message' }
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Person Name' },
+      { index: 2, placeholder: '{{2}}', key: 'message', label: 'Notice Message' }
     ],
     supportsButton: false,
     isActive: true,
     isDefault: true,
-    description: 'Mass public service announcement for pipeline maintenance or clean water notices.'
+    description: 'Official Village Water Department notice: Dear {{1}}, important notice from Village Water Department: {{2}} thank you'
   },
   {
     id: 'def_freeflow_3',
@@ -628,6 +629,8 @@ export interface AppSettings {
   preferredNotificationMethod?: string;
   prioritizeMetaTemplates?: boolean; // When true, prioritizes official Meta API Template dispatch over webhook/session text
   prioritizeMetaApiTemplates?: boolean;
+  fallbackWebhookUrl?: string; // Outbound fallback webhook URL when Meta API template fails
+  webhookUrl?: string;
   enableWhatsappWeb?: boolean;
   lateFee?: boolean;
   enableAutosave?: boolean;

@@ -1155,8 +1155,13 @@ export function CustomersView() {
             </select>
           </div>
           {hasAnyApi && (
-            <div className="space-y-2">
-              <label className="text-sm font-semibold">Meta Template</label>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold">Meta Template</label>
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                  Priority Dispatch
+                </span>
+              </div>
               <select 
                 className="w-full px-3 py-2 bg-[var(--bg-color)] border border-[var(--shadow-light)] rounded-lg text-sm"
                 onChange={(e) => {
@@ -1180,6 +1185,21 @@ export function CustomersView() {
                 ))}
                 <option value="direct_text">Direct Text Message (No Template / Session Text)</option>
               </select>
+
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-1.5 text-xs">
+                <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-between">
+                  <span>Template Specification</span>
+                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700">Meta Marketing</span>
+                </div>
+                <div className="p-2 rounded bg-white/70 dark:bg-black/30 font-mono text-[11px] text-emerald-900 dark:text-emerald-200 border border-emerald-500/20">
+                  Dear &#123;&#123;1&#125;&#125;, important notice from Village Water Department: &#123;&#123;2&#125;&#125; thank you
+                </div>
+                <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
+                  • <strong>&#123;&#123;1&#125;&#125;</strong>: Resident Name (mapped dynamically per recipient)<br />
+                  • <strong>&#123;&#123;2&#125;&#125;</strong>: Your typed notification message<br />
+                  • <strong>Automatic Webhook Failover</strong>: If Meta Cloud API delivery fails or rate limits, messages automatically fall back to your configured webhook to ensure 100% of customers receive notice.
+                </p>
+              </div>
             </div>
           )}
         </div>
@@ -1294,7 +1314,7 @@ export function CustomersView() {
           }
 
           setNotifyProgress(Math.floor(((i + 1) / targetCustomers.length) * 100));
-          await new Promise(resolve => setTimeout(resolve, isApiMode ? 1200 : 3000));
+          await new Promise(resolve => setTimeout(resolve, isApiMode ? 800 : 2500));
         }
 
         setIsSendingNotify(false);

@@ -220,6 +220,7 @@ export function registerBroadcastWorker(deps: {
             templateCategory,
             finalTemplateParams,
             effectiveTemplateName,
+            { customerName: custName, name: custName, customerId: custId }
           );
 
           sent++;

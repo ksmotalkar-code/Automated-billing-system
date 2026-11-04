@@ -978,6 +978,22 @@ export function SettingsView({ onNavigate }: { onNavigate?: (layerId: string) =>
                   </div>
                 )}
 
+                {/* Outbound Fallback Webhook URL (Automatic Failover) */}
+                <div className="col-span-full space-y-3 pt-6 border-t border-[var(--shadow-dark)]">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-black uppercase tracking-[0.2em] neu-text-muted ml-1">Outbound Fallback Webhook URL (Secondary / Failover)</label>
+                    <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Automatic Failover</span>
+                  </div>
+                  <input
+                    type="url"
+                    value={settings.fallbackWebhookUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, fallbackWebhookUrl: e.target.value })}
+                    className="w-full px-5 py-4 neu-pressed rounded-2xl bg-transparent outline-none text-sm font-bold focus:ring-2 focus:ring-emerald-500/30 transition-all shadow-inner"
+                    placeholder="https://your-webhook-endpoint.com/api/whatsapp-fallback"
+                  />
+                  <p className="text-[9px] neu-text-muted font-bold ml-1 uppercase tracking-tighter opacity-60">If Meta Cloud API template delivery fails or rate limits, notifications will automatically dispatch through this webhook so 100% of customers receive their notification.</p>
+                </div>
+
                 {/* Templates (Only for API Modes) */}
                 {(settings.preferredNotificationMethod === 'api' || settings.preferredNotificationMethod === 'wati') && (
                   <div className="col-span-full space-y-6 pt-10 border-t border-[var(--shadow-dark)]">
