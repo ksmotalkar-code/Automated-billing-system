@@ -381,4 +381,35 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
   - `lint_applet` (`tsc --noEmit`): **PASSED** (0 errors).
   - `compile_applet` (`npm run build`): **PASSED** (Clean production build).
 
+---
+
+## 8. Permanent Meta Template Integration: `freeflow_3` (Broadcast / Public Notice)
+- **Approved Meta Template Definition**:
+  - **Template Name**: `freeflow_3`
+  - **Language**: `en_US` (`English (US)`)
+  - **Category**: `Marketing`
+  - **Header**: Text: `Dear user` (optional, 0 parameters)
+  - **Body Text**: `Hi {{1}}, {{2}} we will notify you once issue is solved.`
+  - **Variables**:
+    - `{{1}}`: Citizen / Person Name (`customer.name`)
+    - `{{2}}`: Announcement / Notice message typed by operator in the modal
+- **Root Cause of Prior Failure (Error 132000)**:
+  - An outdated definition in `db.ts` defined `freeflow_3` with only 1 parameter (`parameters: 'customer_name'`), causing a variable count mismatch against Meta's approved 2-parameter template.
+- **Permanent Solution Implemented**:
+  1. **Template Definition (`src/lib/db.ts`)**:
+     - Updated `def_freeflow_3` with `headerText: 'Dear user'`, `headerType: 'TEXT'`, `parameters: 'customer_name, message'`, and mapped parameter indices `{{1}}` -> `customer_name` and `{{2}}` -> `message`.
+     - Set `freeflow_3` as `isDefault: true` in `DEFAULT_WHATSAPP_TEMPLATES`.
+     - Added self-healing sanitization in `subscribeToWhatsAppTemplates` and `getWhatsAppTemplates` to normalize any cached or stale Firestore records.
+  2. **Automation Engine (`src/lib/automation.ts`)**:
+     - Explicit check guarantees `freeflow_3` maps strictly to `['customer_name', 'message']`.
+  3. **Queue & Broadcast Worker (`src/server/services/broadcastWorker.ts`)**:
+     - Guarantees 2 parameters `[customer_name, message]` for background worker queue jobs using `freeflow_3`.
+  4. **Bulk Notify Modal in Customers View (`src/views/CustomersView.tsx`)**:
+     - Modal defaults to `freeflow_3`.
+     - Template Specification card shows exact structure: Header `Dear user`, Body `Hi {{1}}, {{2}} we will notify you once issue is solved.`.
+     - Automatic Webhook Failover guarantees 100% of customers receive notice even if Meta rate-limits.
+  5. **Template Guide (`src/views/WhatsAppTemplatesView.tsx`)**:
+     - Updated Broadcast guide to showcase `freeflow_3` specifications with one-click copy buttons.
+
+
 

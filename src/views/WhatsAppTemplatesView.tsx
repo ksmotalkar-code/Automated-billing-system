@@ -995,19 +995,19 @@ export function WhatsAppTemplatesView() {
                     <div>
                       <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold block">Template Name in Meta</span>
                       <div className="flex items-center gap-2 mt-1">
-                        <code className="text-sm font-mono text-emerald-400 font-bold">broadcast</code>
-                        <button onClick={() => handleCopy('broadcast', 'broadcast_name')} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white">
+                        <code className="text-sm font-mono text-emerald-400 font-bold">freeflow_3</code>
+                        <button onClick={() => handleCopy('freeflow_3', 'broadcast_name')} className="p-1 hover:bg-white/10 rounded text-slate-400 hover:text-white">
                           {copiedKey === 'broadcast_name' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                         </button>
                       </div>
                     </div>
                     <div>
                       <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold block">Category & Language</span>
-                      <div className="text-sm font-semibold text-white mt-1">Utility / Marketing • English (en_US)</div>
+                      <div className="text-sm font-semibold text-white mt-1">Marketing • English (US) (en_US)</div>
                     </div>
                     <div>
-                      <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold block">Header Media</span>
-                      <div className="text-sm font-semibold text-cyan-400 mt-1">None or Text</div>
+                      <span className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold block">Header Text</span>
+                      <div className="text-sm font-semibold text-cyan-400 mt-1">Dear user</div>
                     </div>
                   </div>
 
@@ -1015,7 +1015,7 @@ export function WhatsAppTemplatesView() {
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Exact Body Text to Paste in Meta:</span>
                       <button
-                        onClick={() => handleCopy('Dear {{1}}, important notice from Gram Panchayat Water Department: {{2}}. For emergency assistance, please contact the Panchayat Office.', 'broadcast_body')}
+                        onClick={() => handleCopy('Hi {{1}}, {{2}} we will notify you once issue is solved.', 'broadcast_body')}
                         className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium"
                       >
                         {copiedKey === 'broadcast_body' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -1023,7 +1023,7 @@ export function WhatsAppTemplatesView() {
                       </button>
                     </div>
                     <div className="p-3.5 rounded-xl bg-slate-900 border border-white/10 font-mono text-xs text-slate-200 whitespace-pre-wrap leading-relaxed select-all">
-                      Dear {'{{1}}'}, important notice from Gram Panchayat Water Department: {'{{2}}'}. For emergency assistance, please contact the Panchayat Office.
+                      Hi {'{{1}}'}, {'{{2}}'} we will notify you once issue is solved.
                     </div>
                   </div>
 
@@ -1032,11 +1032,11 @@ export function WhatsAppTemplatesView() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="font-mono text-blue-400 font-bold block">{'{{1}}'}</span>
-                        <span className="text-white font-medium block">Citizen Name</span>
+                        <span className="text-white font-medium block">Citizen Name (e.g., Ramesh Kumar)</span>
                       </div>
                       <div className="p-2.5 rounded-xl bg-slate-900 border border-white/5">
                         <span className="font-mono text-blue-400 font-bold block">{'{{2}}'}</span>
-                        <span className="text-white font-medium block">Announcement Text / Message Content</span>
+                        <span className="text-white font-medium block">Announcement Text / Notice Typed in Modal</span>
                       </div>
                     </div>
                   </div>

@@ -164,7 +164,9 @@ export function registerBroadcastWorker(deps: {
         let finalTemplateParams: any[] = [];
         let paramKeys: string[] = [];
 
-        if (matchedFirestoreTemplate) {
+        if (templateName === 'freeflow_3' || matchedFirestoreTemplate?.templateName === 'freeflow_3') {
+          paramKeys = ["customer_name", "message"];
+        } else if (matchedFirestoreTemplate) {
           if (Array.isArray(matchedFirestoreTemplate.parameterMappings) && matchedFirestoreTemplate.parameterMappings.length > 0) {
             paramKeys = matchedFirestoreTemplate.parameterMappings.map((m: any) => m.key);
           } else if (matchedFirestoreTemplate.parameters !== undefined) {
@@ -176,15 +178,15 @@ export function registerBroadcastWorker(deps: {
             paramKeys = matches.map((_: any, idx: number) => (idx === 0 ? "customer_name" : idx === 1 ? "message" : `param_${idx + 1}`));
           }
         } else if (settings?.metaCustomTemplates) {
-          const effectiveTName = templateName || settings.metaTemplateBroadcast || "broadcast";
+          const effectiveTName = templateName || settings.metaTemplateBroadcast || "freeflow_3";
           const matchedConfig = settings.metaCustomTemplates.find((t: any) => t.templateName === effectiveTName);
           if (matchedConfig && typeof matchedConfig.parameters === "string") {
             paramKeys = matchedConfig.parameters.split(",").map((s: string) => s.trim()).filter(Boolean);
           }
         }
 
-        // Fallback default: if 0 param template was matched, keep empty array
-        if (paramKeys.length === 0 && !matchedFirestoreTemplate) {
+        // Fallback default: broadcast always expects 2 parameters (customer_name, message)
+        if (paramKeys.length === 0) {
           paramKeys = ["customer_name", "message"];
         }
 

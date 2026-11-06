@@ -3205,7 +3205,7 @@ async function startServer() {
           templateName = settings.metaTemplateReceipt || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_receipt' || t.templateName?.toLowerCase().includes('receipt') || t.templateName?.toLowerCase().includes('payment'))?.templateName || "receipt";
         } else if (templateCategory === "broadcast") {
           templateName =
-            settings.metaTemplateBroadcast || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_broadcast' || t.templateName?.toLowerCase().includes('broadcast') || t.templateName?.toLowerCase().includes('notice') || t.templateName?.toLowerCase().includes('announcement'))?.templateName || settings.metaCustomTemplates?.[0]?.templateName || "broadcast";
+            settings.metaTemplateBroadcast || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_freeflow_3' || t.templateName === 'freeflow_3' || t.id === 'def_broadcast' || t.templateName?.toLowerCase().includes('broadcast') || t.templateName?.toLowerCase().includes('notice') || t.templateName?.toLowerCase().includes('announcement'))?.templateName || "freeflow_3";
         } else if (templateCategory === "welcome") {
           templateName = settings.metaTemplateWelcome || settings.metaCustomTemplates?.find((t: any) => t.id === 'def_welcome' || t.templateName?.toLowerCase().includes('welcome'))?.templateName || "welcome";
         } else if (templateCategory === "overdue") {

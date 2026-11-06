@@ -1119,7 +1119,7 @@ export function CustomersView() {
 
     const providerRef = { current: settings.preferredNotificationMethod === 'wati' ? 'wati' : 'api' };
     const deliveryRef = { current: 'api' };
-    const templateRef = { current: selectedBroadcastTemplate !== 'direct_text' ? selectedBroadcastTemplate : (settings?.metaTemplateBroadcast || 'broadcast') };
+    const templateRef = { current: selectedBroadcastTemplate !== 'direct_text' ? selectedBroadcastTemplate : (settings?.metaTemplateBroadcast || 'freeflow_3') };
 
     setConfirmConfig({
       isOpen: true,
@@ -1171,14 +1171,15 @@ export function CustomersView() {
                 defaultValue={templateRef.current}
               >
                 <option value="default">
-                  {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
+                  {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (freeflow_3)'}
                 </option>
-                {availableTemplates.map(t => (
+                <option value="freeflow_3">freeflow_3 (en_US) • [customer_name, message]</option>
+                {availableTemplates.filter(t => t.templateName !== 'freeflow_3').map(t => (
                   <option key={t.id || t.templateName} value={t.templateName}>
                     {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
                   </option>
                 ))}
-                {settings?.metaCustomTemplates?.filter(t => !availableTemplates.some(at => at.templateName === t.templateName) && t.templateName && t.templateName.trim() !== '').map(t => (
+                {settings?.metaCustomTemplates?.filter(t => t.templateName !== 'freeflow_3' && !availableTemplates.some(at => at.templateName === t.templateName) && t.templateName && t.templateName.trim() !== '').map(t => (
                   <option key={t.id || t.templateName} value={t.templateName}>
                     {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
                   </option>
@@ -1188,11 +1189,12 @@ export function CustomersView() {
 
               <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-1.5 text-xs">
                 <div className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center justify-between">
-                  <span>Template Specification</span>
-                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700">Meta Marketing</span>
+                  <span>Template Specification: freeflow_3</span>
+                  <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700">Approved Meta Template</span>
                 </div>
-                <div className="p-2 rounded bg-white/70 dark:bg-black/30 font-mono text-[11px] text-emerald-900 dark:text-emerald-200 border border-emerald-500/20">
-                  Dear &#123;&#123;1&#125;&#125;, important notice from Village Water Department: &#123;&#123;2&#125;&#125; thank you
+                <div className="p-2 rounded bg-white/70 dark:bg-black/30 font-mono text-[11px] text-emerald-900 dark:text-emerald-200 border border-emerald-500/20 space-y-0.5">
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 font-sans font-semibold">Header: Dear user</div>
+                  <div>Hi &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125; we will notify you once issue is solved.</div>
                 </div>
                 <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
                   • <strong>&#123;&#123;1&#125;&#125;</strong>: Resident Name (mapped dynamically per recipient)<br />
@@ -1231,10 +1233,10 @@ export function CustomersView() {
 
         const combinedMessage = notifyMessage.trim();
         const effectiveTemplateName = isMetaPrioritized && templateRef.current === 'direct_text'
-          ? (settings?.metaTemplateBroadcast || 'broadcast')
+          ? (settings?.metaTemplateBroadcast || 'freeflow_3')
           : (templateRef.current && templateRef.current !== 'direct_text' && templateRef.current !== 'default' 
               ? templateRef.current 
-              : (settings?.metaTemplateBroadcast || 'broadcast'));
+              : (settings?.metaTemplateBroadcast || 'freeflow_3'));
         const chosenTemplate = effectiveTemplateName;
         const templateCategory = 'broadcast';
 
@@ -2370,15 +2372,16 @@ export function CustomersView() {
                       className="w-full px-3 py-2.5 neu-pressed rounded-xl outline-none text-sm font-medium bg-transparent"
                     >
                       <option value="default">
-                        {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (broadcast)'}
+                        {settings?.metaTemplateBroadcast ? `Default Broadcast (${settings.metaTemplateBroadcast})` : 'Default Broadcast (freeflow_3)'}
                       </option>
-                      {availableTemplates.map(t => (
+                      <option value="freeflow_3">freeflow_3 (en_US) • [customer_name, message]</option>
+                      {availableTemplates.filter(t => t.templateName !== 'freeflow_3').map(t => (
                         <option key={t.id || t.templateName} value={t.templateName}>
                           {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
                         </option>
                       ))}
                       {settings?.metaCustomTemplates
-                        ?.filter(t => t.templateName && t.templateName.trim() !== '' && !availableTemplates.some(at => at.templateName === t.templateName))
+                        ?.filter(t => t.templateName !== 'freeflow_3' && t.templateName && t.templateName.trim() !== '' && !availableTemplates.some(at => at.templateName === t.templateName))
                         .map(t => (
                           <option key={t.id || t.templateName} value={t.templateName}>
                             {t.templateName} ({t.language || 'en_US'}) {t.parameters ? `• [${t.parameters}]` : ''}
@@ -2434,16 +2437,20 @@ export function CustomersView() {
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-xs flex flex-col gap-1.5">
-                  <div className="font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5">
-                    <Bell className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Meta Dashboard Template: <strong>broadcast</strong> (Category: Utility)</span>
+                  <div className="font-bold text-blue-700 dark:text-blue-300 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-blue-600" />
+                      <span>Meta Template: <strong>freeflow_3</strong> (en_US)</span>
+                    </span>
+                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-700">Approved</span>
+                  </div>
+                  <div className="p-2 rounded bg-white/70 dark:bg-black/30 font-mono text-[11px] text-blue-900 dark:text-blue-200 border border-blue-500/20 space-y-0.5">
+                    <div className="text-[10px] font-sans font-semibold text-slate-500 dark:text-slate-400">Header: Dear user</div>
+                    <div>Hi &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125; we will notify you once issue is solved.</div>
                   </div>
                   <p className="text-[11px] text-blue-900/80 dark:text-blue-200/80 leading-relaxed">
-                    Create a template named <code>broadcast</code> with body:
-                    <span className="block my-1 px-2 py-1 bg-white/70 dark:bg-black/30 rounded font-mono text-[10px] select-all">
-                      Dear &#123;&#123;1&#125;&#125;, &#123;&#123;2&#125;&#125;
-                    </span>
-                    Variable &#123;&#123;1&#125;&#125; = Customer Name, Variable &#123;&#123;2&#125;&#125; = Whatever message you type in the box above.
+                    • <strong>&#123;&#123;1&#125;&#125;</strong>: Citizen Name (mapped per customer)<br />
+                    • <strong>&#123;&#123;2&#125;&#125;</strong>: Your typed notification message in the box above
                   </p>
                 </div>
 

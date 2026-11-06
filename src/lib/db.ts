@@ -532,7 +532,7 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     ],
     supportsButton: false,
     isActive: true,
-    isDefault: true,
+    isDefault: false,
     description: 'Official Village Water Department notice: Dear {{1}}, important notice from Village Water Department: {{2}} thank you'
   },
   {
@@ -540,16 +540,18 @@ export const DEFAULT_WHATSAPP_TEMPLATES: WhatsAppTemplate[] = [
     templateName: 'freeflow_3',
     category: 'broadcast',
     language: 'en_US',
-    headerType: 'NONE',
-    bodyText: 'Hi {{1}}, Emergency repair work is in progress. Water supply may be affected for the next 4 hours. we will notify you once issue is solved.',
-    parameters: 'customer_name',
+    headerType: 'TEXT',
+    headerText: 'Dear user',
+    bodyText: 'Hi {{1}}, {{2}} we will notify you once issue is solved.',
+    parameters: 'customer_name, message',
     parameterMappings: [
-      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' }
+      { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+      { index: 2, placeholder: '{{2}}', key: 'message', label: 'Notice Message' }
     ],
     supportsButton: false,
     isActive: true,
-    isDefault: false,
-    description: 'Emergency repair and water outage alert (Meta template: freeflow_3).'
+    isDefault: true,
+    description: 'Active Meta broadcast template (freeflow_3): Hi {{1}}, {{2}} we will notify you once issue is solved.'
   },
   {
     id: 'def_suspension',
@@ -1616,7 +1618,7 @@ export function subscribeToSettings(
         { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
         { key: 'metaTemplateBilling', defaultName: 'payment_due_reminder', params: 'customer_name, billing_amount, new_balance, date, button_param', id: 'def_billing' },
         { key: 'metaTemplateReceipt', defaultName: 'invoice_bill', params: 'customer_name, payment_amount, button_param', id: 'def_receipt' },
-        { key: 'metaTemplateBroadcast', defaultName: 'broadcast', params: 'customer_name, message', id: 'def_broadcast' },
+        { key: 'metaTemplateBroadcast', defaultName: 'freeflow_3', params: 'customer_name, message', id: 'def_freeflow_3' },
         { key: 'metaTemplateOverdue', defaultName: 'payment_overdue_1', params: 'customer_name, overdue_amount, date, penalty_amount, button_param', id: 'def_overdue' },
         { key: 'metaTemplateSuspension', defaultName: 'autopay', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
         { key: 'metaTemplateComplaint', defaultName: 'complaint_resolved', params: 'customer_name, complaint_id, complaint_category, complaint_status', id: 'def_complaint' },
@@ -1625,12 +1627,12 @@ export function subscribeToSettings(
       for (const def of categoryDefaults) {
         let configuredName = (data as any)[def.key] || def.defaultName;
         if (def.key === 'metaTemplateBroadcast' && (configuredName === 'operation_disruption_2' || !configuredName)) {
-          configuredName = 'broadcast';
-          data.metaTemplateBroadcast = 'broadcast';
+          configuredName = 'freeflow_3';
+          data.metaTemplateBroadcast = 'freeflow_3';
         }
         const existingTmpl = data.metaCustomTemplates.find(t => t.id === def.id || t.templateName === configuredName);
         if (existingTmpl) {
-          if (def.key === 'metaTemplateBroadcast' && (existingTmpl.templateName === 'operation_disruption_2' || !existingTmpl.parameters?.includes('message'))) {
+          if (def.key === 'metaTemplateBroadcast' && (existingTmpl.templateName === 'operation_disruption_2' || existingTmpl.templateName === 'freeflow_3' || !existingTmpl.parameters?.includes('message'))) {
             existingTmpl.templateName = configuredName;
             existingTmpl.parameters = def.params;
           }
@@ -1784,8 +1786,25 @@ export function subscribeToWhatsAppTemplates(
     } else {
       const rawTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
       const uniqueMap = new Map<string, WhatsAppTemplate>();
+      // Seed with DEFAULT_WHATSAPP_TEMPLATES so essential templates like freeflow_3 always exist
+      DEFAULT_WHATSAPP_TEMPLATES.forEach(t => {
+        uniqueMap.set(t.templateName || t.id, { ...t, ownerId });
+      });
       rawTemplates.forEach(t => {
         const key = t.templateName || t.id;
+        if (key === 'freeflow_3' || t.templateName === 'freeflow_3') {
+          t.bodyText = 'Hi {{1}}, {{2}} we will notify you once issue is solved.';
+          t.headerType = 'TEXT';
+          t.headerText = 'Dear user';
+          t.parameters = 'customer_name, message';
+          t.parameterMappings = [
+            { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+            { index: 2, placeholder: '{{2}}', key: 'message', label: 'Notice Message' }
+          ];
+          t.language = 'en_US';
+          t.category = 'broadcast';
+          t.isActive = true;
+        }
         if (!uniqueMap.has(key) || t.isDefault) {
           uniqueMap.set(key, t);
         }
@@ -1809,8 +1828,24 @@ export const getWhatsAppTemplates = async (explicitOwnerId?: string): Promise<Wh
     }
     const rawTemplates = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as WhatsAppTemplate));
     const uniqueMap = new Map<string, WhatsAppTemplate>();
+    DEFAULT_WHATSAPP_TEMPLATES.forEach(t => {
+      uniqueMap.set(t.templateName || t.id, { ...t, ownerId: uid });
+    });
     rawTemplates.forEach(t => {
       const key = t.templateName || t.id;
+      if (key === 'freeflow_3' || t.templateName === 'freeflow_3') {
+        t.bodyText = 'Hi {{1}}, {{2}} we will notify you once issue is solved.';
+        t.headerType = 'TEXT';
+        t.headerText = 'Dear user';
+        t.parameters = 'customer_name, message';
+        t.parameterMappings = [
+          { index: 1, placeholder: '{{1}}', key: 'customer_name', label: 'Citizen Name' },
+          { index: 2, placeholder: '{{2}}', key: 'message', label: 'Notice Message' }
+        ];
+        t.language = 'en_US';
+        t.category = 'broadcast';
+        t.isActive = true;
+      }
       if (!uniqueMap.has(key) || t.isDefault) {
         uniqueMap.set(key, t);
       }
@@ -2787,7 +2822,7 @@ export const getSettings = async (ownerId: string): Promise<AppSettings | null> 
         { key: 'metaTemplateWelcome', defaultName: 'welcome', params: 'customer_name', id: 'def_welcome' },
         { key: 'metaTemplateBilling', defaultName: 'billing', params: 'customer_name, billing_amount, new_balance, date', id: 'def_billing' },
         { key: 'metaTemplateReceipt', defaultName: 'receipt', params: 'customer_name, payment_amount', id: 'def_receipt' },
-        { key: 'metaTemplateBroadcast', defaultName: 'broadcast', params: 'customer_name, message', id: 'def_broadcast' },
+        { key: 'metaTemplateBroadcast', defaultName: 'freeflow_3', params: 'customer_name, message', id: 'def_freeflow_3' },
         { key: 'metaTemplateOverdue', defaultName: 'overdue', params: 'customer_name, overdue_amount, date', id: 'def_overdue' },
         { key: 'metaTemplateSuspension', defaultName: 'suspension', params: 'customer_name, customer_balance, date', id: 'def_suspension' },
       ];

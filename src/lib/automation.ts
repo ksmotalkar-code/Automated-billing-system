@@ -356,7 +356,7 @@ export const sendWhatsAppNotification = async (
   // Final default template names by category if still missing
   if (!templateName || templateName.trim() === '') {
     if (templateCategory === 'welcome') templateName = 'welcome';
-    else if (templateCategory === 'broadcast') templateName = settings.metaCustomTemplates?.[0]?.templateName || 'broadcast';
+    else if (templateCategory === 'broadcast') templateName = settings.metaTemplateBroadcast || settings.metaCustomTemplates?.[0]?.templateName || 'freeflow_3';
     else if (templateCategory === 'receipt') templateName = 'receipt';
     else if (templateCategory === 'billing') templateName = 'billing';
     else if (templateCategory === 'complaint') templateName = 'complaint_resolved';
@@ -366,7 +366,10 @@ export const sendWhatsAppNotification = async (
   let dynamicParamsResolved = false;
   let paramKeys: string[] = [];
 
-  if (matchedFirestoreTemplate) {
+  // Strict guarantee for freeflow_3: Meta template is 2 parameters: customer_name, message
+  if (templateName === 'freeflow_3' || matchedFirestoreTemplate?.templateName === 'freeflow_3') {
+    paramKeys = ['customer_name', 'message'];
+  } else if (matchedFirestoreTemplate) {
     if (matchedFirestoreTemplate.parameterMappings && matchedFirestoreTemplate.parameterMappings.length > 0) {
       paramKeys = matchedFirestoreTemplate.parameterMappings.map(m => m.key);
     } else if (matchedFirestoreTemplate.parameters !== undefined) {
@@ -375,7 +378,7 @@ export const sendWhatsAppNotification = async (
       const matches = matchedFirestoreTemplate.bodyText.match(/\{\{(\d+)\}\}/g) || [];
       paramKeys = matches.map((_, idx) => idx === 0 ? 'customer_name' : (idx === 1 ? 'message' : `param_${idx + 1}`));
     }
-    // If the matched template explicitly defines 0 parameters (static text template like freeflow_3)
+    // If the matched template explicitly defines 0 parameters (static text template)
     if (paramKeys.length === 0) {
       templateParams = [];
       dynamicParamsResolved = true;
@@ -403,8 +406,8 @@ export const sendWhatsAppNotification = async (
     }
   }
 
-  // Only apply 2-variable broadcast fallback if no specific Firestore/custom template was resolved
-  if (!matchedFirestoreTemplate && !dynamicParamsResolved && templateCategory === 'broadcast' && paramKeys.length === 0) {
+  // Broadcast category default parameters: always 2 variables (customer_name, message)
+  if ((templateCategory === 'broadcast' || templateName === 'freeflow_3' || templateName === 'broadcast') && paramKeys.length === 0) {
     paramKeys = ['customer_name', 'message'];
   }
 
