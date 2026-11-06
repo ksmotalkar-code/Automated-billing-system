@@ -411,5 +411,27 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
   5. **Template Guide (`src/views/WhatsAppTemplatesView.tsx`)**:
      - Updated Broadcast guide to showcase `freeflow_3` specifications with one-click copy buttons.
 
+---
 
-
+## 9. Batch-Action Toolbar for WhatsApp Templates Manager (`WhatsAppTemplatesView.tsx`)
+- **Feature Scope**:
+  - Multi-select capability allowing administrators to select multiple templates and perform bulk operations in one step.
+- **Implemented Capabilities**:
+  1. **Template Selection**:
+     - Interactive checkbox on each template card with high-visibility selection ring and blue glow (`border-blue-500 bg-blue-500/10`).
+     - "Select All Visible" / "Deselect All" button with count of matching templates.
+     - Card click toggling with button isolation via `e.stopPropagation()` to prevent unwanted selection triggers when clicking Edit, Test, Default, or Delete.
+  2. **Bulk Actions Toolbar**:
+     - **Inline Toolbar Sub-bar**: Renders directly below the category filter tabs and search bar when items are selected.
+     - **Floating Batch Dock**: Floating glassmorphism toolbar (`AnimatePresence` + spring animation) pinned to the bottom of the viewport for rapid mobile and desktop execution without scrolling.
+     - **"Toggle Status"**: Inverts the `isActive` state of all selected templates in a single batch.
+     - **"Activate All"**: Marks all selected templates as Active in billing automation.
+     - **"Deactivate All"**: Marks all selected templates as Inactive/Disabled.
+     - **"Delete Selected"**: Opens an explicit `ConfirmModal` detailing the exact count of templates being removed before executing atomic batch deletion.
+  3. **Database Backend Operations (`src/lib/db.ts`)**:
+     - `batchDeleteWhatsAppTemplates(ids, explicitOwnerId)`: Uses Firestore `writeBatch` to delete all selected template documents and synchronizes `metaCustomTemplates` in tenant settings.
+     - `batchUpdateWhatsAppTemplatesStatus(updates, explicitOwnerId)`: Uses Firestore `writeBatch` with `set(..., { merge: true })` to update active statuses and server timestamps in an atomic commit.
+  4. **Verification**:
+     - `tsc --noEmit`: 0 errors.
+     - `npm run build`: Production build passed.
+     - Server running and healthy.

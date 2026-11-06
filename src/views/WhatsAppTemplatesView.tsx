@@ -29,7 +29,9 @@ import {
   BookOpen,
   ExternalLink,
   Info,
-  Zap
+  Zap,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -40,6 +42,8 @@ import {
   subscribeToWhatsAppTemplates, 
   saveWhatsAppTemplate, 
   deleteWhatsAppTemplate, 
+  batchDeleteWhatsAppTemplates,
+  batchUpdateWhatsAppTemplatesStatus,
   seedDefaultWhatsAppTemplates,
   saveSettings
 } from '../lib/db';
@@ -125,6 +129,11 @@ export function WhatsAppTemplatesView() {
 
   // Confirm Delete Modal State
   const [deleteId, setDeleteId] = useState<string | null>(null);
+
+  // Batch Operations State
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [isBulkDeleteModalOpen, setIsBulkDeleteModalOpen] = useState(false);
 
   // Meta Setup Guide State
   const [showMetaGuide, setShowMetaGuide] = useState(false);
@@ -304,6 +313,90 @@ export function WhatsAppTemplatesView() {
       setDeleteId(null);
     } catch (err: any) {
       showBanner(err.message || "Failed to delete template.", true);
+    }
+  };
+
+  const handleToggleSelectTemplate = (id: string) => {
+    setSelectedTemplateIds(prev =>
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllFiltered = () => {
+    const allFilteredIds = filteredTemplates.map(t => t.id || t.templateName);
+    const isAllFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selectedTemplateIds.includes(id));
+    if (isAllFilteredSelected) {
+      setSelectedTemplateIds(prev => prev.filter(id => !allFilteredIds.includes(id)));
+    } else {
+      setSelectedTemplateIds(prev => Array.from(new Set([...prev, ...allFilteredIds])));
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedTemplateIds([]);
+  };
+
+  const handleBatchToggleActive = async () => {
+    if (selectedTemplateIds.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const selected = templates.filter(t => selectedTemplateIds.includes(t.id || t.templateName));
+      const updates = selected.map(t => ({
+        id: t.id,
+        isActive: !t.isActive
+      }));
+      await batchUpdateWhatsAppTemplatesStatus(updates, currentOwnerId || undefined);
+      showBanner(`Successfully toggled active status for ${updates.length} template(s).`);
+    } catch (err: any) {
+      showBanner(err.message || "Failed to toggle template statuses.", true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchActivate = async () => {
+    if (selectedTemplateIds.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const selected = templates.filter(t => selectedTemplateIds.includes(t.id || t.templateName));
+      const updates = selected.map(t => ({ id: t.id, isActive: true }));
+      await batchUpdateWhatsAppTemplatesStatus(updates, currentOwnerId || undefined);
+      showBanner(`Activated ${updates.length} template(s).`);
+    } catch (err: any) {
+      showBanner(err.message || "Failed to activate templates.", true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchDeactivate = async () => {
+    if (selectedTemplateIds.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const selected = templates.filter(t => selectedTemplateIds.includes(t.id || t.templateName));
+      const updates = selected.map(t => ({ id: t.id, isActive: false }));
+      await batchUpdateWhatsAppTemplatesStatus(updates, currentOwnerId || undefined);
+      showBanner(`Deactivated ${updates.length} template(s).`);
+    } catch (err: any) {
+      showBanner(err.message || "Failed to deactivate templates.", true);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleBatchDeleteConfirm = async () => {
+    if (selectedTemplateIds.length === 0) return;
+    setIsBatchProcessing(true);
+    try {
+      const count = selectedTemplateIds.length;
+      await batchDeleteWhatsAppTemplates(selectedTemplateIds, currentOwnerId || undefined);
+      showBanner(`Deleted ${count} template(s) from Firestore.`);
+      setSelectedTemplateIds([]);
+      setIsBulkDeleteModalOpen(false);
+    } catch (err: any) {
+      showBanner(err.message || "Failed to delete templates.", true);
+    } finally {
+      setIsBatchProcessing(false);
     }
   };
 
@@ -543,6 +636,10 @@ export function WhatsAppTemplatesView() {
       (t.parameters && t.parameters.toLowerCase().includes(searchQuery.toLowerCase()));
     return matchesCategory && matchesSearch;
   });
+
+  const allFilteredIds = filteredTemplates.map(t => t.id || t.templateName);
+  const isAllFilteredSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => selectedTemplateIds.includes(id));
+  const someFilteredSelected = !isAllFilteredSelected && allFilteredIds.some(id => selectedTemplateIds.includes(id));
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -1263,6 +1360,100 @@ export function WhatsAppTemplatesView() {
             />
           </div>
         </div>
+
+        {/* Bulk Selection Bar */}
+        {filteredTemplates.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5 text-xs">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <button
+                type="button"
+                onClick={handleSelectAllFiltered}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl neu-flat hover:neu-pressed text-slate-300 hover:text-white transition-all font-medium"
+                title={isAllFilteredSelected ? "Deselect all visible templates" : "Select all visible templates"}
+              >
+                <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${
+                  isAllFilteredSelected 
+                    ? 'bg-blue-600 border-blue-500 text-white shadow-sm' 
+                    : someFilteredSelected 
+                      ? 'bg-blue-600/30 border-blue-400 text-white' 
+                      : 'border-white/20 bg-slate-900/60'
+                }`}>
+                  {isAllFilteredSelected ? (
+                    <Check className="w-3 h-3 stroke-[3]" />
+                  ) : someFilteredSelected ? (
+                    <div className="w-2 h-0.5 bg-blue-300 rounded-full" />
+                  ) : null}
+                </div>
+                <span>
+                  {isAllFilteredSelected
+                    ? `Deselect All (${filteredTemplates.length})`
+                    : `Select All (${filteredTemplates.length})`}
+                </span>
+              </button>
+
+              {selectedTemplateIds.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30 text-[11px]">
+                    {selectedTemplateIds.length} of {templates.length} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleClearSelection}
+                    className="text-slate-400 hover:text-white underline underline-offset-2 text-[11px]"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {selectedTemplateIds.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <span className="text-[11px] text-slate-400 font-semibold mr-1 hidden sm:inline">Bulk Actions:</span>
+                <button
+                  type="button"
+                  onClick={handleBatchToggleActive}
+                  disabled={isBatchProcessing}
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-white/10 font-medium flex items-center gap-1.5 transition-all text-xs disabled:opacity-50"
+                  title="Invert active status for selected templates"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${isBatchProcessing ? 'animate-spin' : ''}`} />
+                  <span>Toggle Status</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBatchActivate}
+                  disabled={isBatchProcessing}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1.5 transition-all text-xs disabled:opacity-50"
+                  title="Activate all selected templates in automation"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Activate</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBatchDeactivate}
+                  disabled={isBatchProcessing}
+                  className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 font-medium flex items-center gap-1.5 transition-all text-xs disabled:opacity-50"
+                  title="Deactivate all selected templates"
+                >
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Deactivate</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsBulkDeleteModalOpen(true)}
+                  disabled={isBatchProcessing}
+                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-medium flex items-center gap-1.5 transition-all text-xs disabled:opacity-50"
+                  title="Delete all selected templates from Firestore"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete ({selectedTemplateIds.length})</span>
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Templates List / Grid */}
@@ -1298,24 +1489,46 @@ export function WhatsAppTemplatesView() {
             const catMeta = CATEGORY_META[template.category] || CATEGORY_META.custom;
             const CatIcon = catMeta.icon;
             const paramList = (template.parameters || '').split(',').map(s => s.trim()).filter(Boolean);
+            const templateKey = template.id || template.templateName;
+            const isSelected = selectedTemplateIds.includes(templateKey);
 
             return (
               <motion.div
-                key={`${template.id || template.templateName}-${index}`}
+                key={`${templateKey}-${index}`}
                 layout
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.98 }}
-                className={`p-6 rounded-3xl neu-flat flex flex-col justify-between space-y-5 transition-all border ${
-                  template.isDefault 
-                    ? 'border-blue-500/40 shadow-blue-500/5' 
-                    : 'border-white/5 hover:border-white/10'
+                onClick={() => handleToggleSelectTemplate(templateKey)}
+                className={`p-6 rounded-3xl neu-flat flex flex-col justify-between space-y-5 transition-all border cursor-pointer select-none ${
+                  isSelected 
+                    ? 'border-blue-500 bg-blue-500/10 shadow-lg shadow-blue-500/20 ring-1 ring-blue-500/40' 
+                    : template.isDefault 
+                      ? 'border-blue-500/40 shadow-blue-500/5 hover:border-blue-500/60' 
+                      : 'border-white/5 hover:border-white/10'
                 }`}
               >
                 <div className="space-y-4">
-                  {/* Top Badges */}
+                  {/* Top Badges & Selection Checkbox */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
+                      {/* Checkbox */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleToggleSelectTemplate(templateKey);
+                        }}
+                        className={`w-5 h-5 rounded-md border transition-all flex items-center justify-center flex-shrink-0 ${
+                          isSelected
+                            ? 'bg-blue-600 border-blue-500 text-white shadow-sm'
+                            : 'border-white/20 bg-slate-900/80 hover:border-blue-400 text-transparent'
+                        }`}
+                        title={isSelected ? "Deselect template" : "Select template"}
+                      >
+                        <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      </button>
+
                       <span className={`px-2.5 py-1 text-[11px] font-semibold rounded-xl border flex items-center gap-1.5 ${catMeta.color}`}>
                         <CatIcon className="w-3.5 h-3.5" />
                         {catMeta.label}
@@ -1333,13 +1546,16 @@ export function WhatsAppTemplatesView() {
 
                     {/* Active Switch */}
                     <button
-                      onClick={() => handleToggleActive(template)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleActive(template);
+                      }}
                       className={`text-xs font-semibold px-2.5 py-1 rounded-xl transition-all flex items-center gap-1.5 ${
                         template.isActive 
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                          : 'bg-slate-800 text-slate-500 border border-white/5'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20' 
+                          : 'bg-slate-800 text-slate-500 border border-white/5 hover:text-slate-400'
                       }`}
-                      title={template.isActive ? "Active in automation" : "Inactive / Skipped"}
+                      title={template.isActive ? "Active in automation (Click to disable)" : "Inactive / Skipped (Click to activate)"}
                     >
                       <span className={`w-1.5 h-1.5 rounded-full ${template.isActive ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
                       {template.isActive ? 'Active' : 'Disabled'}
@@ -1426,7 +1642,10 @@ export function WhatsAppTemplatesView() {
                       </span>
                     ) : (
                       <button
-                        onClick={() => handleSetAsBroadcast(template)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSetAsBroadcast(template);
+                        }}
                         className="px-2.5 py-1 rounded-xl neu-flat hover:neu-pressed text-purple-400 hover:text-purple-300 transition-all text-[11px] font-medium flex items-center gap-1 border border-purple-500/20"
                         title="Set this template as the active template for automated and manual broadcasts"
                       >
@@ -1436,7 +1655,10 @@ export function WhatsAppTemplatesView() {
                     )}
                     {!template.isDefault && template.category !== 'broadcast' && (
                       <button
-                        onClick={() => handleSetDefault(template)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleSetDefault(template);
+                        }}
                         className="p-2 rounded-xl neu-flat hover:neu-pressed text-amber-400/80 hover:text-amber-300 transition-all text-xs flex items-center gap-1"
                         title="Set as Default template for this category"
                       >
@@ -1444,7 +1666,8 @@ export function WhatsAppTemplatesView() {
                       </button>
                     )}
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setTestTargetTemplate(template);
                         setTestPhoneNumber('');
                         setTestFeedback(null);
@@ -1460,14 +1683,20 @@ export function WhatsAppTemplatesView() {
 
                   <div className="flex items-center gap-1.5">
                     <button
-                      onClick={() => handleOpenEditor(template)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenEditor(template);
+                      }}
                       className="p-2 rounded-xl neu-flat hover:neu-pressed text-slate-300 hover:text-white transition-all"
                       title="Edit template & parameter mapping"
                     >
                       <Edit2 className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => setDeleteId(template.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteId(template.id);
+                      }}
                       className="p-2 rounded-xl neu-flat hover:neu-pressed text-rose-400/70 hover:text-rose-400 transition-all"
                       title="Delete template"
                     >
@@ -1910,6 +2139,88 @@ export function WhatsAppTemplatesView() {
         )}
       </AnimatePresence>
 
+      {/* Floating Batch-Action Toolbar */}
+      <AnimatePresence>
+        {selectedTemplateIds.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 50, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 450, damping: 30 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-[94%] sm:w-auto p-3 sm:px-6 sm:py-3.5 rounded-3xl neu-flat bg-slate-900/95 backdrop-blur-xl border border-blue-500/40 shadow-2xl shadow-blue-500/10 flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 sm:gap-4"
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                <CheckSquare className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                  <span>{selectedTemplateIds.length}</span>
+                  <span className="text-slate-400 font-normal">template(s) selected</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-6 w-px bg-white/10 hidden sm:block" />
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBatchToggleActive}
+                disabled={isBatchProcessing}
+                className="px-3.5 py-2 rounded-2xl neu-flat hover:neu-pressed text-xs font-semibold text-slate-200 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                title="Invert Active/Inactive status for selected templates"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-blue-400 ${isBatchProcessing ? 'animate-spin' : ''}`} />
+                <span>Toggle Status</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBatchActivate}
+                disabled={isBatchProcessing}
+                className="px-3.5 py-2 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 text-xs font-semibold text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                title="Enable all selected templates in automation"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Activate</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBatchDeactivate}
+                disabled={isBatchProcessing}
+                className="px-3.5 py-2 rounded-2xl bg-amber-500/10 hover:bg-amber-500/20 text-xs font-semibold text-amber-400 border border-amber-500/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                title="Disable all selected templates"
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>Deactivate</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteModalOpen(true)}
+                disabled={isBatchProcessing}
+                className="px-3.5 py-2 rounded-2xl bg-rose-500/10 hover:bg-rose-500/20 text-xs font-semibold text-rose-400 border border-rose-500/30 flex items-center gap-1.5 transition-all disabled:opacity-50"
+                title="Delete all selected templates from Firestore"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleClearSelection}
+                className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all"
+                title="Clear selection"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Delete Confirmation Modal */}
       <ConfirmModal
         isOpen={!!deleteId}
@@ -1918,6 +2229,17 @@ export function WhatsAppTemplatesView() {
         title="Delete WhatsApp Template?"
         message="Are you sure you want to delete this template from Firestore? If active, the billing automation will fall back to default template presets."
         confirmText="Delete Template"
+        cancelText="Cancel"
+      />
+
+      {/* Bulk Delete Confirmation Modal */}
+      <ConfirmModal
+        isOpen={isBulkDeleteModalOpen}
+        onClose={() => setIsBulkDeleteModalOpen(false)}
+        onConfirm={handleBatchDeleteConfirm}
+        title={`Delete ${selectedTemplateIds.length} WhatsApp Template(s)?`}
+        message={`Are you sure you want to permanently delete these ${selectedTemplateIds.length} selected templates from Firestore? Active automations using them will revert to default fallback templates.`}
+        confirmText={`Delete ${selectedTemplateIds.length} Templates`}
         cancelText="Cancel"
       />
     </div>

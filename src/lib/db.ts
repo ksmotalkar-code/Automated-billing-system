@@ -1954,6 +1954,73 @@ export const deleteWhatsAppTemplate = async (id: string, explicitOwnerId?: strin
   }
 };
 
+export const batchDeleteWhatsAppTemplates = async (ids: string[], explicitOwnerId?: string): Promise<void> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  if (!ids || ids.length === 0) return;
+  checkQuotaBeforeWrite("Batch Delete WhatsApp Templates");
+
+  try {
+    const batch = writeBatch(db);
+    for (const id of ids) {
+      const docId = id.startsWith(`${uid}_`) ? id : `${uid}_${id}`;
+      batch.delete(doc(db, 'whatsapp_templates', docId));
+      if (docId !== id) {
+        batch.delete(doc(db, 'whatsapp_templates', id));
+      }
+    }
+    await batch.commit();
+
+    // Clean up corresponding definitions in settings.metaCustomTemplates if present
+    try {
+      const settingsRef = doc(db, 'settings', uid);
+      const settingsSnap = await getDoc(settingsRef);
+      if (settingsSnap.exists()) {
+        const curSettings = settingsSnap.data() as AppSettings;
+        if (curSettings.metaCustomTemplates && curSettings.metaCustomTemplates.length > 0) {
+          const idSet = new Set(ids);
+          const filtered = curSettings.metaCustomTemplates.filter(t => !idSet.has(t.id) && !idSet.has(t.templateName));
+          if (filtered.length !== curSettings.metaCustomTemplates.length) {
+            await updateDoc(settingsRef, { metaCustomTemplates: filtered });
+          }
+        }
+      }
+    } catch (syncErr) {
+      console.warn("Non-fatal batch template cleanup from settings:", syncErr);
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'whatsapp_templates');
+    throw error;
+  }
+};
+
+export const batchUpdateWhatsAppTemplatesStatus = async (
+  updates: { id: string; isActive: boolean }[],
+  explicitOwnerId?: string
+): Promise<void> => {
+  const uid = explicitOwnerId || auth.currentUser?.uid;
+  if (!uid) throw new Error("Not authenticated");
+  if (!updates || updates.length === 0) return;
+  checkQuotaBeforeWrite("Batch Update WhatsApp Templates Status");
+
+  try {
+    const batch = writeBatch(db);
+    const now = new Date().toISOString();
+    for (const item of updates) {
+      const docId = item.id.startsWith(`${uid}_`) ? item.id : `${uid}_${item.id}`;
+      batch.set(
+        doc(db, 'whatsapp_templates', docId),
+        { isActive: item.isActive, updatedAt: now },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, 'whatsapp_templates');
+    throw error;
+  }
+};
+
 export const seedDefaultWhatsAppTemplates = async (explicitOwnerId?: string): Promise<WhatsAppTemplate[]> => {
   const uid = explicitOwnerId || auth.currentUser?.uid;
   if (!uid) throw new Error("Not authenticated");
