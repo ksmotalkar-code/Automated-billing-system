@@ -435,3 +435,82 @@ To ensure Meta Cloud API successfully delivers messages without errors (`Unexpec
      - `tsc --noEmit`: 0 errors.
      - `npm run build`: Production build passed.
      - Server running and healthy.
+
+
+---
+
+## 15. Resolution of "InvalidCharacterError: Failed to execute 'atob' on 'Window'" (Alerts & Production)
+- **Root Cause**:
+  - In `AlertsView.tsx`, when sending single or bulk WhatsApp notifications to unpaid customers, `base64ToBlob(settings.upiQrCodeImage)` was called to attach the Gram Panchayat UPI QR code image.
+  - When administrators upload a UPI QR code image in `SettingsView.tsx`, the file is stored in cloud storage and saved into settings as a remote or relative URL (e.g. `/api/storage/...` or `https://...`).
+  - The previous implementation of `base64ToBlob` assumed every string was a data URI (`data:image/png;base64,...`) and ran `atob(base64.split(',')[1])`. When given an HTTP/HTTPS or relative storage URL, `split(',')[1]` returned `undefined`, causing `atob("undefined")` to execute, which threw:
+    `InvalidCharacterError: Failed to execute 'atob' on 'Window': The string to be decoded is not correctly encoded.`
+- **Resolution & Fixes**:
+  1. **Sanitized and Safe `base64ToBlob` (`src/lib/utils.ts`)**:
+     - Added upfront validation: checks if string starts with `http://`, `https://`, `/`, or `blob:` and returns an empty Blob instead of executing `atob`.
+     - Normalizes URL-safe base64 characters (`-` -> `+`, `_` -> `/`), removes whitespace, and pads missing `=` characters so `length % 4 === 0`.
+     - Detects the correct MIME type from any `data:image/...;` header.
+     - Wraps `atob` in a `try...catch` block so any malformed input fails gracefully without throwing an uncaught exception.
+  2. **Asynchronous Image URL & Base64 Converter `imageSourceToBlob` (`src/lib/utils.ts`)**:
+     - Handles all source formats seamlessly:
+       - Data URIs: decodes base64 safely.
+       - Remote/Local HTTP/HTTPS/blob URLs: asynchronously downloads the image using `fetch(trimmed)` and returns `response.blob()`.
+       - Raw base64: pads and decodes safely.
+  3. **AlertsView Pre-Resolution & Hardening (`src/views/AlertsView.tsx`)**:
+     - Updated single notification (`handleSendWhatsApp`) to await `imageSourceToBlob(settings.upiQrCodeImage, 'image/png')` inside an isolated `try...catch`.
+     - In bulk notifications (`handleNotifyAllUnpaid`), the QR code blob (`defaultQrBlob`) is pre-resolved asynchronously **once** before entering the customer loop, eliminating redundant per-customer image conversions and network fetches.
+     - Automatically attaches `defaultQrBlob` as `payment_qr.png` for all unpaid notifications when no custom document is uploaded.
+- **Verification Results**:
+  - `lint_applet` (`tsc --noEmit`): **PASSED** (0 errors).
+  - `compile_applet` (`npm run build`): **PASSED** (Clean production build).
+
+
+---
+
+## 16. AI Studio Preview Synchronization & Service Worker Kill-Switch
+- **Root Cause of AI Studio Preview Lag & Missing WhatsApp Templates Button**:
+  1. **Service Worker Lock-In**: A Progressive Web App service worker was previously registered on the `ais-dev-*.run.app` domain. When Chrome attempted to update or fetch `/sw.js`, the Express server previously routed all non-API paths to `index.html` with MIME type `text/html`. Chrome strictly rejects service worker updates served as `text/html`, which caused the browser to permanently retain and execute the stale, cached service worker that precached old application bundles.
+  2. **Vite Development Cache Stalling**: The development server lacked aggressive `no-cache, no-store, must-revalidate` response headers on Vite-transformed assets, causing intermediary Cloud Run proxies and iframe browser sessions to serve stale scripts.
+- **Concrete Remediations Applied**:
+  1. **Active Service Worker Kill-Switch (`server.ts`)**:
+     - Configured dedicated endpoints for `/sw.js`, `/service-worker.js`, and `/workbox-*.js` returning valid `application/javascript` with `Cache-Control: no-cache, no-store, must-revalidate`.
+     - Script automatically activates, deletes all `caches` keys, calls `self.registration.unregister()`, and forces all open window clients to re-navigate directly to the server.
+  2. **Iframe & Preview Auto-Purge (`index.html`)**:
+     - Upgraded the head script in `index.html` to query `navigator.serviceWorker.getRegistrations()`, unregister all workers, flush all CacheStorage entries, and trigger a single automated reload if an active worker was found (`sessionStorage` guarded).
+  3. **Dev Server Cache Headers (`server.ts`)**:
+     - Enforced `no-cache, no-store, must-revalidate` across all development requests before mounting `vite.middlewares`.
+  4. **Multi-Point Direct Navigation & Sync Button (`src/App.tsx`, `Sidebar.tsx`, `i18n.ts`)**:
+     - Added a dedicated "Sync Latest" button (`RefreshCw`) in the top navigation bar with 1-click cache purge and page refresh.
+     - Added Hindi and Punjabi translations for `"WhatsApp Templates"` in `src/i18n.ts`.
+     - Production assets recompiled cleanly with `npm run build`.
+- **Verification Results**:
+  - `lint_applet` (`tsc --noEmit`): **PASSED** (0 errors).
+  - `compile_applet` (`npm run build`): **PASSED** (Clean production build).
+  - Dev server restarted and confirmed serving self-destruct JS on `/sw.js` and HTTP 200 on `/api/health`.
+
+
+---
+
+## 17. Diagnostic Effect for AI Studio Preview DOM Verification (`App.tsx`)
+- **Requirement**:
+  - Add a diagnostic effect in `App.tsx` that outputs the `activeLayer` state and the Sidebar menu rendering list to the console, specifically targeting the AI Studio preview environment to detect if the template view is being stripped from the DOM.
+- **Implemented Capabilities**:
+  1. **Preview Environment Diagnostic Effect (`src/App.tsx`)**:
+     - Subscribed to `[activeLayer, isSidebarOpen, isExpanded]` state changes.
+     - Logs environment metrics (whether running inside an iframe, `run.app` / `localhost` hostnames, viewport dimensions, and responsive breakpoint flags).
+     - Logs the complete registered `layers` array with IDs, labels, and active status.
+     - Validates presence of `id: "templates"` in `layers`.
+     - Executes post-paint DOM inspection (after 150ms):
+       - Verifies existence of `#top-nav-templates` / `[data-layer-id="templates"]` in the DOM.
+       - Verifies existence of `#sidebar-item-templates` in the DOM.
+       - Counts total DOM elements matching `"WhatsApp Templates"` or `"Manage Meta Templates"`.
+       - Detects if `WhatsAppTemplatesView` (`data-view="whatsapp-templates"`) is mounted when `activeLayer === 'templates'`.
+       - Emits clear status or warning: `"✅ OK: Template navigation buttons exist in DOM"` or `"⚠️ WARNING: Template navigation buttons are NOT found in DOM!"`.
+  2. **DOM Element Identifiers (`Sidebar.tsx`, `WhatsAppTemplatesView.tsx`)**:
+     - Added `id="sidebar-item-templates"` and `data-layer-id="templates"` to the sidebar button.
+     - Added `id="top-nav-templates"` and `data-layer-id="templates"` to the top navbar button.
+     - Added `data-view="whatsapp-templates"` and `id="whatsapp-templates-root"` to `WhatsAppTemplatesView`.
+- **Verification Results**:
+  - `lint_applet` (`tsc --noEmit`): **PASSED** (0 errors).
+  - `compile_applet` (`npm run build`): **PASSED** (Clean production build).
+  - Dev server restarted and running on port 3000.

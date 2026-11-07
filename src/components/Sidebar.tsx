@@ -189,6 +189,8 @@ export function Sidebar({ activeLayer, setActiveLayer, theme, setTheme, uiStyle,
             return (
               <motion.button
                 key={layer.id}
+                id={`sidebar-item-${layer.id}`}
+                data-layer-id={layer.id}
                 whileHover={{ scale: 1.02, x: isExpanded ? 5 : 0 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={() => setActiveLayer(layer.id)}

@@ -8,7 +8,7 @@ import { useTenant } from "../contexts/TenantContext";
 import { writeBatch, doc } from "firebase/firestore";
 import { db } from "../firebase";
 import { sendWhatsAppNotification } from "../lib/automation";
-import { base64ToBlob } from "../lib/utils";
+import { base64ToBlob, imageSourceToBlob } from "../lib/utils";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { useRef } from "react";
 
@@ -96,8 +96,11 @@ export function AlertsView() {
     } else if (!isPaid && settings.upiQrCodeImage) {
       // Attach QR code if available
       try {
-        attachment = base64ToBlob(settings.upiQrCodeImage);
-        fileName = 'payment_qr.png';
+        const qrBlob = await imageSourceToBlob(settings.upiQrCodeImage, 'image/png');
+        if (qrBlob && qrBlob.size > 0) {
+          attachment = qrBlob;
+          fileName = 'payment_qr.png';
+        }
       } catch (e) {
         console.error("Failed to convert QR code to blob", e);
       }
@@ -260,6 +263,16 @@ export function AlertsView() {
         const isApiMode = deliveryModeRef.current === "api";
         const tempSettings = { ...settings, metaWhatsAppApiKey: isApiMode ? settings.metaWhatsAppApiKey : "" };
 
+        // Pre-resolve QR code blob once for the entire batch if no custom attachment is present
+        let defaultQrBlob: Blob | null = null;
+        if (!customAttachment && settings.upiQrCodeImage) {
+          try {
+            defaultQrBlob = await imageSourceToBlob(settings.upiQrCodeImage, 'image/png');
+          } catch (e) {
+            console.warn("Failed to convert QR code for bulk notifications", e);
+          }
+        }
+
         for (let i = 0; i < targets.length; i++) {
           const customer = targets[i];
           const penaltyAmount = customer.balance >= settings.billingAmount ? settings.penaltyAmount : 0;
@@ -272,13 +285,9 @@ export function AlertsView() {
           if (customAttachment) {
             attachment = customAttachment;
             fileName = customAttachment.name;
-          } else if (settings.upiQrCodeImage) {
-            try {
-              attachment = base64ToBlob(settings.upiQrCodeImage);
-              fileName = 'payment_qr.png';
-            } catch (e) {
-              console.error("Failed to convert QR code to blob", e);
-            }
+          } else if (defaultQrBlob && defaultQrBlob.size > 0) {
+            attachment = defaultQrBlob;
+            fileName = 'payment_qr.png';
           }
 
           const result = await sendWhatsAppNotification(customer, message, tempSettings, attachment, fileName, isApiMode, true, 'broadcast');

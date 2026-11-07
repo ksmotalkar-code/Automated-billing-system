@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { Sidebar } from "./components/Sidebar";
+import { Sidebar, layers } from "./components/Sidebar";
 import { DashboardView } from "./views/DashboardView";
 import { CustomersView } from "./views/CustomersView";
 import { AlertsView } from "./views/AlertsView";
@@ -19,7 +19,7 @@ import { ManualView } from "./views/ManualView";
 import { ChatbotView } from "./views/ChatbotView";
 import { WhatsAppTemplatesView } from "./views/WhatsAppTemplatesView";
 import { AnimatePresence, motion } from "motion/react";
-import { Menu, X, AlertTriangle, Loader2, SlidersHorizontal, LayoutDashboard } from "lucide-react";
+import { Menu, X, AlertTriangle, Loader2, SlidersHorizontal, LayoutDashboard, RefreshCw } from "lucide-react";
 import { resetAllBalances } from "./lib/db";
 import { auth, loginWithGoogle, logout } from './firebase';
 import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
@@ -77,6 +77,79 @@ export default function App() {
     localStorage.setItem("app_uiStyle", uiStyle);
     document.documentElement.setAttribute("data-ui", uiStyle);
   }, [uiStyle]);
+
+  // Diagnostic effect targeting AI Studio preview environment
+  useEffect(() => {
+    const isPreview = 
+      typeof window !== 'undefined' && 
+      (window.self !== window.top || 
+       window.location.hostname.includes('run.app') || 
+       window.location.hostname.includes('localhost') ||
+       window.location.hostname.includes('127.0.0.1'));
+
+    const menuItems = layers.map((l) => ({
+      id: l.id,
+      label: l.label,
+      isCurrentActive: l.id === activeLayer,
+    }));
+
+    const isTemplateInMenu = layers.some((l) => l.id === "templates");
+
+    console.groupCollapsed(
+      `%c[AI Studio Diagnostic] Active Layer: "${activeLayer}" | Templates in Menu: ${isTemplateInMenu ? '✅ YES' : '❌ NO'}`,
+      'color: #10b981; font-weight: bold; font-size: 11px;'
+    );
+    console.log("Environment Details:", {
+      isPreviewEnvironment: isPreview,
+      isIframe: window.self !== window.top,
+      hostname: window.location.hostname,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        isMobileBreakpoint: window.innerWidth < 768,
+        isTabletBreakpoint: window.innerWidth >= 768 && window.innerWidth < 1024,
+      },
+      sidebarState: {
+        isSidebarOpen,
+        isExpanded,
+      },
+      activeLayer,
+      isTemplateInMenu,
+    });
+
+    console.log("Sidebar Menu Registered Layers:", menuItems);
+
+    // DOM verification after paint: check if the template navigation elements actually exist in DOM
+    const timer = setTimeout(() => {
+      const topBarBtn = document.querySelector('[data-layer-id="templates"]') || document.getElementById('top-nav-templates');
+      const sidebarBtn = document.querySelector('#sidebar-item-templates') || document.querySelector('[data-layer-id="templates"]');
+      const allElements = document.querySelectorAll('*');
+      let domTemplateMatches = 0;
+      allElements.forEach(node => {
+        if (node.textContent && (node.textContent.includes('WhatsApp Templates') || node.textContent.includes('Manage Meta Templates'))) {
+          domTemplateMatches++;
+        }
+      });
+
+      const isViewMounted = activeLayer === 'templates' && Boolean(
+        document.querySelector('[data-view="whatsapp-templates"]') || 
+        document.getElementById('whatsapp-templates-root')
+      );
+
+      console.log("DOM Node Detection Results:", {
+        topBarButtonInDOM: Boolean(topBarBtn),
+        sidebarButtonInDOM: Boolean(sidebarBtn),
+        totalDomElementsWithTemplateCopy: domTemplateMatches,
+        isTemplateViewCurrentlyMounted: isViewMounted,
+        domStrippedWarning: !topBarBtn && !sidebarBtn 
+          ? "⚠️ WARNING: Template navigation buttons are NOT found in DOM!" 
+          : "✅ OK: Template navigation buttons exist in DOM",
+      });
+      console.groupEnd();
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [activeLayer, isSidebarOpen, isExpanded]);
   const [isAuthReady, setIsAuthReady] = useState(() => Boolean(auth.currentUser));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -482,6 +555,8 @@ export default function App() {
               {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
             <button
+              id="top-nav-templates"
+              data-layer-id="templates"
               onClick={() => setActiveLayer('templates')}
               className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all ${
                 activeLayer === 'templates'
@@ -525,11 +600,31 @@ export default function App() {
              </div>
           )}
 
-          <div className="hidden md:flex items-center gap-4 ml-auto">
-            <span className="text-sm font-medium">{user?.email || "Admin"}</span>
+          <div className="flex items-center gap-2 md:gap-4 ml-auto">
+            <button 
+              onClick={() => {
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then(regs => {
+                    regs.forEach(r => r.unregister());
+                  });
+                }
+                if ('caches' in window) {
+                  caches.keys().then(keys => {
+                    keys.forEach(k => caches.delete(k));
+                  });
+                }
+                window.location.reload();
+              }}
+              className="px-2.5 py-1.5 neu-flat hover:neu-pressed rounded-xl text-xs font-bold text-slate-500 hover:text-emerald-500 transition-colors flex items-center gap-1.5"
+              title="Force Refresh & Purge Stale Caches"
+            >
+              <RefreshCw className="w-3.5 h-3.5 text-emerald-500" />
+              <span className="hidden sm:inline">Sync Latest</span>
+            </button>
+            <span className="hidden md:inline text-sm font-medium">{user?.email || "Admin"}</span>
             <button 
               onClick={logout}
-              className="px-4 py-2 neu-flat rounded-xl text-sm font-bold text-rose-500 hover:bg-rose-500/10 transition-colors"
+              className="px-3 md:px-4 py-1.5 md:py-2 neu-flat rounded-xl text-xs md:text-sm font-bold text-rose-500 hover:bg-rose-500/10 transition-colors"
             >
               Logout
             </button>

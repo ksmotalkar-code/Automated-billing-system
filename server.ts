@@ -8611,6 +8611,32 @@ async function startServer() {
   // Global Error Handler (must be registered after all routes to catch all unhandled errors)
   app.use(errorHandler);
 
+  // Proactively purge any stale service workers or workbox caches in preview/dev
+  app.get(["/sw.js", "/service-worker.js", "/workbox-*.js"], (req, res) => {
+    res.setHeader("Content-Type", "application/javascript");
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.send(`
+      self.addEventListener('install', (e) => {
+        self.skipWaiting();
+      });
+      self.addEventListener('activate', (e) => {
+        e.waitUntil(
+          caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+            .then(() => self.registration.unregister())
+            .then(() => self.clients.matchAll({ type: 'window' }))
+            .then((clients) => {
+              clients.forEach((client) => client.navigate(client.url));
+            })
+        );
+      });
+      self.addEventListener('fetch', (e) => {
+        // Transparent pass-through to ensure network requests always reach server
+      });
+    `);
+  });
+
   // Serve production build if dist/index.html exists or NODE_ENV is production
   const hasDist =
     fs.existsSync(path.join(process.cwd(), "dist", "index.html")) ||
@@ -8652,6 +8678,14 @@ async function startServer() {
     });
   } else {
     try {
+      // In dev/preview, enforce no-cache headers on all requests to prevent stale iframe caching
+      app.use((req, res, next) => {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+        next();
+      });
+
       const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true, hmr: false },

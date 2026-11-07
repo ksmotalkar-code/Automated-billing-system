@@ -642,7 +642,7 @@ export function WhatsAppTemplatesView() {
   const someFilteredSelected = !isAllFilteredSelected && allFilteredIds.some(id => selectedTemplateIds.includes(id));
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+    <div data-view="whatsapp-templates" id="whatsapp-templates-root" className="space-y-6 max-w-7xl mx-auto pb-12">
       {/* Top Banner / Toast */}
       <AnimatePresence>
         {successMessage && (
